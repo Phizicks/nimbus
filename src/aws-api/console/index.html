@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LocalCloud Console</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="navbar">
+        <div class="navbar-brand">
+            <div class="logo">AWS</div>
+            <span>LocalCloud Console</span>
+        </div>
+    </div>
+
+    <div class="service-nav">
+        <button class="active" onclick="switchService('sqs')">SQS</button>
+        <button onclick="switchService('lambda')">Lambda</button>
+        <button onclick="switchService('ssm')">Systems Manager</button>
+        <button onclick="switchService('cloudwatch')">CloudWatch Logs</button>
+        <button onclick="switchService('ecr')">ECR</button>
+        <button onclick="switchService('s3')">S3</button>
+    </div>
+
+    <div class="container">
+        <!-- SQS Panel -->
+        <div id="sqs-panel" class="service-panel active">
+            <div class="panel-header">
+                <h2>Amazon SQS Queues</h2>
+                <div class="actions">
+                    <button class="btn btn-primary" onclick="showCreateQueueModal()">Create Queue</button>
+                    <button class="btn btn-secondary" onclick="loadQueues()">🔄 Refresh</button>
+                </div>
+            </div>
+            <div id="sqs-stats" class="stats-grid"></div>
+            <div class="card">
+                <div class="card-title">Queues</div>
+                <div id="sqs-loading" class="loading">
+                    <div class="spinner"></div>
+                    <div>Loading queues...</div>
+                </div>
+                <div id="sqs-content" style="display:none;">
+                    <table id="sqs-table">
+                        <thead>
+                            <tr>
+                                <th>Queue Name</th>
+                                <th>Messages Available</th>
+                                <th>Messages In Flight</th>
+                                <th>Type</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div id="sqs-empty" class="empty-state" style="display:none;">
+                    <div class="empty-state-icon">📬</div>
+                    <h3>No queues found</h3>
+                    <p>Create your first queue to get started</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Lambda Panel -->
+        <div id="lambda-panel" class="service-panel">
+            <div class="panel-header">
+                <h2>AWS Lambda Functions</h2>
+                <div class="actions">
+                    <button class="btn btn-primary" onclick="showCreateFunctionModal()">Create Function</button>
+                    <button class="btn btn-secondary" onclick="loadFunctions()">🔄 Refresh</button>
+                </div>
+            </div>
+            <div id="lambda-stats" class="stats-grid"></div>
+            <div class="card">
+                <div class="card-title">Functions</div>
+                <div id="lambda-loading" class="loading">
+                    <div class="spinner"></div>
+                    <div>Loading functions...</div>
+                </div>
+                <div id="lambda-content" style="display:none;">
+                    <table id="lambda-table">
+                        <thead>
+                            <tr>
+                                <th>Function Name</th>
+                                <th>Runtime</th>
+                                <th>State</th>
+                                <th>Last Modified</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div id="lambda-empty" class="empty-state" style="display:none;">
+                    <div class="empty-state-icon">λ</div>
+                    <h3>No functions found</h3>
+                    <p>Deploy a Lambda function to get started</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- SSM Panel -->
+        <div id="ssm-panel" class="service-panel">
+            <div class="panel-header">
+                <h2>Systems Manager - Parameter Store</h2>
+                <div class="actions">
+                    <button class="btn btn-primary" onclick="showCreateParameterModal()">Create Parameter</button>
+                    <button class="btn btn-secondary" onclick="loadParameters()">🔄 Refresh</button>
+                </div>
+            </div>
+            <div id="ssm-stats" class="stats-grid"></div>
+            <div class="card">
+                <div class="card-title">Parameters</div>
+                <div id="ssm-loading" class="loading">
+                    <div class="spinner"></div>
+                    <div>Loading parameters...</div>
+                </div>
+                <div id="ssm-content" style="display:none;">
+                    <table id="ssm-table">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Type</th>
+                                <th>Version</th>
+                                <th>Last Modified</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div id="ssm-empty" class="empty-state" style="display:none;">
+                    <div class="empty-state-icon">🔧</div>
+                    <h3>No parameters found</h3>
+                    <p>Create your first parameter to get started</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- CloudWatch Logs Panel -->
+        <div id="cloudwatch-panel" class="service-panel">
+            <div class="panel-header">
+                <h2>CloudWatch Logs</h2>
+                <div class="actions">
+                    <button class="btn btn-danger" id="delete-selected-log-groups" onclick="deleteSelectedLogGroups()" disabled>
+                        Delete Selected
+                    </button>
+                    <button class="btn btn-secondary" onclick="loadLogGroups()">🔄 Refresh</button>
+                </div>
+            </div>
+            <div id="cloudwatch-stats" class="stats-grid"></div>
+            <div class="card">
+                <div class="card-title">Log Groups</div>
+                <div id="cloudwatch-loading" class="loading">
+                    <div class="spinner"></div>
+                    <div>Loading log groups...</div>
+                </div>
+                <div id="cloudwatch-content" style="display:none;">
+                    <table id="cloudwatch-table">
+                        <thead>
+                            <tr>
+                                <th style="width: 40px;">
+                                    <input type="checkbox" onchange="toggleAllLogGroups(this.checked)">
+                                </th>
+                                <th>Log Group Name</th>
+                                <th>Storage Bytes</th>
+                                <th>Creation Time</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div id="cloudwatch-empty" class="empty-state" style="display:none;">
+                    <div class="empty-state-icon">📋</div>
+                    <h3>No log groups found</h3>
+                    <p>Log groups will appear here when Lambda functions are invoked</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ECR Panel -->
+        <div id="ecr-panel" class="service-panel">
+            <div class="panel-header">
+                <h2>Amazon Elastic Container Registry</h2>
+                <div class="actions">
+                    <button class="btn btn-primary" onclick="showCreateRepositoryModal()">Create Repository</button>
+                    <button class="btn btn-secondary" onclick="loadRepositories()">🔄 Refresh</button>
+                </div>
+            </div>
+            <div id="ecr-stats" class="stats-grid"></div>
+            <div class="card">
+                <div class="card-title">Repositories</div>
+                <div id="ecr-loading" class="loading">
+                    <div class="spinner"></div>
+                    <div>Loading repositories...</div>
+                </div>
+                <div id="ecr-content" style="display:none;">
+                    <table id="ecr-table">
+                        <thead>
+                            <tr>
+                                <th>Repository Name</th>
+                                <th>URI</th>
+                                <th>Images</th>
+                                <th>Created</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div id="ecr-empty" class="empty-state" style="display:none;">
+                    <div class="empty-state-icon">📦</div>
+                    <h3>No repositories found</h3>
+                    <p>Create your first repository to store container images</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- S3 Panel -->
+        <div id="s3-panel" class="service-panel">
+            <div class="panel-header">
+                <h2>Amazon S3</h2>
+                <div class="actions">
+                    <button class="btn btn-primary" onclick="showCreateBucketModal()">Create Bucket</button>
+                    <button class="btn btn-secondary" onclick="loadBuckets()">🔄 Refresh</button>
+                </div>
+            </div>
+            <div id="s3-stats" class="stats-grid"></div>
+            <div class="card">
+                <div class="card-title">Buckets</div>
+                <div id="s3-loading" class="loading">
+                    <div class="spinner"></div>
+                    <div>Loading buckets...</div>
+                </div>
+                <div id="s3-content" style="display:none;">
+                    <table id="s3-table">
+                        <thead>
+                            <tr>
+                                <th>Bucket Name</th>
+                                <th>Region</th>
+                                <th>Created</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div id="s3-empty" class="empty-state" style="display:none;">
+                    <div class="empty-state-icon">🪣</div>
+                    <h3>No buckets found</h3>
+                    <p>Create your first S3 bucket to get started</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modals -->
+    <div id="queue-details-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Queue Details</div>
+            <div class="modal-body" id="queue-details-content"></div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('queue-details-modal')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="create-queue-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Create Queue</div>
+            <div class="modal-body">
+                <form id="create-queue-form" onsubmit="createQueue(event)">
+                    <div class="form-group">
+                        <label>Queue Name *</label>
+                        <input type="text" id="queue-name" required placeholder="my-queue">
+                    </div>
+                    <div class="form-group">
+                        <label>Visibility Timeout (seconds)</label>
+                        <input type="number" id="queue-visibility" value="30">
+                    </div>
+                    <div class="form-group">
+                        <label>Message Retention Period (seconds)</label>
+                        <input type="number" id="queue-retention" value="345600">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" form="create-queue-form" class="btn btn-primary">Create Queue</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('create-queue-modal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="sqs-message-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header" id="sqs-message-header">Message</div>
+            <div class="modal-body" id="sqs-message-content"></div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('sqs-message-modal')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="function-details-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Function Details</div>
+            <div class="modal-body" id="function-details-content"></div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('function-details-modal')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="test-lambda-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Test Function: <span id="test-function-name"></span></div>
+            <div class="modal-body">
+                <form id="test-lambda-form" onsubmit="testFunction(event)">
+                    <div class="form-group">
+                        <label>Event JSON</label>
+                        <textarea id="test-payload" placeholder='{"key": "value"}'>{}</textarea>
+                    </div>
+                </form>
+                <div id="test-result" style="margin-top: 20px; display: none;">
+                    <div class="card-title">Result</div>
+                    <div id="test-result-content"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" form="test-lambda-form" class="btn btn-primary">Invoke</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('test-lambda-modal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="esm-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Event Source Mappings</div>
+            <div class="modal-body" id="esm-content"></div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('esm-modal')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="parameter-details-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Parameter Details</div>
+            <div class="modal-body" id="parameter-details-content"></div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('parameter-details-modal')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="create-parameter-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Create Parameter</div>
+            <div class="modal-body">
+                <form id="create-parameter-form" onsubmit="createParameter(event)">
+                    <div class="form-group">
+                        <label>Name *</label>
+                        <input type="text" id="param-name" required placeholder="/my/parameter">
+                    </div>
+                    <div class="form-group">
+                        <label>Type *</label>
+                        <select id="param-type" required>
+                            <option value="String">String</option>
+                            <option value="StringList">StringList</option>
+                            <option value="SecureString">SecureString</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Value *</label>
+                        <textarea id="param-value" required placeholder="Enter parameter value"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Description</label>
+                        <input type="text" id="param-description" placeholder="Optional description">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" form="create-parameter-form" class="btn btn-primary">Create Parameter</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('create-parameter-modal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="log-streams-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Log Streams: <span id="log-group-name"></span></div>
+            <div class="modal-body" id="log-streams-content"></div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('log-streams-modal')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="log-events-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Log Events: <span id="log-stream-name"></span></div>
+            <div class="modal-body" id="log-events-content"></div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('log-events-modal')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ECR Modals -->
+    <div id="create-repository-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Create Repository</div>
+            <div class="modal-body">
+                <form id="create-repository-form" onsubmit="createRepository(event)">
+                    <div class="form-group">
+                        <label>Repository Name *</label>
+                        <input type="text" id="repo-name" required placeholder="my-app">
+                        <small style="color: #545B64; font-size: 12px;">Use lowercase letters, numbers, hyphens, underscores, and forward slashes</small>
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="repo-scan-on-push" style="width: auto; margin-right: 8px;">
+                            Enable scan on push
+                        </label>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" form="create-repository-form" class="btn btn-primary">Create Repository</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('create-repository-modal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="repository-images-modal" class="modal">
+        <div class="modal-content" style="max-width: 1200px;">
+            <div class="modal-header">Images in Repository: <span id="repo-images-name"></span></div>
+            <div class="modal-body" id="repository-images-content"></div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('repository-images-modal')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="image-details-modal" class="modal">
+        <div class="modal-content" style="max-width: 900px;">
+            <div class="modal-header">Image Details</div>
+            <div class="modal-body" id="image-details-content"></div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('image-details-modal')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- S3 Modals -->
+    <div id="create-bucket-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Create Bucket</div>
+            <div class="modal-body">
+                <form id="create-bucket-form" onsubmit="createBucket(event)">
+                    <div class="form-group">
+                        <label>Bucket Name *</label>
+                        <input type="text" id="bucket-name" required placeholder="my-bucket">
+                        <small style="color: #545B64; font-size: 12px;">Bucket names must be unique and follow DNS naming conventions</small>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" form="create-bucket-form" class="btn btn-primary">Create Bucket</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('create-bucket-modal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="bucket-objects-modal" class="modal">
+        <div class="modal-content" style="max-width: 1200px;">
+            <div class="modal-header">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span>Objects in Bucket: <span id="bucket-objects-name"></span></span>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div class="breadcrumb" id="s3-breadcrumb"></div>
+                <div class="filter-bar">
+                    <input type="text" id="s3-prefix-filter" placeholder="Filter by prefix..." onkeyup="filterS3Objects()">
+                    <button class="btn btn-primary" onclick="showUploadObjectModal()">Upload File</button>
+                </div>
+                <div id="bucket-objects-content"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('bucket-objects-modal')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="upload-object-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Upload Object</div>
+            <div class="modal-body">
+                <form id="upload-object-form" onsubmit="uploadObject(event)">
+                    <div class="form-group">
+                        <label>File *</label>
+                        <input type="file" id="upload-file" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Key (Path) *</label>
+                        <input type="text" id="upload-key" required placeholder="folder/filename.txt">
+                        <small style="color: #545B64; font-size: 12px;">The object key/path in the bucket</small>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" form="upload-object-form" class="btn btn-primary">Upload</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('upload-object-modal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="rename-object-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Rename Object</div>
+            <div class="modal-body">
+                <form id="rename-object-form" onsubmit="renameObject(event)">
+                    <div class="form-group">
+                        <label>Current Key</label>
+                        <input type="text" id="rename-old-key" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label>New Key *</label>
+                        <input type="text" id="rename-new-key" required placeholder="new-folder/new-filename.txt">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" form="rename-object-form" class="btn btn-primary">Rename</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('rename-object-modal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="move-object-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Move Object</div>
+            <div class="modal-body">
+                <form id="move-object-form" onsubmit="moveObject(event)">
+                    <div class="form-group">
+                        <label>Current Key</label>
+                        <input type="text" id="move-old-key" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label>Destination Bucket</label>
+                        <input type="text" id="move-dest-bucket" required placeholder="destination-bucket">
+                    </div>
+                    <div class="form-group">
+                        <label>Destination Key</label>
+                        <input type="text" id="move-dest-key" required placeholder="folder/filename.txt">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" form="move-object-form" class="btn btn-primary">Move</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('move-object-modal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Lambda Modal -->
+    <div id="create-function-modal" class="modal">
+        <div class="modal-content" style="max-width: 800px;">
+            <div class="modal-header">Create Lambda Function</div>
+            <div class="modal-body">
+                <form id="create-function-form" onsubmit="createLambdaFunction(event)">
+                    <!-- Function Name -->
+                    <div class="form-group">
+                        <label>Function Name *</label>
+                        <input type="text" id="lambda-function-name" required placeholder="my-function">
+                        <small style="color: #545B64; font-size: 12px;">Enter a unique function name</small>
+                    </div>
+
+                    <!-- Package Type -->
+                    <div class="form-group">
+                        <label>Package Type *</label>
+                        <select id="lambda-package-type" required onchange="togglePackageTypeFields()">
+                            <option value="Zip">Zip (Runtime-based)</option>
+                            <option value="Image">Container Image</option>
+                        </select>
+                    </div>
+
+                    <!-- Runtime (for Zip packages) -->
+                    <div class="form-group" id="runtime-group">
+                        <label>Runtime *</label>
+                        <select id="lambda-runtime">
+                            <option value="python3.14">Python 3.14</option>
+                            <option value="python3.13">Python 3.13</option>
+                            <option value="python3.12" selected>Python 3.12</option>
+                            <option value="python3.11">Python 3.11</option>
+                            <option value="python3.10">Python 3.10</option>
+                            <option value="nodejs24.x">Node.js 24</option>
+                            <option value="nodejs22.x">Node.js 22</option>
+                            <option value="nodejs20.x">Node.js 20</option>
+                            <option value="java25">Java 25</option>
+                            <option value="java21">Java 21</option>
+                            <option value="java20">Java 20</option>
+                            <option value="java17">Java 17</option>
+                            <option value="java11">Java 11</option>
+                            <option value="java8.al2">Java 8 (AL2)</option>
+                            <option value="go1.x">Go 1.x</option>
+                            <option value="provided.al2023">Custom Runtime (AL2023)</option>
+                            <option value="provided.al2">Custom Runtime (AL2)</option>
+                        </select>
+                    </div>
+
+                    <!-- Handler (for Zip packages) -->
+                    <div class="form-group" id="handler-group">
+                        <label>Handler *</label>
+                        <input type="text" id="lambda-handler" value="lambda_function.handler" placeholder="index.handler">
+                        <small style="color: #545B64; font-size: 12px;">Format: filename.function_name</small>
+                    </div>
+
+                    <!-- ZIP File Upload (for Zip packages) -->
+                    <div class="form-group" id="zipfile-group">
+                        <label>Code (ZIP File) *</label>
+                        <input type="file" id="lambda-zipfile" accept=".zip">
+                        <small style="color: #545B64; font-size: 12px;">Upload a .zip file containing your function code</small>
+                    </div>
+
+                    <!-- Image URI (for Image packages) -->
+                    <div class="form-group" id="imageuri-group" style="display: none;">
+                        <label>Container Image URI *</label>
+                        <input type="text" id="lambda-image-uri" placeholder="123456789012.dkr.ecr.us-east-1.amazonaws.com/my-function:latest">
+                        <small style="color: #545B64; font-size: 12px;">Full ECR image URI</small>
+                    </div>
+
+                    <!-- Image Config (for Image packages) -->
+                    <div id="image-config-group" style="display: none;">
+                        <div class="form-group">
+                            <label>Command Override (Optional)</label>
+                            <input type="text" id="lambda-image-command" placeholder='["handler"]'>
+                            <small style="color: #545B64; font-size: 12px;">JSON array, e.g. ["python", "app.py"]</small>
+                        </div>
+                        <div class="form-group">
+                            <label>EntryPoint Override (Optional)</label>
+                            <input type="text" id="lambda-image-entrypoint" placeholder='["/usr/bin/python"]'>
+                            <small style="color: #545B64; font-size: 12px;">JSON array</small>
+                        </div>
+                        <div class="form-group">
+                            <label>Working Directory (Optional)</label>
+                            <input type="text" id="lambda-image-workdir" placeholder="/var/task">
+                        </div>
+                    </div>
+
+                    <!-- IAM Role -->
+                    <div class="form-group">
+                        <label>Execution Role</label>
+                        <input type="text" id="lambda-role" placeholder="arn:aws:iam::456645664566:role/lambda-role">
+                        <small style="color: #545B64; font-size: 12px;">Leave empty for auto-generated role</small>
+                    </div>
+
+                    <!-- Memory & Timeout -->
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                        <div class="form-group">
+                            <label>Memory (MB)</label>
+                            <input type="number" id="lambda-memory" value="128" min="128" max="10240" step="64">
+                        </div>
+                        <div class="form-group">
+                            <label>Timeout (seconds)</label>
+                            <input type="number" id="lambda-timeout" value="300" min="1" max="900">
+                        </div>
+                    </div>
+
+                    <!-- Environment Variables -->
+                    <div class="form-group">
+                        <label>Environment Variables (Optional)</label>
+                        <textarea id="lambda-environment" placeholder='{"KEY1": "value1", "KEY2": "value2"}'></textarea>
+                        <small style="color: #545B64; font-size: 12px;">JSON object of environment variables</small>
+                    </div>
+
+                    <!-- Logging Configuration -->
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="lambda-custom-logging" style="width: auto; margin-right: 8px;" onchange="toggleLoggingConfig()">
+                            Custom Logging Configuration
+                        </label>
+                    </div>
+
+                    <div id="logging-config-group" style="display: none;">
+                        <div class="form-group">
+                            <label>Log Group Name</label>
+                            <input type="text" id="lambda-log-group" placeholder="/aws/lambda/my-function">
+                        </div>
+                        <div class="form-group">
+                            <label>Log Format</label>
+                            <select id="lambda-log-format">
+                                <option value="Text">Text</option>
+                                <option value="JSON">JSON</option>
+                            </select>
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                            <div class="form-group">
+                                <label>Application Log Level</label>
+                                <select id="lambda-app-log-level">
+                                    <option value="TRACE">TRACE</option>
+                                    <option value="DEBUG">DEBUG</option>
+                                    <option value="INFO" selected>INFO</option>
+                                    <option value="WARN">WARN</option>
+                                    <option value="ERROR">ERROR</option>
+                                    <option value="FATAL">FATAL</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>System Log Level</label>
+                                <select id="lambda-sys-log-level">
+                                    <option value="DEBUG">DEBUG</option>
+                                    <option value="INFO" selected>INFO</option>
+                                    <option value="WARN">WARN</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" form="create-function-form" class="btn btn-primary">Create Function</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('create-function-modal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Object Metadata Modal -->
+    <div id="object-metadata-modal" class="modal">
+        <div class="modal-content">
+            <h2>Object Metadata</h2>
+            <div id="object-metadata-content"></div>
+            <div style="margin-top: 20px; text-align: right;">
+                <button class="btn btn-secondary" onclick="closeModal('object-metadata-modal')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

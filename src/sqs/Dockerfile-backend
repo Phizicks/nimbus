@@ -1,0 +1,18 @@
+
+# ElasticMQ uses the official Docker image directly
+# This Dockerfile is no longer needed, but kept for reference
+# ElasticMQ is configured in docker-compose-sqs.yml to use the official elasticmq:latest image
+
+# FROM elasticmq:latest
+FROM softwaremill/elasticmq:latest
+
+# RUN apt-get update && apt-get install -y curl
+# RUN apk add --no-cache curl ca-certificates
+USER 0
+# RUN mkdir -p /data/sqs-messages && chown demiourgos728: /data/sqs-messages
+COPY ./custom-backend.conf /opt/elasticmq.conf
+
+USER 0
+
+EXPOSE 9324
+EXPOSE 9325

@@ -1,0 +1,59 @@
+services:
+  # https://github.com/Joxit/docker-registry-ui
+  ecr-ui:
+    image: joxit/docker-registry-ui:main
+    restart: always
+    ports:
+      - 80:80
+    environment:
+      SINGLE_REGISTRY: true
+      REGISTRY_TITLE: Localcloud Docker Registry UI
+      DELETE_IMAGES: true
+      SHOW_CONTENT_DIGEST: true
+      NGINX_PROXY_PASS_URL: http://ecr:5000
+      SHOW_CATALOG_NB_TAGS: true
+      CATALOG_MIN_BRANCHES: 1
+      CATALOG_MAX_BRANCHES: 1
+      TAGLIST_PAGE_SIZE: 100
+      REGISTRY_SECURED: false
+      CATALOG_ELEMENTS_LIMIT: 1000
+      LOG_LEVEL: WARNING
+    networks:
+      - localcloud
+    depends_on:
+      ecr:
+        condition: service_healthy
+
+  ecr:
+    image: registry:3
+    restart: always
+    environment:
+      REGISTRY_HTTP_HEADERS_Access-Control-Allow-Origin: "['*']"
+      REGISTRY_HTTP_HEADERS_Access-Control-Allow-Methods: '[HEAD,GET,OPTIONS,DELETE]'
+      REGISTRY_HTTP_HEADERS_Access-Control-Allow-Credentials: '[true]'
+      REGISTRY_HTTP_HEADERS_Access-Control-Allow-Headers: '[Authorization,Accept,Cache-Control]'
+      REGISTRY_HTTP_HEADERS_Access-Control-Expose-Headers: '[Docker-Content-Digest]'
+      REGISTRY_STORAGE_DELETE_ENABLED: 'true'
+      REGISTRY_LOG_LEVEL: error
+      OTEL_TRACES_EXPORTER: none
+    ports:
+      - 5000:5000
+    volumes:
+      - data:/data
+      - registry:/var/lib/registry
+    networks:
+      - localcloud
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:5000/v2/"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  data:
+  registry:
+
+networks:
+  localcloud:
+    external: true

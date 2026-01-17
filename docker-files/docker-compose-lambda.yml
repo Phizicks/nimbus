@@ -1,0 +1,24 @@
+services:
+  lambda:
+    build:
+      context: ../src/lambda
+    restart: always
+    volumes:
+      - data:/data
+      - lambda-zip:/data/lambda-files/
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      LOCALCLOUD_API_HOSTNAME: lambda
+      STORAGE_PATH: /data
+      LOG_LEVEL: DEBUG
+    networks:
+      - localcloud
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  data:
+  lambda-zip:

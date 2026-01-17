@@ -1,0 +1,13 @@
+[project]
+name = "aws-api"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "boto3>=1.42.15",
+    "docker>=7.1.0",
+    "flask>=3.1.2",
+    "requests>=2.32.5",
+    "requests-unixsocket>=0.4.1",
+]

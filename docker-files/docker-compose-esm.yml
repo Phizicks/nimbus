@@ -1,0 +1,20 @@
+services:
+  esm:
+    build:
+      context: ../src/event-source-mapping
+    restart: always
+    volumes:
+      - data:/data
+    environment:
+      STORAGE_PATH: /data
+      LOG_LEVEL: DEBUG
+    networks:
+      - localcloud
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  data:

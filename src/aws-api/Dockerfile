@@ -1,0 +1,31 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install Docker CLI and dependencies
+# The installer requires curl (and certificates) to download the release archive
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# Copy the API emulator
+RUN mkdir -p /app/console /data
+COPY  ./console/ /app/console/
+COPY ./pyproject.toml ./*.py ./uv.lock ./console .
+
+# Sync the project into a new environment, asserting the lockfile is up to date
+WORKDIR /app
+RUN uv sync --locked
+
+# Expose the API port (same as LocalStack)
+EXPOSE 4566
+
+#USER 1000
+RUN ls -l /app > /app/list
+
+# Run the API emulator
+CMD ["uv", "run", "/app/aws_api.py"]
+
+# CMD ["uv", "run", "python", "-u", "/app/aws_api.py"]
