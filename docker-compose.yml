@@ -1,0 +1,48 @@
+services:
+  # Lambda API Emulator - mimics AWS Lambda API with full CRUD operations
+  api:
+    restart: always
+    build:
+      context: ./aws-api
+      dockerfile: ./Dockerfile.api
+    ports:
+      - "4566:4566"  # HTTP
+    volumes:
+      # - s3-lambda-functions:/tmp/lambda-functions
+      - data:/data
+      - ./aws-api:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      STORAGE_PATH: /data
+      FLASK_ENV: development
+      LOCALCLOUD_API_HOSTNAME: api
+      LOCALCLOUD_NETWORK_NAME: localcloud
+      AWS_ENDPOINT_URL_SQS: http://sqs:4566
+      LOG_LEVEL: DEBUG
+    networks:
+      - localcloud
+    depends_on:
+      - lambda
+      - sqs
+      - ecr
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+include:
+  - path: docker-files/docker-compose-ecr.yml
+  - path: docker-files/docker-compose-sqs.yml
+  - path: docker-files/docker-compose-s3.yml
+  - path: docker-files/docker-compose-lambda.yml
+  - path: docker-files/docker-compose-esm.yml
+
+networks:
+  localcloud:
+    external: true
+
+volumes:
+    data:
+    # s3-lambda-functions:

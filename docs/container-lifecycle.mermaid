@@ -1,0 +1,65 @@
+stateDiagram-v2
+    [*] --> Creating: start_lambda_container()
+
+    Creating --> Initializing: Docker container created<br/>Container ID assigned<br/>Log streaming started
+
+    Initializing --> Ready: wait_for_container_ready()<br/>Container status = 'running'<br/>mark_container_ready()<br/>Init duration recorded
+
+    Initializing --> Failed: Container exits<br/>during startup
+
+    Ready --> Polling: Runtime begins polling<br/>/runtime/invocation/next
+
+    Polling --> Active: Invocation delivered<br/>mark_container_active()<br/>associate_request()
+
+    Active --> Polling: Invocation complete<br/>Response sent<br/>Container ready for next
+
+    Polling --> Idle: No work for<br/>idle_timeout seconds<br/>(default 60s)
+
+    Idle --> Polling: New invocation queued
+
+    Idle --> ScalingDown: Container count ><br/>provisioned capacity<br/>idle_timeout exceeded
+
+    Active --> Failed: Container crashes<br/>during execution
+
+    Polling --> Failed: Container exits<br/>unexpectedly
+
+    ScalingDown --> Stopped: stop_container_gracefully()<br/>basic_ack pending messages<br/>container.stop(timeout=900)<br/>container.remove()
+
+    Failed --> Stopped: Cleanup thread<br/>removes container<br/>Logs last 50 lines
+
+    Stopped --> [*]: Container removed<br/>Unregistered from maps<br/>Logs finalized
+
+    note right of Creating
+        init_start_time recorded
+        Metadata created:
+        - container_id
+        - function_name
+        - ip_address
+    end note
+
+    note right of Ready
+        init_end_time recorded
+        init_duration_ms calculated
+        First invocation will be
+        marked as "cold start"
+    end note
+
+    note right of Active
+        last_activity updated
+        request_id mapped
+        Logs correlated
+    end note
+
+    note right of Idle
+        Monitor loop checks:
+        - Queue depth
+        - idle_timeout
+        - Provisioned capacity
+    end note
+
+    note right of Stopped
+        Cleanup actions:
+        - Remove from container_metadata
+        - Remove from container_activity
+        - Stop log streaming
+    end note

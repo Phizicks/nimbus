@@ -1,0 +1,42 @@
+services:
+  sqs-backend:
+    build:
+      context: ../src/sqs
+      dockerfile: Dockerfile-backend
+    # image: softwaremill/elasticmq:latest
+    restart: always
+    ports:
+      - 9324:9324
+      - 9325:9325
+    environment:
+      ELASTIC_MQ_PORT: 9324
+      LOG_LEVEL: WARNING
+    volumes:
+      - data:/data
+    networks:
+      - localcloud
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9324/?Action=ListQueues"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  sqs:
+    build:
+      context: ../src/sqs
+      dockerfile: Dockerfile-sqs
+    restart: always
+    environment:
+      ELASTICMQ_HOST: sqs-backend
+      ELASTICMQ_PORT: 9324
+      LOG_LEVEL: DEBUG
+    networks:
+      - localcloud
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  data:

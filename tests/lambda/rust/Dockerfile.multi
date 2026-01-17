@@ -1,0 +1,20 @@
+# Stage 1: Build the Rust binary using official Rust image
+FROM rust:1.75-slim as builder
+
+WORKDIR /build
+
+# Copy your Rust project files
+COPY Cargo.toml ./
+COPY src ./src
+
+# Build the release binary
+RUN cargo build --release --target x86_64-unknown-linux-gnu
+
+# Stage 2: Create the Lambda runtime image
+FROM public.ecr.aws/lambda/provided:al2023
+
+# Copy the compiled binary from builder stage
+COPY --from=builder /build/target/x86_64-unknown-linux-gnu/release/bootstrap ${LAMBDA_RUNTIME_DIR}/bootstrap
+
+# Set the handler (Lambda will execute the bootstrap binary)
+CMD [ "bootstrap" ]

@@ -1,0 +1,391 @@
+digraph LocalCloud {
+    // Graph settings
+    rankdir=TB;
+    compound=true;
+    newrank=true;
+    splines=ortho;
+    nodesep=0.5;
+    ranksep=0.8;
+
+    // Style definitions
+    node [shape=box, style="rounded,filled", fontname="Arial", fontsize=10];
+    edge [fontname="Arial", fontsize=9];
+
+    // Color scheme
+    graph [style="rounded", bgcolor="#f8f9fa"];
+
+    // ==================== CLIENT LAYER ====================
+    subgraph cluster_clients {
+        label="Client Layer";
+        style="rounded,filled";
+        fillcolor="#e3f2fd";
+
+        aws_cli [label="AWS CLI", fillcolor="#90caf9", shape=box];
+        boto3 [label="boto3 SDK", fillcolor="#90caf9", shape=box];
+        aws_sdk [label="AWS SDK", fillcolor="#90caf9", shape=box];
+        docker_cli [label="Docker CLI", fillcolor="#90caf9", shape=box];
+    }
+
+    // ==================== API GATEWAY LAYER ====================
+    subgraph cluster_api_gateway {
+        label="API Gateway (Flask - Port 4566)";
+        style="rounded,filled";
+        fillcolor="#fff3e0";
+
+        handle_request [label="handle_request()\nRoute Dispatcher", fillcolor="#ffcc80"];
+
+        subgraph cluster_request_handlers {
+            label="Request Handlers";
+            style="rounded,filled";
+            fillcolor="#ffe0b2";
+
+            get_request_data [label="get_request_data()", fillcolor="#ffb74d"];
+            get_action_from_request [label="get_action_from_request()", fillcolor="#ffb74d"];
+            get_aws_operation [label="get_aws_operation()", fillcolor="#ffb74d"];
+            sigv4_validator [label="SigV4Validator\nvalidate_request()", fillcolor="#ffb74d"];
+        }
+    }
+
+    // ==================== LAMBDA SERVICE ====================
+    subgraph cluster_lambda {
+        label="Lambda Service";
+        style="rounded,filled";
+        fillcolor="#e8f5e9";
+
+        // Lambda API Endpoints
+        subgraph cluster_lambda_api {
+            label="Lambda API Endpoints";
+            style="rounded,filled";
+            fillcolor="#c8e6c9";
+
+            create_function [label="create_function()", fillcolor="#81c784"];
+            delete_function [label="delete_function()", fillcolor="#81c784"];
+            update_function_code [label="update_function_code()", fillcolor="#81c784"];
+            update_function_config [label="update_function_configuration()", fillcolor="#81c784"];
+            invoke_function [label="invoke_function()", fillcolor="#81c784"];
+            get_function [label="get_function()", fillcolor="#81c784"];
+            list_functions [label="list_functions()", fillcolor="#81c784"];
+            put_concurrency [label="put_function_concurrency()", fillcolor="#81c784"];
+        }
+
+        // Container Lifecycle Manager
+        subgraph cluster_lifecycle {
+            label="ContainerLifecycleManager";
+            style="rounded,filled";
+            fillcolor="#a5d6a7";
+
+            lifecycle_manager [label="ContainerLifecycleManager", fillcolor="#66bb6a", shape=component];
+            start_lambda_container [label="start_lambda_container()", fillcolor="#4caf50"];
+            start_container_verify [label="start_container_with_verification()", fillcolor="#4caf50"];
+            wait_container_ready [label="wait_for_container_ready()", fillcolor="#4caf50"];
+            mark_container_active [label="mark_container_active()", fillcolor="#4caf50"];
+            get_invocation_queue [label="get_or_create_invocation_queue()", fillcolor="#4caf50"];
+            wait_invocation_response [label="wait_for_invocation_response()", fillcolor="#4caf50"];
+            mark_invocation_complete [label="mark_invocation_complete()", fillcolor="#4caf50"];
+            monitor_loop [label="_monitor_loop()\nScaling & Cleanup", fillcolor="#4caf50"];
+        }
+
+        // Runtime API
+        subgraph cluster_runtime_api {
+            label="Lambda Runtime API";
+            style="rounded,filled";
+            fillcolor="#c8e6c9";
+
+            runtime_next [label="/runtime/invocation/next\nContainer polls for work", fillcolor="#81c784"];
+            runtime_response [label="/runtime/invocation/<id>/response\nContainer sends result", fillcolor="#81c784"];
+            runtime_error [label="/runtime/invocation/<id>/error\nContainer sends error", fillcolor="#81c784"];
+        }
+    }
+
+    // ==================== ECR SERVICE ====================
+    subgraph cluster_ecr {
+        label="ECR Service";
+        style="rounded,filled";
+        fillcolor="#f3e5f5";
+
+        // ECR API
+        subgraph cluster_ecr_api {
+            label="ECR API Endpoints";
+            style="rounded,filled";
+            fillcolor="#e1bee7";
+
+            create_repo [label="create_repository()", fillcolor="#ce93d8"];
+            delete_repo [label="delete_repository()", fillcolor="#ce93d8"];
+            describe_repos [label="describe_repositories()", fillcolor="#ce93d8"];
+            put_image [label="put_image()", fillcolor="#ce93d8"];
+            batch_get_image [label="batch_get_image()", fillcolor="#ce93d8"];
+            list_images [label="list_images()", fillcolor="#ce93d8"];
+            get_auth_token [label="get_authorization_token()", fillcolor="#ce93d8"];
+        }
+
+        // Registry Proxy
+        docker_registry_proxy [label="docker_registry_proxy()\n/v2/<path>", fillcolor="#ba68c8"];
+
+        // Internal Registry
+        ecr_registry [label="ECR Registry\n(Docker Registry v2)\necr:5000", fillcolor="#ab47bc", shape=cylinder];
+    }
+
+    // ==================== SQS SERVICE ====================
+    subgraph cluster_sqs {
+        label="SQS Service";
+        style="rounded,filled";
+        fillcolor="#fff9c4";
+
+        // Queue Manager
+        subgraph cluster_queue_manager {
+            label="QueueManager";
+            style="rounded,filled";
+            fillcolor="#fff59d";
+
+            queue_manager [label="QueueManager", fillcolor="#ffee58", shape=component];
+            create_queue [label="create_queue()", fillcolor="#ffeb3b"];
+            delete_queue [label="delete_queue()", fillcolor="#ffeb3b"];
+            send_message [label="send_message()", fillcolor="#ffeb3b"];
+            receive_message [label="receive_message()", fillcolor="#ffeb3b"];
+            delete_message [label="delete_message()", fillcolor="#ffeb3b"];
+            change_visibility [label="change_message_visibility()", fillcolor="#ffeb3b"];
+            cleanup_loop [label="_cleanup_loop()\nVisibility Timeout Handler", fillcolor="#ffeb3b"];
+        }
+
+        // RabbitMQ Backend
+        rabbitmq [label="RabbitMQ\nMessage Broker\nQueues: standard, delay, visibility", fillcolor="#fdd835", shape=cylinder];
+    }
+
+    // ==================== SSM SERVICE ====================
+    subgraph cluster_ssm {
+        label="SSM Parameter Store";
+        style="rounded,filled";
+        fillcolor="#e0f7fa";
+
+        subgraph cluster_ssm_api {
+            label="SSM API";
+            style="rounded,filled";
+            fillcolor="#b2ebf2";
+
+            ssm_store [label="SSMParameterStore", fillcolor="#4dd0e1", shape=component];
+            put_parameter [label="put_parameter()", fillcolor="#26c6da"];
+            get_parameter [label="get_parameter()", fillcolor="#26c6da"];
+            get_parameters [label="get_parameters()", fillcolor="#26c6da"];
+            get_by_path [label="get_parameters_by_path()", fillcolor="#26c6da"];
+            delete_parameter [label="delete_parameter()", fillcolor="#26c6da"];
+            get_history [label="get_parameter_history()", fillcolor="#26c6da"];
+        }
+    }
+
+    // ==================== EVENT SOURCE MAPPING ====================
+    subgraph cluster_esm {
+        label="Event Source Mapping";
+        style="rounded,filled";
+        fillcolor="#fce4ec";
+
+        subgraph cluster_esm_manager {
+            label="EventSourceMapping Manager";
+            style="rounded,filled";
+            fillcolor="#f8bbd0";
+
+            esm_manager [label="EventSourceMapping", fillcolor="#f48fb1", shape=component];
+            create_esm [label="create_event_source_mapping()", fillcolor="#ec407a"];
+            delete_esm [label="delete_event_source_mapping()", fillcolor="#ec407a"];
+            update_esm [label="update_event_source_mapping()", fillcolor="#ec407a"];
+            list_esm [label="list_event_source_mappings()", fillcolor="#ec407a"];
+            poll_queue [label="_poll_queue()\nBackground Polling Thread", fillcolor="#ec407a"];
+            invoke_lambda_batch [label="_invoke_lambda_with_batch()", fillcolor="#ec407a"];
+        }
+    }
+
+    // ==================== DATABASE LAYER ====================
+    subgraph cluster_databases {
+        label="Data Persistence Layer";
+        style="rounded,filled";
+        fillcolor="#efebe9";
+
+        subgraph cluster_db_classes {
+            label="Database Managers";
+            style="rounded,filled";
+            fillcolor="#d7ccc8";
+
+            db_manager [label="Database\nLambda Functions", fillcolor="#bcaaa4", shape=cylinder];
+            sqs_db [label="SQSDatabase\nQueues & Receipts", fillcolor="#bcaaa4", shape=cylinder];
+            esm_db [label="EMSDatabase\nEvent Mappings", fillcolor="#bcaaa4", shape=cylinder];
+            ssm_db [label="SsmDatabase\nParameters & Versions", fillcolor="#bcaaa4", shape=cylinder];
+        }
+
+        sqlite_files [label="SQLite Files\naws_metadata.db\nsqs_metadata.db\nevent_source_mappings.db\nssm_metadata.db", fillcolor="#a1887f", shape=folder];
+    }
+
+    // ==================== SUPPORTING SERVICES ====================
+    subgraph cluster_support {
+        label="Supporting Services";
+        style="rounded,filled";
+        fillcolor="#eceff1";
+
+        log_manager [label="LogManager\nContainer Log Aggregation", fillcolor="#b0bec5", shape=component];
+        cloudwatch_logger [label="CloudWatchStyleLogger\nLog Formatting", fillcolor="#b0bec5", shape=component];
+        docker_client [label="Docker Client\nContainer Management", fillcolor="#b0bec5", shape=component];
+    }
+
+    // ==================== RUNTIME CONTAINERS ====================
+    subgraph cluster_containers {
+        label="Lambda Function Containers";
+        style="rounded,filled";
+        fillcolor="#e8eaf6";
+
+        container1 [label="Container 1\nPython 3.12\nRuntime API Client", fillcolor="#9fa8da"];
+        container2 [label="Container 2\nNode.js 20\nRuntime API Client", fillcolor="#9fa8da"];
+        container3 [label="Container N\nCustom Runtime\nRuntime API Client", fillcolor="#9fa8da"];
+    }
+
+    // ==================== CLIENT TO API CONNECTIONS ====================
+    aws_cli -> handle_request [label="HTTP"];
+    boto3 -> handle_request [label="HTTP"];
+    aws_sdk -> handle_request [label="HTTP"];
+    docker_cli -> docker_registry_proxy [label="Docker Registry API"];
+
+    // ==================== API GATEWAY ROUTING ====================
+    handle_request -> get_request_data;
+    handle_request -> get_action_from_request;
+    handle_request -> get_aws_operation;
+    handle_request -> sigv4_validator;
+
+    // Route to services
+    handle_request -> create_function [label="Lambda API"];
+    handle_request -> create_queue [label="SQS API"];
+    handle_request -> create_repo [label="ECR API"];
+    handle_request -> put_parameter [label="SSM API"];
+    handle_request -> create_esm [label="ESM API"];
+
+    // ==================== LAMBDA SERVICE FLOW ====================
+    create_function -> lifecycle_manager;
+    delete_function -> lifecycle_manager;
+    update_function_code -> lifecycle_manager;
+    invoke_function -> lifecycle_manager;
+
+    lifecycle_manager -> start_lambda_container;
+    lifecycle_manager -> get_invocation_queue;
+    lifecycle_manager -> wait_invocation_response;
+    lifecycle_manager -> monitor_loop;
+
+    start_lambda_container -> docker_client;
+    start_lambda_container -> log_manager;
+    start_lambda_container -> db_manager;
+
+    get_invocation_queue -> container1 [label="queues work"];
+    get_invocation_queue -> container2 [label="queues work"];
+    get_invocation_queue -> container3 [label="queues work"];
+
+    container1 -> runtime_next [label="GET", style=dashed];
+    container2 -> runtime_next [label="GET", style=dashed];
+    container3 -> runtime_next [label="GET", style=dashed];
+
+    runtime_next -> lifecycle_manager [label="fetch from queue"];
+
+    container1 -> runtime_response [label="POST result", style=dashed];
+    container2 -> runtime_response [label="POST result", style=dashed];
+    container3 -> runtime_error [label="POST error", style=dashed];
+
+    runtime_response -> mark_invocation_complete;
+    runtime_error -> mark_invocation_complete;
+
+    mark_invocation_complete -> wait_invocation_response [label="unblocks"];
+
+    // Lambda database operations
+    create_function -> db_manager;
+    get_function -> db_manager;
+    list_functions -> db_manager;
+
+    // Lambda logging
+    container1 -> log_manager [label="stdout/stderr", style=dotted];
+    container2 -> log_manager [label="stdout/stderr", style=dotted];
+    container3 -> log_manager [label="stdout/stderr", style=dotted];
+    log_manager -> cloudwatch_logger;
+
+    // ==================== ECR SERVICE FLOW ====================
+    docker_registry_proxy -> ecr_registry [label="proxy requests"];
+
+    create_repo -> db_manager;
+    put_image -> ecr_registry;
+    put_image -> db_manager;
+    batch_get_image -> ecr_registry;
+    list_images -> db_manager;
+
+    // ECR to Lambda
+    create_function -> ecr_registry [label="pull image"];
+    update_function_code -> ecr_registry [label="pull image"];
+
+    // ==================== SQS SERVICE FLOW ====================
+    queue_manager -> rabbitmq;
+
+    create_queue -> queue_manager;
+    send_message -> queue_manager;
+    receive_message -> queue_manager;
+    delete_message -> queue_manager;
+
+    queue_manager -> sqs_db;
+    cleanup_loop -> rabbitmq [label="requeue expired"];
+    cleanup_loop -> sqs_db [label="track receipts"];
+
+    // ==================== SSM SERVICE FLOW ====================
+    ssm_store -> ssm_db;
+    put_parameter -> ssm_store;
+    get_parameter -> ssm_store;
+    get_by_path -> ssm_store;
+
+    // SSM to Lambda (environment variables)
+    create_function -> ssm_store [label="fetch params", style=dotted];
+
+    // ==================== EVENT SOURCE MAPPING FLOW ====================
+    create_esm -> esm_manager;
+    esm_manager -> esm_db;
+
+    poll_queue -> queue_manager [label="receive_message"];
+    poll_queue -> lifecycle_manager [label="check containers"];
+    poll_queue -> invoke_lambda_batch;
+    invoke_lambda_batch -> get_invocation_queue [label="queue work"];
+    invoke_lambda_batch -> queue_manager [label="delete on success"];
+
+    esm_manager -> poll_queue [label="spawn threads"];
+
+    // ==================== DATABASE PERSISTENCE ====================
+    db_manager -> sqlite_files;
+    sqs_db -> sqlite_files;
+    esm_db -> sqlite_files;
+    ssm_db -> sqlite_files;
+
+    // ==================== CROSS-SERVICE INTERACTIONS ====================
+    // SQS to Lambda via ESM
+    rabbitmq -> poll_queue [label="poll messages", style=bold, color=blue];
+    poll_queue -> lifecycle_manager [label="invoke Lambda", style=bold, color=blue];
+
+    // Lambda reads from SQS directly
+    container1 -> receive_message [label="boto3 SDK", style=dotted];
+    container2 -> receive_message [label="AWS SDK", style=dotted];
+
+    // Lambda writes to SQS
+    container1 -> send_message [label="boto3 SDK", style=dotted];
+    container2 -> send_message [label="AWS SDK", style=dotted];
+
+    // Lambda reads SSM parameters
+    container1 -> get_parameter [label="boto3 SDK", style=dotted];
+    container2 -> get_parameter [label="AWS SDK", style=dotted];
+
+    // ==================== LEGEND ====================
+    subgraph cluster_legend {
+        label="Legend";
+        style="rounded,filled";
+        fillcolor="white";
+
+        leg1 [label="Solid Line = Primary Flow", style="", shape=plaintext];
+        leg2 [label="Dashed Line = Runtime API", style="", shape=plaintext];
+        leg3 [label="Dotted Line = SDK/Logs", style="", shape=plaintext];
+        leg4 [label="Bold Blue = ESM Trigger", style="", shape=plaintext];
+
+        leg1 -> leg2 [style=invis];
+        leg2 -> leg3 [style=invis];
+        leg3 -> leg4 [style=invis];
+    }
+
+    // Layout hints
+    {rank=same; aws_cli; boto3; aws_sdk; docker_cli}
+    {rank=same; rabbitmq; ecr_registry; sqlite_files}
+    {rank=same; container1; container2; container3}
+}

@@ -1,0 +1,297 @@
+digraph FunctionCalls {
+    rankdir=TB;
+    node [shape=box, style=rounded];
+
+    // Styling
+    graph [fontname="Arial", fontsize=10];
+    node [fontname="Arial", fontsize=9];
+    edge [fontname="Arial", fontsize=8];
+
+    // Container Lifecycle Manager
+    subgraph cluster_container_lifecycle {
+        label="container_lifecycle.py";
+        style=filled;
+        color=lightgrey;
+
+        clm_start [label="start()"];
+        clm_stop [label="stop()"];
+        clm_mark_container_ready [label="mark_container_ready()"];
+        clm_get_container_metadata [label="get_container_metadata()"];
+        clm_monitor_loop [label="_monitor_loop()"];
+        clm_check_all_functions [label="_check_all_functions()"];
+        clm_cleanup_stopped [label="_cleanup_stopped_containers()"];
+        clm_manage_function_scaling [label="_manage_function_scaling()"];
+        clm_scale_down_idle [label="_scale_down_idle_containers()"];
+        clm_get_function_containers [label="_get_function_containers()"];
+        clm_get_queue_depth [label="_get_queue_depth()"];
+        clm_start_container_verification [label="start_container_with_verification()"];
+        clm_start_container_instance [label="_start_container_instance()"];
+        clm_stop_container_gracefully [label="stop_container_gracefully()"];
+        clm_mark_invocation_complete [label="mark_invocation_complete()"];
+        clm_mark_invocation_error [label="mark_invocation_error()"];
+        clm_wait_for_invocation_response [label="wait_for_invocation_response()"];
+        clm_kill_container [label="kill_container()"];
+        clm_graceful_shutdown_all [label="_graceful_shutdown_all()"];
+        clm_mark_container_active [label="mark_container_active()"];
+        clm_set_function_config [label="set_function_config()"];
+        clm_start_lambda_container [label="start_lambda_container()"];
+        clm_create_dockerfile [label="create_dockerfile_for_runtime()"];
+        clm_wait_for_container_ready [label="wait_for_container_ready()"];
+    }
+
+    // Event Source Mapping
+    subgraph cluster_event_source {
+        label="event_source_mapping.py";
+        style=filled;
+        color=lightblue;
+
+        esm_init [label="__init__()"];
+        esm_load_and_start [label="_load_and_start_existing_mappings()"];
+        esm_create [label="create_event_source_mapping()"];
+        esm_list [label="list_event_source_mappings()"];
+        esm_get [label="get_event_source_mapping()"];
+        esm_delete [label="delete_event_source_mapping()"];
+        esm_update [label="update_event_source_mapping()"];
+        esm_start_polling [label="_start_polling()"];
+        esm_stop_polling [label="_stop_polling()"];
+        esm_poll_queue [label="_poll_queue()"];
+        esm_receive_messages [label="_receive_messages()"];
+        esm_invoke_lambda [label="_invoke_lambda_with_batch()"];
+        esm_delete_messages [label="_delete_messages()"];
+        esm_start [label="start()"];
+        esm_startup_worker [label="_startup_worker()"];
+        esm_stop [label="stop()"];
+        esm_get_status [label="get_status()"];
+
+        // Database methods
+        emsdb_init [label="EMSDatabase.init_db()"];
+        emsdb_create [label="EMSDatabase.create_mapping()"];
+        emsdb_get [label="EMSDatabase.get_mapping()"];
+        emsdb_get_all [label="EMSDatabase.get_all_mappings()"];
+        emsdb_get_enabled [label="EMSDatabase.get_enabled_mappings()"];
+        emsdb_update [label="EMSDatabase.update_mapping()"];
+        emsdb_delete [label="EMSDatabase.delete_mapping()"];
+        emsdb_exists [label="EMSDatabase.mapping_exists()"];
+    }
+
+    // Event Invoke Config
+    subgraph cluster_event_invoke {
+        label="event_invoke_config.py";
+        style=filled;
+        color=lightyellow;
+
+        eic_put [label="put_function_event_invoke_config()"];
+        eic_get [label="get_function_event_invoke_config()"];
+        eic_update [label="update_function_event_invoke_config()"];
+        eic_delete [label="delete_function_event_invoke_config()"];
+        eic_list [label="list_function_event_invoke_configs()"];
+
+        eicdb_init [label="EventInvokeConfigDatabase.init_db()"];
+        eicdb_put [label="EventInvokeConfigDatabase.put_config()"];
+        eicdb_get [label="EventInvokeConfigDatabase.get_config()"];
+        eicdb_delete [label="EventInvokeConfigDatabase.delete_config()"];
+        eicdb_list [label="EventInvokeConfigDatabase.list_configs()"];
+    }
+
+    // SSM Parameters
+    subgraph cluster_ssm {
+        label="ssm_parameters.py";
+        style=filled;
+        color=lightgreen;
+
+        ssm_put [label="put_parameter()"];
+        ssm_get [label="get_parameter()"];
+        ssm_get_params [label="get_parameters()"];
+        ssm_get_by_path [label="get_parameters_by_path()"];
+        ssm_delete [label="delete_parameter()"];
+        ssm_describe [label="describe_parameters()"];
+        ssm_get_history [label="get_parameter_history()"];
+        ssm_get_tags [label="get_parameter_tags()"];
+        ssm_validate_name [label="_validate_parameter_name()"];
+        ssm_validate_pattern [label="_validate_allowed_pattern()"];
+        ssm_encrypt [label="_encrypt_value()"];
+        ssm_decrypt [label="_decrypt_value()"];
+
+        ssmdb_init [label="SsmDatabase.init_db()"];
+    }
+
+    // Queue Manager
+    subgraph cluster_queue {
+        label="queue_manager.py";
+        style=filled;
+        color=lightcoral;
+
+        qm_start [label="start()"];
+        qm_stop [label="stop()"];
+        qm_load_receipts [label="_load_active_receipts()"];
+        qm_cleanup_loop [label="_cleanup_loop()"];
+        qm_get_connection [label="get_rabbitmq_connection()"];
+        qm_internal_name [label="internal_queue_name()"];
+        qm_setup_queue [label="_setup_queue_in_rabbitmq()"];
+        qm_create_queue [label="create_queue()"];
+        qm_delete_queue [label="delete_queue()"];
+        qm_list_queues [label="list_queues()"];
+        qm_send_message [label="send_message()"];
+        qm_send_batch [label="send_message_batch()"];
+        qm_api_receive [label="api_receive_message()"];
+        qm_receive_message [label="receive_message()"];
+        qm_delete_message [label="delete_message()"];
+        qm_delete_batch [label="delete_message_batch()"];
+        qm_delete_direct [label="delete_message_direct()"];
+        qm_change_visibility [label="change_message_visibility()"];
+        qm_change_visibility_batch [label="change_message_visibility_batch()"];
+        qm_purge_queue [label="purge_queue()"];
+        qm_get_attributes [label="get_queue_attributes()"];
+        qm_set_attributes [label="set_queue_attributes()"];
+        qm_calc_md5 [label="_calculate_message_attributes_md5()"];
+
+        sqsdb_init [label="SQSDatabase.__init__()"];
+        sqsdb_create_queue [label="SQSDatabase.create_queue()"];
+        sqsdb_get_queue [label="SQSDatabase.get_queue()"];
+        sqsdb_get_by_name [label="SQSDatabase.get_queue_by_name()"];
+        sqsdb_list_queues [label="SQSDatabase.list_queues()"];
+        sqsdb_update_attrs [label="SQSDatabase.update_queue_attributes()"];
+        sqsdb_delete_queue [label="SQSDatabase.delete_queue()"];
+        sqsdb_create_receipt [label="SQSDatabase.create_receipt_handle()"];
+        sqsdb_get_receipt [label="SQSDatabase.get_receipt_handle()"];
+        sqsdb_delete_receipt [label="SQSDatabase.delete_receipt_handle()"];
+        sqsdb_get_expired [label="SQSDatabase.get_expired_receipts()"];
+    }
+
+    // Container Lifecycle Manager flows
+    clm_start -> clm_monitor_loop;
+    clm_monitor_loop -> clm_check_all_functions;
+    clm_check_all_functions -> clm_cleanup_stopped;
+    clm_check_all_functions -> clm_manage_function_scaling;
+    clm_cleanup_stopped -> clm_get_function_containers;
+    clm_manage_function_scaling -> clm_get_function_containers;
+    clm_manage_function_scaling -> clm_get_queue_depth;
+    clm_manage_function_scaling -> clm_start_container_instance;
+    clm_manage_function_scaling -> clm_scale_down_idle;
+    clm_scale_down_idle -> clm_get_function_containers;
+    clm_scale_down_idle -> clm_stop_container_gracefully;
+    clm_start_container_verification -> clm_start_container_instance;
+    clm_start_container_verification -> clm_get_function_containers;
+    clm_start_container_instance -> clm_start_lambda_container;
+    clm_start_lambda_container -> clm_create_dockerfile;
+    clm_start_lambda_container -> clm_wait_for_container_ready;
+    clm_start_lambda_container -> clm_mark_container_ready;
+    clm_wait_for_invocation_response -> clm_get_container_metadata;
+    clm_stop -> clm_graceful_shutdown_all;
+    clm_graceful_shutdown_all -> clm_stop_container_gracefully;
+
+    // Event Source Mapping flows
+    esm_init -> emsdb_init;
+    esm_start -> esm_startup_worker;
+    esm_startup_worker -> esm_load_and_start;
+    esm_load_and_start -> emsdb_get_enabled;
+    esm_load_and_start -> esm_start_polling;
+    esm_create -> emsdb_create;
+    esm_create -> esm_start_polling;
+    esm_list -> emsdb_get_all;
+    esm_get -> emsdb_get;
+    esm_delete -> esm_stop_polling;
+    esm_delete -> emsdb_delete;
+    esm_update -> emsdb_get;
+    esm_update -> emsdb_update;
+    esm_update -> esm_start_polling;
+    esm_update -> esm_stop_polling;
+    esm_start_polling -> emsdb_get;
+    esm_poll_queue -> emsdb_get;
+    esm_poll_queue -> esm_receive_messages;
+    esm_poll_queue -> esm_invoke_lambda;
+    esm_poll_queue -> esm_delete_messages;
+    esm_stop -> esm_stop_polling;
+    esm_get_status -> emsdb_get;
+
+    // Cross-component calls
+    esm_poll_queue -> clm_get_function_containers [color=red, style=bold];
+    esm_poll_queue -> clm_start_container_verification [color=red, style=bold];
+    esm_receive_messages -> qm_receive_message [color=blue, style=bold];
+    esm_delete_messages -> qm_delete_direct [color=blue, style=bold];
+
+    // Event Invoke Config flows
+    eic_put -> eicdb_put;
+    eic_put -> eicdb_get;
+    eic_get -> eicdb_get;
+    eic_update -> eicdb_get;
+    eic_update -> eicdb_put;
+    eic_delete -> eicdb_delete;
+    eic_list -> eicdb_list;
+
+    // SSM flows
+    ssm_put -> ssm_validate_name;
+    ssm_put -> ssm_validate_pattern;
+    ssm_put -> ssm_get;
+    ssm_put -> ssm_encrypt;
+    ssm_get -> ssm_decrypt;
+    ssm_get_params -> ssm_get;
+    ssm_get_history -> ssm_decrypt;
+
+    // Queue Manager flows
+    qm_start -> qm_load_receipts;
+    qm_load_receipts -> sqsdb_get_expired;
+    qm_cleanup_loop -> qm_get_connection;
+    qm_create_queue -> qm_internal_name;
+    qm_create_queue -> qm_setup_queue;
+    qm_create_queue -> qm_get_connection;
+    qm_create_queue -> sqsdb_get_by_name;
+    qm_create_queue -> sqsdb_create_queue;
+    qm_delete_queue -> qm_internal_name;
+    qm_delete_queue -> qm_get_connection;
+    qm_delete_queue -> sqsdb_get_queue;
+    qm_delete_queue -> sqsdb_delete_queue;
+    qm_list_queues -> sqsdb_list_queues;
+    qm_list_queues -> qm_get_connection;
+    qm_send_message -> qm_internal_name;
+    qm_send_message -> qm_calc_md5;
+    qm_send_message -> qm_get_connection;
+    qm_send_batch -> qm_internal_name;
+    qm_send_batch -> qm_calc_md5;
+    qm_send_batch -> qm_get_connection;
+    qm_api_receive -> qm_receive_message;
+    qm_receive_message -> qm_internal_name;
+    qm_receive_message -> sqsdb_get_queue;
+    qm_receive_message -> qm_get_connection;
+    qm_receive_message -> sqsdb_create_receipt;
+    qm_delete_message -> sqsdb_get_receipt;
+    qm_delete_message -> sqsdb_delete_receipt;
+    qm_delete_batch -> sqsdb_get_receipt;
+    qm_delete_batch -> sqsdb_delete_receipt;
+    qm_change_visibility -> sqsdb_get_receipt;
+    qm_change_visibility -> sqsdb_create_receipt;
+    qm_change_visibility_batch -> sqsdb_get_receipt;
+    qm_change_visibility_batch -> sqsdb_create_receipt;
+    qm_purge_queue -> qm_internal_name;
+    qm_purge_queue -> sqsdb_get_queue;
+    qm_purge_queue -> sqsdb_delete_queue;
+    qm_purge_queue -> qm_get_connection;
+    qm_get_attributes -> qm_internal_name;
+    qm_get_attributes -> sqsdb_get_queue;
+    qm_get_attributes -> sqsdb_delete_queue;
+    qm_get_attributes -> qm_get_connection;
+    qm_set_attributes -> qm_internal_name;
+    qm_set_attributes -> sqsdb_get_queue;
+    qm_set_attributes -> sqsdb_delete_queue;
+    qm_set_attributes -> sqsdb_update_attrs;
+    qm_set_attributes -> qm_get_connection;
+    qm_cleanup_loop -> sqsdb_get_queue;
+    qm_cleanup_loop -> sqsdb_delete_receipt;
+
+    // Legend
+    {
+        rank=sink;
+        legend [shape=none, margin=0, label=<
+            <table border="0" cellborder="1" cellspacing="0" cellpadding="4">
+                <tr><td colspan="2"><b>Legend</b></td></tr>
+                <tr><td bgcolor="lightgrey">Container Lifecycle</td><td>Core container management</td></tr>
+                <tr><td bgcolor="lightblue">Event Source Mapping</td><td>SQS → Lambda triggers</td></tr>
+                <tr><td bgcolor="lightyellow">Event Invoke Config</td><td>Async invocation config</td></tr>
+                <tr><td bgcolor="lightgreen">SSM Parameters</td><td>Parameter store</td></tr>
+                <tr><td bgcolor="lightcoral">Queue Manager</td><td>SQS implementation</td></tr>
+                <tr><td>Red edges</td><td>ESM → Container calls</td></tr>
+                <tr><td>Blue edges</td><td>ESM → Queue calls</td></tr>
+            </table>
+        >];
+    }
+}
