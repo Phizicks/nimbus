@@ -1,3 +1,4 @@
+![Image](./nimbus.png)
 # Nimbus LocalCloud - Free AWS Services Emulator
 
 A **complete, free AWS services emulator** for local development. Nimbus provides the essential AWS functionality you need without the complexity or cost of paid alternatives.
@@ -283,12 +284,8 @@ Run the included test suite:
 ```bash
 cd tests
 
-# Test all runtimes
-(cd ecr && ./test.sh) && \
-(cd nodejs && ./test.sh) && \
-(cd python && ./test.sh) && \
-(cd rust && ./test.sh) && \
-echo "ALL TESTS PASSED!"
+# Test all tests found
+./run_all_tests.sh
 ```
 
 ## Debugging
@@ -360,8 +357,8 @@ Nimbus is open source and contributions are welcome, send a PR with unittests! T
 
 ## License
 
-MIT - Use freely for any purpose,
+MIT - Use freely for any purpose.
 
 ---
 
-**Built by freendom for developers who want simple, free AWS emulation**
+**Built by freedom for developers who want simple, free AWS emulation**
