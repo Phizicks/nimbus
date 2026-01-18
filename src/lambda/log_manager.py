@@ -278,6 +278,11 @@ class CloudWatchLogsDatabase:
             DELETE FROM sequence_tokens WHERE log_group_name = ?
         ''', (log_group_name,))
 
+        # Delete the log_streams
+        cursor.execute('''
+            DELETE FROM log_streams WHERE log_group_name = ?
+        ''', (log_group_name,))
+
         conn.commit()
         conn.close()
 
