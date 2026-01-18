@@ -172,7 +172,7 @@ class SSMParameterStore:
             pass
 
         if current and current.get('Parameter',{}).get('Type',"") != parameter_type:
-            logger.error(f"Putting parameter '{name}' failed due to type mismatch. existing: {current.get('Parameter',{}).get('Type','')}, new: {parameter_type}")
+            logger.info(f"Putting parameter '{name}' failed due to type mismatch. existing: {current.get('Parameter',{}).get('Type','')}, new: {parameter_type}")
             raise ValueError("Parameter type mismatch with existing parameter")
 
         conn = sqlite3.connect(DB_PATH)

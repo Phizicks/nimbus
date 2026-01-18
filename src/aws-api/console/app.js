@@ -905,7 +905,7 @@ async function deleteESM(uuid) {
 
 async function deleteFunction(functionName) {
     showConfirmModal(
-        `Are you sure you want to delete the function: ${functionName}?`,
+        `Delete the function: ${functionName}?`,
         async () => {
             try {
                 await fetch(`${API_BASE}2015-03-31/functions/${functionName}`, {
@@ -1468,7 +1468,7 @@ async function deleteSelectedLogGroups() {
 
 async function deleteLogGroup(logGroupName) {
     showConfirmModal(
-        `Are you sure you want to delete log group "${logGroupName}"?`,
+        `Delete log group: ${logGroupName}?`,
         async () => {
             try {
                 await fetch(API_BASE, {

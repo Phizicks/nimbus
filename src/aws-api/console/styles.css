@@ -244,6 +244,7 @@ tr:hover {
     max-height: 90vh;
     display: flex;
     flex-direction: column;
+    padding: 20px;
 }
 
 .modal-header {

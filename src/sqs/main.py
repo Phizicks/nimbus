@@ -514,7 +514,7 @@ class QueueManager:
             self.queue_url_cache[internal_name] = url
             return url
         except Exception as e:
-            logger.warning(f"Queue not found: {queue_name} - {e}")
+            logger.info(f"Queue not found: {queue_name} - {e}")
             return None
 
     def list_queues(self, prefix: Optional[str] = None) -> List[str]:
@@ -553,7 +553,7 @@ class QueueManager:
         try:
             queue_url = self.get_queue_url(queue_name)
             if not queue_url:
-                logger.warning(f"Queue not found: {queue_name}")
+                logger.info(f"Queue not found: {queue_name}")
                 return False
 
             self.sqs_client.delete_queue(QueueUrl=queue_url)
@@ -590,7 +590,7 @@ class QueueManager:
         try:
             queue_url = self.get_queue_url(queue_name)
             if not queue_url:
-                logger.error(f"Queue not found: {queue_name}")
+                logger.info(f"Queue not found: {queue_name}")
                 return None
 
             kwargs = {
@@ -626,7 +626,7 @@ class QueueManager:
         try:
             queue_url = self.get_queue_url(queue_name)
             if not queue_url:
-                logger.error(f"Queue not found: {queue_name}")
+                logger.info(f"Queue not found: {queue_name}")
                 return None
 
             response = self.sqs_client.send_message_batch(
@@ -658,7 +658,7 @@ class QueueManager:
         try:
             queue_url = self.get_queue_url(queue_name)
             if not queue_url:
-                logger.error(f"Queue not found: {queue_name}")
+                logger.info(f"Queue not found: {queue_name}")
                 return None
 
             kwargs = {
@@ -692,7 +692,7 @@ class QueueManager:
         try:
             queue_url = self.get_queue_url(queue_name)
             if not queue_url:
-                logger.error(f"Queue not found: {queue_name}")
+                logger.info(f"Queue not found: {queue_name}")
                 return False
 
             self.sqs_client.delete_message(
@@ -719,7 +719,7 @@ class QueueManager:
         try:
             queue_url = self.get_queue_url(queue_name)
             if not queue_url:
-                logger.error(f"Queue not found: {queue_name}")
+                logger.info(f"Queue not found: {queue_name}")
                 return None
 
             response = self.sqs_client.delete_message_batch(
@@ -748,7 +748,7 @@ class QueueManager:
         try:
             queue_url = self.get_queue_url(queue_name)
             if not queue_url:
-                logger.error(f"Queue not found: {queue_name}")
+                logger.info(f"Queue not found: {queue_name}")
                 return False
 
             self.sqs_client.change_message_visibility(
@@ -777,7 +777,7 @@ class QueueManager:
         try:
             queue_url = self.get_queue_url(queue_name)
             if not queue_url:
-                logger.error(f"Queue not found: {queue_name}")
+                logger.info(f"Queue not found: {queue_name}")
                 return None
 
             response = self.sqs_client.change_message_visibility_batch(
@@ -805,7 +805,7 @@ class QueueManager:
         try:
             queue_url = self.get_queue_url(queue_name)
             if not queue_url:
-                logger.error(f"Queue not found: {queue_name}")
+                logger.info(f"Queue not found: {queue_name}")
                 return None
 
             if not attribute_names:
@@ -835,7 +835,7 @@ class QueueManager:
         try:
             queue_url = self.get_queue_url(queue_name)
             if not queue_url:
-                logger.error(f"Queue not found: {queue_name}")
+                logger.info(f"Queue not found: {queue_name}")
                 return False
 
             self.sqs_client.set_queue_attributes(
