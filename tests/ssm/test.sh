@@ -10,9 +10,13 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-echo -e "${BLUE}========================================${NC}"
+function cleanup {
+    aws ssm delete-parameter --name /my/parameter 2>/dev/null || true
+    aws ssm delete-parameter --name /secure/parameter >/dev/null || true
+}
+trap cleanup EXIT
+
 echo -e "${BLUE}LocalCloud SSM Test Suite (AWS CLI)${NC}"
-echo -e "${BLUE}========================================${NC}"
 echo ""
 
 # Helper functions
@@ -35,7 +39,6 @@ log_info() {
 # Get all parameters
 log_info "Testing get-parameters"
 aws ssm --version | grep -q "aws-cli/2" || echo "Error: AWS CLI v2 not found"
-aws ssm delete-parameter --name /my/parameter >/dev/null || true
 aws ssm get-parameters --names /my/parameter --with-decryption
 
 # Update a parameter value
@@ -68,7 +71,8 @@ log_info "Testing get-parameters-with-tags"
 aws ssm list-tags-for-resource --resource-type "Parameter" --resource-id /my/parameter
 
 log_info "Testing storing secure string parameter with tags"
-aws ssm delete-parameter --name /secure/parameter >/dev/null || true
+
+aws ssm delete-parameter --name /secure/parameter 2>/dev/null || true
 value="securestring"
 aws ssm put-parameter --name /secure/parameter --value $value \
     --type SecureString \
