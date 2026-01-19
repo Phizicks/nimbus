@@ -55,6 +55,9 @@ BACKEND_REGISTRY_HOST = os.getenv('REGISTRY_HOST', "ecr:5000")
 # Database path for storing metadata about functions and their states.
 DB_PATH = os.getenv("STORAGE_PATH", '/data') + '/aws_metadata.db'
 
+# DynamoDB endpoint url
+DYNAMODB_ENDPOINT = os.getenv('DYNAMODB_ENDPOINT_URL', 'http://ddb:4700')
+
 # Endpoint for Event Source Mapping (ESM) service (runs in its own container)
 ESM_ENDPOINT = os.getenv('ESM_ENDPOINT_URL', 'http://esm:4566')
 
@@ -133,6 +136,48 @@ def esm_find_mapping_by_function(function_name: str):
         if m.get('FunctionName') == function_name:
             return m
     return None
+
+
+def dynamodb_request(method: str, path: str, **kwargs):
+    """Send an HTTP request to the DynamoDB endpoint."""
+    url = DYNAMODB_ENDPOINT.rstrip('/') + path
+    logger.debug(f"DynamoDB request sent: {method} {url}")
+    try:
+        resp = requests.request(method, url, timeout=30, **kwargs)
+        try:
+            return resp.status_code, resp.json(), resp
+        except Exception:
+            return resp.status_code, resp.text, resp
+    except requests.exceptions.RequestException as e:
+        logger.error(f"DynamoDB request failed: {method} {url} -> {e}")
+        return 502, {'message': 'DynamoDB service unavailable'}, None
+
+
+def proxy_to_dynamodb(operation: str, data=None):
+    """Proxy a DynamoDB API operation to the ScyllaDB service."""
+    headers = {
+        'X-Amz-Target': f'DynamoDB_20120810.{operation}',
+        'Content-Type': 'application/x-amz-json-1.1'
+    }
+
+    # Preserve original headers if available
+    for key in ['Authorization', 'X-Amz-Date', 'X-Amz-Security-Token']:
+        if key in request.headers:
+            headers[key] = request.headers[key]
+
+    status, resp, raw = dynamodb_request('POST', '/', headers=headers, json=(data or {}))
+
+    if raw is None:
+        return jsonify(resp), status
+
+    try:
+        return Response(
+            raw.content,
+            status=raw.status_code,
+            mimetype=raw.headers.get('Content-Type', 'application/x-amz-json-1.1')
+        )
+    except Exception:
+        return jsonify(resp), status
 
 
 def lambda_request(method: str, path: str, **kwargs):
@@ -1484,6 +1529,57 @@ def update_function_configuration(function_name):
             "message": f"Unhandled exception for function: {function_name} - {e}"
         }), 500
 
+# S3 Webhook
+@app.route('/webhook/s3', methods=['POST'])
+def webhook_s3():
+    """Post S3 events"""
+    try:
+        pass
+
+    except Exception as e:
+        logger.error(f"Failed to check DynamoDB status: {e}", exc_info=True)
+        return jsonify({
+            'status': 'unavailable',
+            'endpoint': DYNAMODB_ENDPOINT,
+            'error': str(e)
+        }), 503
+
+
+# DDB debug endpoint
+@app.route('/debug/dynamodb-status', methods=['GET'])
+def dynamodb_status():
+    """Get DynamoDB (ScyllaDB) service status"""
+    try:
+        # Try a simple ListTables to check connectivity
+        status, resp, raw = dynamodb_request('POST', '/',
+            headers={
+                'X-Amz-Target': 'DynamoDB_20120810.ListTables',
+                'Content-Type': 'application/x-amz-json-1.1'
+            },
+            json={}
+        )
+
+        if status == 200:
+            return jsonify({
+                'status': 'healthy',
+                'endpoint': DYNAMODB_ENDPOINT,
+                'response': resp
+            }), 200
+        else:
+            return jsonify({
+                'status': 'unhealthy',
+                'endpoint': DYNAMODB_ENDPOINT,
+                'error': resp
+            }), 503
+
+    except Exception as e:
+        logger.error(f"Failed to check DynamoDB status: {e}", exc_info=True)
+        return jsonify({
+            'status': 'unavailable',
+            'endpoint': DYNAMODB_ENDPOINT,
+            'error': str(e)
+        }), 503
+
 # EMS debug endpoint
 @app.route('/debug/ems-status', methods=['GET'])
 def ems_status():
@@ -2083,6 +2179,24 @@ def handle_request():
 
         return Response(resp.content, status=resp.status_code, headers=response_headers)
 
+    # DynamoDB operations
+    DYNAMODB_ACTIONS = {
+        'CreateTable', 'DescribeTable', 'ListTables', 'DeleteTable', 'UpdateTable',
+        'PutItem', 'GetItem', 'UpdateItem', 'DeleteItem',
+        'BatchWriteItem', 'BatchGetItem', 'Query', 'Scan',
+        'CreateGlobalSecondaryIndex', 'UpdateGlobalSecondaryIndex',
+        'DescribeTimeToLive', 'UpdateTimeToLive',
+        'TagResource', 'UntagResource', 'ListTagsOfResource',
+        'CreateBackup', 'DescribeBackup', 'ListBackups', 'DeleteBackup',
+        'DescribeContinuousBackups', 'UpdateContinuousBackups',
+        'DescribeStream', 'GetShardIterator', 'GetRecords',
+        'TransactWriteItems', 'TransactGetItems'
+    }
+
+    if operation in DYNAMODB_ACTIONS:
+        logger.info(f"Routing to DynamoDB handler: Operation={operation}")
+        return proxy_to_dynamodb(operation, data)
+
     # SSM Parameter
     try:
         if operation == 'PutParameter':
@@ -2400,15 +2514,16 @@ def proxy_to_s3():
 
     # Keep ALL headers INCLUDING the original Host (critical for signature validation)
     headers = {k: v for k, v in request.headers}
+    request_data =request.get_data()
 
     logger.debug(f"Proxying to S3: {request.method} {s3_url}")
     logger.debug(f"Host header: {headers.get('Host')}")
-
+    logger.debug(f"Data: {request_data}")
     resp = requests.request(
         method=request.method,
         url=s3_url,
         headers=headers,
-        data=request.get_data(),
+        data=request_data,
         stream=True
     )
 

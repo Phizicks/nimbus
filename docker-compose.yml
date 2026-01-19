@@ -26,6 +26,7 @@ services:
       - ecr
       - esm
       - s3
+      - ddb
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:4566/health"]
       interval: 10s
@@ -34,6 +35,7 @@ services:
       start_period: 30s
 
 include:
+  - path: docker-files/docker-compose-ddb.yml
   - path: docker-files/docker-compose-ecr.yml
   - path: docker-files/docker-compose-sqs.yml
   - path: docker-files/docker-compose-s3.yml

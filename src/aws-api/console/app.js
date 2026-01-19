@@ -178,6 +178,7 @@ function switchService(service) {
     document.getElementById(`${service}-panel`).classList.add('active');
 
     if (service === 'sqs') loadQueues();
+    else if (service === 'dynamodb') loadTables();
     else if (service === 'lambda') loadFunctions();
     else if (service === 'ssm') loadParameters();
     else if (service === 'cloudwatch') loadLogGroups();
@@ -191,6 +192,776 @@ function closeModal(modalId) {
 
 function showModal(modalId) {
     document.getElementById(modalId).classList.add('active');
+}
+
+// ============================================================================
+// DYNAMODB FUNCTIONS
+// ============================================================================
+
+let currentTableName = '';
+let currentTableKeys = {};
+
+async function loadTables() {
+    const loading = document.getElementById('dynamodb-loading');
+    const content = document.getElementById('dynamodb-content');
+    const empty = document.getElementById('dynamodb-empty');
+
+    loading.style.display = 'block';
+    content.style.display = 'none';
+    empty.style.display = 'none';
+
+    try {
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.0',
+                'X-Amz-Target': 'DynamoDB_20120810.ListTables'
+            },
+            body: JSON.stringify({})
+        });
+
+        const data = await response.json();
+        const tableNames = data.TableNames || [];
+
+        if (tableNames.length === 0) {
+            loading.style.display = 'none';
+            empty.style.display = 'block';
+            updateDynamoDBStats(0);
+            return;
+        }
+
+        const tbody = document.querySelector('#dynamodb-table tbody');
+        tbody.innerHTML = '';
+
+        for (const tableName of tableNames) {
+            const detailsResponse = await fetch(API_BASE, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-amz-json-1.0',
+                    'X-Amz-Target': 'DynamoDB_20120810.DescribeTable'
+                },
+                body: JSON.stringify({ TableName: tableName })
+            });
+
+            const tableData = await detailsResponse.json();
+            const table = tableData.Table || {};
+
+            const keySchema = table.KeySchema || [];
+            const partitionKey = keySchema.find(k => k.KeyType === 'HASH');
+            const sortKey = keySchema.find(k => k.KeyType === 'RANGE');
+
+            const row = tbody.insertRow();
+            row.innerHTML = `
+                <td><strong>${tableName}</strong></td>
+                <td><span class="badge ${table.TableStatus === 'ACTIVE' ? 'badge-success' : 'badge-info'}">${table.TableStatus || 'UNKNOWN'}</span></td>
+                <td>${partitionKey ? partitionKey.AttributeName : 'N/A'}</td>
+                <td>${sortKey ? sortKey.AttributeName : '-'}</td>
+                <td>
+                    <div class="action-buttons">
+                        <button class="btn btn-secondary" onclick="viewTableDetails('${tableName}')">Details</button>
+                        <button class="btn btn-primary" onclick="viewTableItems('${tableName}')">Items</button>
+                        <button class="btn btn-secondary" onclick="showCreateGSIModal('${tableName}')">Add GSI</button>
+                        <button class="btn btn-danger" onclick="deleteTable('${tableName}')">Delete</button>
+                    </div>
+                </td>
+            `;
+        }
+
+        updateDynamoDBStats(tableNames.length);
+        loading.style.display = 'none';
+        content.style.display = 'block';
+
+    } catch (error) {
+        console.error('Error loading tables:', error);
+        loading.innerHTML = '<p style="color: var(--danger);">Error loading tables</p>';
+    }
+}
+
+function updateDynamoDBStats(tableCount) {
+    const statsDiv = document.getElementById('dynamodb-stats');
+    statsDiv.innerHTML = `
+        <div class="stat-card">
+            <div class="stat-label">Total Tables</div>
+            <div class="stat-value">${tableCount}</div>
+        </div>
+    `;
+}
+
+function showCreateTableModal() {
+    document.getElementById('table-name').value = '';
+    document.getElementById('partition-key-name').value = '';
+    document.getElementById('partition-key-type').value = 'S';
+    document.getElementById('has-sort-key').checked = false;
+    document.getElementById('sort-key-name').value = '';
+    document.getElementById('sort-key-type').value = 'S';
+    document.getElementById('billing-mode').value = 'PAY_PER_REQUEST';
+    toggleSortKey();
+    toggleBillingMode();
+    showModal('create-table-modal');
+}
+
+function toggleSortKey() {
+    const hasSortKey = document.getElementById('has-sort-key').checked;
+    document.getElementById('sort-key-section').style.display = hasSortKey ? 'block' : 'none';
+}
+
+function toggleBillingMode() {
+    const billingMode = document.getElementById('billing-mode').value;
+    document.getElementById('provisioned-settings').style.display =
+        billingMode === 'PROVISIONED' ? 'block' : 'none';
+}
+
+async function createTable(event) {
+    event.preventDefault();
+
+    const tableName = document.getElementById('table-name').value;
+    const partitionKeyName = document.getElementById('partition-key-name').value;
+    const partitionKeyType = document.getElementById('partition-key-type').value;
+    const hasSortKey = document.getElementById('has-sort-key').checked;
+    const billingMode = document.getElementById('billing-mode').value;
+
+    const keySchema = [{
+        AttributeName: partitionKeyName,
+        KeyType: 'HASH'
+    }];
+
+    const attributeDefinitions = [{
+        AttributeName: partitionKeyName,
+        AttributeType: partitionKeyType
+    }];
+
+    if (hasSortKey) {
+        const sortKeyName = document.getElementById('sort-key-name').value;
+        const sortKeyType = document.getElementById('sort-key-type').value;
+
+        if (sortKeyName) {
+            keySchema.push({
+                AttributeName: sortKeyName,
+                KeyType: 'RANGE'
+            });
+
+            attributeDefinitions.push({
+                AttributeName: sortKeyName,
+                AttributeType: sortKeyType
+            });
+        }
+    }
+
+    const requestBody = {
+        TableName: tableName,
+        KeySchema: keySchema,
+        AttributeDefinitions: attributeDefinitions,
+        BillingMode: billingMode
+    };
+
+    if (billingMode === 'PROVISIONED') {
+        requestBody.ProvisionedThroughput = {
+            ReadCapacityUnits: parseInt(document.getElementById('read-capacity').value),
+            WriteCapacityUnits: parseInt(document.getElementById('write-capacity').value)
+        };
+    }
+
+    try {
+        await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.0',
+                'X-Amz-Target': 'DynamoDB_20120810.CreateTable'
+            },
+            body: JSON.stringify(requestBody)
+        });
+
+        closeModal('create-table-modal');
+        showNotification(`Table ${tableName} created successfully`, 'success');
+        loadTables();
+    } catch (error) {
+        console.error('Error creating table:', error);
+        showNotification('Error creating table', 'error');
+    }
+}
+
+async function viewTableDetails(tableName) {
+    try {
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.0',
+                'X-Amz-Target': 'DynamoDB_20120810.DescribeTable'
+            },
+            body: JSON.stringify({ TableName: tableName })
+        });
+
+        const data = await response.json();
+        const table = data.Table || {};
+
+        document.getElementById('table-details-name').textContent = tableName;
+        const content = document.getElementById('table-details-content');
+
+        const keySchema = table.KeySchema || [];
+        const partitionKey = keySchema.find(k => k.KeyType === 'HASH');
+        const sortKey = keySchema.find(k => k.KeyType === 'RANGE');
+
+        let html = `
+            <div class="detail-row">
+                <div class="detail-label">Table Name</div>
+                <div class="detail-value">${table.TableName}</div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">Table ARN</div>
+                <div class="detail-value"><code>${table.TableArn || 'N/A'}</code></div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">Status</div>
+                <div class="detail-value"><span class="badge ${table.TableStatus === 'ACTIVE' ? 'badge-success' : 'badge-info'}">${table.TableStatus}</span></div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">Partition Key</div>
+                <div class="detail-value">${partitionKey ? partitionKey.AttributeName : 'N/A'}</div>
+            </div>
+        `;
+
+        if (sortKey) {
+            html += `
+                <div class="detail-row">
+                    <div class="detail-label">Sort Key</div>
+                    <div class="detail-value">${sortKey.AttributeName}</div>
+                </div>
+            `;
+        }
+
+        html += `
+            <div class="detail-row">
+                <div class="detail-label">Item Count</div>
+                <div class="detail-value">${table.ItemCount || 0}</div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">Table Size</div>
+                <div class="detail-value">${((table.TableSizeBytes || 0) / 1024).toFixed(2)} KB</div>
+            </div>
+        `;
+
+        if (table.BillingModeSummary) {
+            html += `
+                <div class="detail-row">
+                    <div class="detail-label">Billing Mode</div>
+                    <div class="detail-value">${table.BillingModeSummary.BillingMode}</div>
+                </div>
+            `;
+        }
+
+        if (table.GlobalSecondaryIndexes && table.GlobalSecondaryIndexes.length > 0) {
+            html += `
+                <div class="detail-row">
+                    <div class="detail-label">Global Secondary Indexes</div>
+                    <div class="detail-value">
+                        <table style="width: 100%; margin-top: 10px;">
+                            <thead>
+                                <tr>
+                                    <th>Index Name</th>
+                                    <th>Status</th>
+                                    <th>Partition Key</th>
+                                    <th>Sort Key</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+            `;
+
+            for (const gsi of table.GlobalSecondaryIndexes) {
+                const gsiPartition = gsi.KeySchema.find(k => k.KeyType === 'HASH');
+                const gsiSort = gsi.KeySchema.find(k => k.KeyType === 'RANGE');
+
+                html += `
+                    <tr>
+                        <td>${gsi.IndexName}</td>
+                        <td><span class="badge ${gsi.IndexStatus === 'ACTIVE' ? 'badge-success' : 'badge-info'}">${gsi.IndexStatus}</span></td>
+                        <td>${gsiPartition ? gsiPartition.AttributeName : '-'}</td>
+                        <td>${gsiSort ? gsiSort.AttributeName : '-'}</td>
+                    </tr>
+                `;
+            }
+
+            html += `
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }
+
+        content.innerHTML = html;
+        showModal('table-details-modal');
+
+    } catch (error) {
+        console.error('Error loading table details:', error);
+        showNotification('Error loading table details', 'error');
+    }
+}
+
+async function viewTableItems(tableName) {
+    currentTableName = tableName;
+
+    try {
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.0',
+                'X-Amz-Target': 'DynamoDB_20120810.DescribeTable'
+            },
+            body: JSON.stringify({ TableName: tableName })
+        });
+
+        const data = await response.json();
+        const table = data.Table || {};
+
+        currentTableKeys = {
+            partition: table.KeySchema.find(k => k.KeyType === 'HASH')?.AttributeName,
+            sort: table.KeySchema.find(k => k.KeyType === 'RANGE')?.AttributeName,
+            attributes: table.AttributeDefinitions || []
+        };
+
+        document.getElementById('table-items-name').textContent = tableName;
+        showModal('table-items-modal');
+        loadTableItems();
+
+    } catch (error) {
+        console.error('Error loading table schema:', error);
+        showNotification('Error loading table schema', 'error');
+    }
+}
+
+async function loadTableItems() {
+    const content = document.getElementById('table-items-content');
+    content.innerHTML = '<div class="loading"><div class="spinner"></div><div>Loading items...</div></div>';
+
+    try {
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.0',
+                'X-Amz-Target': 'DynamoDB_20120810.Scan'
+            },
+            body: JSON.stringify({
+                TableName: currentTableName,
+                Limit: 25
+            })
+        });
+
+        const data = await response.json();
+        const items = data.Items || [];
+
+        if (items.length === 0) {
+            content.innerHTML = '<p>No items found in table</p>';
+            return;
+        }
+
+        let html = `<div style="overflow-x: auto;"><table style="width: 100%;"><thead><tr>`;
+
+        const allAttributes = new Set();
+        items.forEach(item => {
+            Object.keys(item).forEach(key => allAttributes.add(key));
+        });
+
+        allAttributes.forEach(attr => {
+            html += `<th>${attr}</th>`;
+        });
+        html += `<th>Actions</th></tr></thead><tbody>`;
+
+        items.forEach((item) => {
+            html += '<tr>';
+            allAttributes.forEach(attr => {
+                const value = item[attr];
+                let displayValue = 'N/A';
+
+                if (value) {
+                    if (value.S !== undefined) displayValue = value.S;
+                    else if (value.N !== undefined) displayValue = value.N;
+                    else if (value.BOOL !== undefined) displayValue = value.BOOL.toString();
+                    else if (value.NULL !== undefined) displayValue = 'NULL';
+                    else if (value.M !== undefined) displayValue = JSON.stringify(value.M);
+                    else if (value.L !== undefined) displayValue = JSON.stringify(value.L);
+                    else displayValue = JSON.stringify(value);
+                }
+
+                html += `<td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;">${displayValue}</td>`;
+            });
+
+            html += `<td><button class="btn btn-danger" onclick='deleteItem(${JSON.stringify(item)})'>Delete</button></td></tr>`;
+        });
+
+        html += '</tbody></table></div>';
+
+        if (data.LastEvaluatedKey) {
+            html += '<p style="margin-top: 15px; color: #545B64;">Showing first 25 items. Use Query/Scan for more results.</p>';
+        }
+
+        content.innerHTML = html;
+
+    } catch (error) {
+        console.error('Error loading items:', error);
+        content.innerHTML = '<p style="color: var(--danger);">Error loading items</p>';
+    }
+}
+
+function showPutItemModal() {
+    const example = {};
+    if (currentTableKeys.partition) {
+        const partitionAttr = currentTableKeys.attributes.find(a => a.AttributeName === currentTableKeys.partition);
+        const partitionType = partitionAttr ? partitionAttr.AttributeType : 'S';
+        example[currentTableKeys.partition] = { [partitionType]: partitionType === 'N' ? '123' : 'example-value' };
+    }
+
+    if (currentTableKeys.sort) {
+        const sortAttr = currentTableKeys.attributes.find(a => a.AttributeName === currentTableKeys.sort);
+        const sortType = sortAttr ? sortAttr.AttributeType : 'S';
+        example[currentTableKeys.sort] = { [sortType]: sortType === 'N' ? '456' : 'sort-value' };
+    }
+
+    example.exampleAttribute = { S: 'example-data' };
+
+    document.getElementById('item-json').value = JSON.stringify(example, null, 2);
+    showModal('put-item-modal');
+}
+
+async function putItem(event) {
+    event.preventDefault();
+    const itemJson = document.getElementById('item-json').value;
+
+    try {
+        const item = JSON.parse(itemJson);
+
+        await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.0',
+                'X-Amz-Target': 'DynamoDB_20120810.PutItem'
+            },
+            body: JSON.stringify({
+                TableName: currentTableName,
+                Item: item
+            })
+        });
+
+        closeModal('put-item-modal');
+        showNotification('Item added successfully', 'success');
+        loadTableItems();
+    } catch (error) {
+        console.error('Error putting item:', error);
+        showNotification('Error adding item: ' + error.message, 'error');
+    }
+}
+
+function showQueryModal() {
+    document.getElementById('query-partition-value').value = '';
+    document.getElementById('query-has-sort').checked = false;
+    document.getElementById('query-sort-value').value = '';
+    document.getElementById('query-limit').value = '';
+    document.getElementById('query-results').innerHTML = '';
+    toggleQuerySortKey();
+    showModal('query-modal');
+}
+
+function toggleQuerySortKey() {
+    const hasSort = document.getElementById('query-has-sort').checked;
+    document.getElementById('query-sort-section').style.display = hasSort ? 'block' : 'none';
+}
+
+function updateQuerySortOperator() {
+    const isBetween = document.getElementById('query-sort-operator').value === 'between';
+    document.getElementById('query-sort-value2-group').style.display = isBetween ? 'block' : 'none';
+}
+
+async function queryItems(event) {
+    event.preventDefault();
+    const partitionValue = document.getElementById('query-partition-value').value;
+    const hasSort = document.getElementById('query-has-sort').checked;
+    const limit = document.getElementById('query-limit').value;
+
+    const partitionAttr = currentTableKeys.attributes.find(a => a.AttributeName === currentTableKeys.partition);
+    const partitionType = partitionAttr ? partitionAttr.AttributeType : 'S';
+
+    let keyConditionExpression = `#pk = :pkval`;
+    let expressionAttributeNames = {
+        '#pk': currentTableKeys.partition
+    };
+    let expressionAttributeValues = {
+        ':pkval': { [partitionType]: partitionValue }
+    };
+
+    if (hasSort && currentTableKeys.sort) {
+        const sortOperator = document.getElementById('query-sort-operator').value;
+        const sortValue = document.getElementById('query-sort-value').value;
+        const sortAttr = currentTableKeys.attributes.find(a => a.AttributeName === currentTableKeys.sort);
+        const sortType = sortAttr ? sortAttr.AttributeType : 'S';
+
+        expressionAttributeNames['#sk'] = currentTableKeys.sort;
+
+        if (sortOperator === 'between') {
+            const sortValue2 = document.getElementById('query-sort-value2').value;
+            keyConditionExpression += ` AND #sk BETWEEN :skval1 AND :skval2`;
+            expressionAttributeValues[':skval1'] = { [sortType]: sortValue };
+            expressionAttributeValues[':skval2'] = { [sortType]: sortValue2 };
+        } else if (sortOperator === 'begins_with') {
+            keyConditionExpression += ` AND begins_with(#sk, :skval)`;
+            expressionAttributeValues[':skval'] = { [sortType]: sortValue };
+        } else {
+            keyConditionExpression += ` AND #sk ${sortOperator} :skval`;
+            expressionAttributeValues[':skval'] = { [sortType]: sortValue };
+        }
+    }
+
+    const requestBody = {
+        TableName: currentTableName,
+        KeyConditionExpression: keyConditionExpression,
+        ExpressionAttributeNames: expressionAttributeNames,
+        ExpressionAttributeValues: expressionAttributeValues
+    };
+
+    if (limit) {
+        requestBody.Limit = parseInt(limit);
+    }
+
+    try {
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.0',
+                'X-Amz-Target': 'DynamoDB_20120810.Query'
+            },
+            body: JSON.stringify(requestBody)
+        });
+
+        const data = await response.json();
+        displayQueryResults(data.Items || [], 'query-results');
+    } catch (error) {
+        console.error('Error querying items:', error);
+        showNotification('Error executing query: ' + error.message, 'error');
+    }
+}
+
+function showScanModal() {
+    document.getElementById('scan-limit').value = '';
+    document.getElementById('scan-filter').value = '';
+    document.getElementById('scan-results').innerHTML = '';
+    showModal('scan-modal');
+}
+
+async function scanItems(event) {
+    event.preventDefault();
+    const limit = document.getElementById('scan-limit').value;
+    const filter = document.getElementById('scan-filter').value;
+
+    const requestBody = {
+        TableName: currentTableName
+    };
+
+    if (limit) {
+        requestBody.Limit = parseInt(limit);
+    }
+
+    if (filter) {
+        requestBody.FilterExpression = filter;
+    }
+
+    try {
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.0',
+                'X-Amz-Target': 'DynamoDB_20120810.Scan'
+            },
+            body: JSON.stringify(requestBody)
+        });
+
+        const data = await response.json();
+        displayQueryResults(data.Items || [], 'scan-results');
+    } catch (error) {
+        console.error('Error scanning items:', error);
+        showNotification('Error executing scan: ' + error.message, 'error');
+    }
+}
+
+function displayQueryResults(items, containerId) {
+    const container = document.getElementById(containerId);
+    if (items.length === 0) {
+        container.innerHTML = '<p>No items found</p>';
+        return;
+    }
+
+    let html = `<div class="card-title">Results (${items.length} items)</div><div style="overflow-x: auto;"><table style="width: 100%;"><thead><tr>`;
+
+    const allAttributes = new Set();
+    items.forEach(item => {
+        Object.keys(item).forEach(key => allAttributes.add(key));
+    });
+
+    allAttributes.forEach(attr => {
+        html += `<th>${attr}</th>`;
+    });
+    html += `</tr></thead><tbody>`;
+
+    items.forEach(item => {
+        html += '<tr>';
+        allAttributes.forEach(attr => {
+            const value = item[attr];
+            let displayValue = 'N/A';
+
+            if (value) {
+                if (value.S !== undefined) displayValue = value.S;
+                else if (value.N !== undefined) displayValue = value.N;
+                else if (value.BOOL !== undefined) displayValue = value.BOOL.toString();
+                else if (value.NULL !== undefined) displayValue = 'NULL';
+                else displayValue = JSON.stringify(value);
+            }
+
+            html += `<td>${displayValue}</td>`;
+        });
+        html += '</tr>';
+    });
+
+    html += '</tbody></table></div>';
+    container.innerHTML = html;
+}
+
+async function deleteItem(item) {
+    const key = {};
+    if (currentTableKeys.partition && item[currentTableKeys.partition]) {
+        key[currentTableKeys.partition] = item[currentTableKeys.partition];
+    }
+
+    if (currentTableKeys.sort && item[currentTableKeys.sort]) {
+        key[currentTableKeys.sort] = item[currentTableKeys.sort];
+    }
+
+    showConfirmModal(
+        'Are you sure you want to delete this item?',
+        async () => {
+            try {
+                await fetch(API_BASE, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-amz-json-1.0',
+                        'X-Amz-Target': 'DynamoDB_20120810.DeleteItem'
+                    },
+                    body: JSON.stringify({
+                        TableName: currentTableName,
+                        Key: key
+                    })
+                });
+
+                showNotification('Item deleted successfully', 'success');
+                loadTableItems();
+            } catch (error) {
+                console.error('Error deleting item:', error);
+                showNotification('Error deleting item', 'error');
+            }
+        }
+    );
+}
+
+async function deleteTable(tableName) {
+    showConfirmModal(
+        `Are you sure you want to delete table: ${tableName}?<br><br>This cannot be undone.`,
+        async () => {
+            try {
+                await fetch(API_BASE, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-amz-json-1.0',
+                        'X-Amz-Target': 'DynamoDB_20120810.DeleteTable'
+                    },
+                    body: JSON.stringify({ TableName: tableName })
+                });
+                showNotification(`Table ${tableName} deleted successfully`, 'success');
+                loadTables();
+            } catch (error) {
+                console.error('Error deleting table:', error);
+                showNotification('Error deleting table', 'error');
+            }
+        }
+    );
+}
+function showCreateGSIModal(tableName) {
+    currentTableName = tableName;
+    document.getElementById('gsi-name').value = '';
+    document.getElementById('gsi-partition-key').value = '';
+    document.getElementById('gsi-partition-type').value = 'S';
+    document.getElementById('gsi-has-sort').checked = false;
+    document.getElementById('gsi-sort-key').value = '';
+    document.getElementById('gsi-sort-type').value = 'S';
+    document.getElementById('gsi-projection').value = 'ALL';
+    toggleGSISortKey();
+    showModal('create-gsi-modal');
+}
+
+function toggleGSISortKey() {
+    const hasSort = document.getElementById('gsi-has-sort').checked;
+    document.getElementById('gsi-sort-section').style.display = hasSort ? 'block' : 'none';
+}
+
+async function createGSI(event) {
+    event.preventDefault();
+    const indexName = document.getElementById('gsi-name').value;
+    const partitionKey = document.getElementById('gsi-partition-key').value;
+    const partitionType = document.getElementById('gsi-partition-type').value;
+    const hasSort = document.getElementById('gsi-has-sort').checked;
+    const projectionType = document.getElementById('gsi-projection').value;
+
+    const keySchema = [{
+        AttributeName: partitionKey,
+        KeyType: 'HASH'
+    }];
+
+    const attributeDefinitions = [{
+        AttributeName: partitionKey,
+        AttributeType: partitionType
+    }];
+
+    if (hasSort) {
+        const sortKey = document.getElementById('gsi-sort-key').value;
+        const sortType = document.getElementById('gsi-sort-type').value;
+
+        if (sortKey) {
+            keySchema.push({
+                AttributeName: sortKey,
+                KeyType: 'RANGE'
+            });
+
+            attributeDefinitions.push({
+                AttributeName: sortKey,
+                AttributeType: sortType
+            });
+        }
+    }
+
+    try {
+        await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.0',
+                'X-Amz-Target': 'DynamoDB_20120810.UpdateTable'
+            },
+            body: JSON.stringify({
+                TableName: currentTableName,
+                AttributeDefinitions: attributeDefinitions,
+                GlobalSecondaryIndexUpdates: [{
+                    Create: {
+                        IndexName: indexName,
+                        KeySchema: keySchema,
+                        Projection: {
+                            ProjectionType: projectionType
+                        }
+                    }
+                }]
+            })
+        });
+
+        closeModal('create-gsi-modal');
+        showNotification(`GSI ${indexName} created successfully`, 'success');
+        loadTables();
+    } catch (error) {
+        console.error('Error creating GSI:', error);
+        showNotification('Error creating GSI: ' + error.message, 'error');
+    }
 }
 
 // ============================================================================
@@ -2567,6 +3338,6 @@ async function deleteBucket(bucketName) {
 // INITIALIZATION
 // ============================================================================
 
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener('DOMContentLoaded', function() {
     loadQueues();
 });
