@@ -21,7 +21,7 @@ cleanup() {
     echo "Cleaning up... (exit code: $exit_code)"
     rm response.json 2>/dev/null || true
 }
-trap cleanup EXIT
+# trap cleanup EXIT
 
 # Function to print colored messages
 log_info() {
@@ -39,8 +39,8 @@ log_warn() {
 FUNCTION_NAME=ecr-python-function
 
 function cleanup {
-    aws ecr delete-repository --repository-name "${REPOSITORY_NAME}" 2>/dev/null || true
-    aws lambda delete-function --function-name ${FUNCTION_NAME} 2>/dev/null || true
+    aws ecr delete-repository --repository-name "${REPOSITORY_NAME}" >/dev/null  2>&1 || true
+    aws lambda delete-function --function-name ${FUNCTION_NAME} >/dev/null 2>&1 || true
 }
 cleanup
 
@@ -51,7 +51,7 @@ ECR_URI=$(aws ecr create-repository \
     2>/dev/null| jq -r '.repository.repositoryUri') || log_warn "Repository [${REPOSITORY_NAME}] might already exist"
 
 echo "Repository : $ECR_URI"
-exit
+
 log_info "Describe ECR repository '${REPOSITORY_NAME}'"
 aws ecr describe-repositories | cat || log_warn "Failed to describe repository [${REPOSITORY_NAME}]"
 

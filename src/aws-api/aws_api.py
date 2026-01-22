@@ -360,9 +360,46 @@ def get_request_data():
 
     return {}
 
-
 # ECR API Functions (keeping existing implementation)
 # ============================================================================
+
+# list of (pain in the ass) resource segments that follow a repository name
+_RESOURCE_SEP_RE = re.compile(r'/(?:blobs|manifests|uploads|_uploads|tags|_layers|_catalog|_manifests)(?:/|$)', re.IGNORECASE)
+
+def ecr_repository_exists(repository_name):
+    if not repository_name:
+        raise ValueError("repositoryName is required")
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT * FROM repositories WHERE repository_name = ?', (repository_name,))
+    if cursor.fetchone():
+        conn.close()
+        return True
+        # raise ValueError(f"Repository {repository_name} already exists")
+    return False
+
+def extract_repository_from_path(path: str) -> str | None:
+    """
+    Given path after /v2/ (e.g. "foo/bar/blobs/uploads/..."), return repository name ("foo/bar"),
+    or None if the path is registry-level or empty.
+    """
+    if not path:
+        return None
+    # strip leading/trailing slashes
+    p = path.strip('/')
+    # if registry-level like "_catalog", return None
+    if p.startswith('_'):
+        return None
+    # split on the first occurrence of a known resource separator
+    parts = _RESOURCE_SEP_RE.split(p, maxsplit=1)
+    repo = parts[0] if parts else p
+    return repo or None
+
+def docker_registry_error(code: str, message: str, status: int = 404):
+    body = {"errors": [{"code": code, "message": message, "detail": {}}]}
+    return Response(json.dumps(body), status=status, mimetype="application/json")
 
 @aws_response('CreateRepository')
 def create_repository():
@@ -378,10 +415,13 @@ def create_repository():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    cursor.execute('SELECT * FROM repositories WHERE repository_name = ?', (repository_name,))
-    if cursor.fetchone():
-        conn.close()
+    if ecr_repository_exists(repository_name):
         raise ValueError(f"Repository {repository_name} already exists")
+
+    # cursor.execute('SELECT * FROM repositories WHERE repository_name = ?', (repository_name,))
+    # if cursor.fetchone():
+    #     conn.close()
+    #     raise ValueError(f"Repository {repository_name} already exists")
 
     registry_host = get_request_server_address() # urlparse(request.base_url).hostname
     repository_uri = f"{registry_host}/{repository_name}"
@@ -441,6 +481,9 @@ def delete_repository():
     data = get_request_data()
     repository_name = data.get('repositoryName')
     force = data.get('force', False)
+
+    # if not ecr_repository_exists(repository_name):
+    #     raise ValueError(f"Delete failed. Repository {repository_name} does not exist")
 
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -510,6 +553,9 @@ def put_image():
     if not repository_name or not image_manifest:
         raise ValueError("repositoryName and imageManifest are required")
 
+    if not ecr_repository_exists(repository_name):
+        raise ValueError(f"Repository {repository_name} does not exist")
+
     repo_path = f"{ACCOUNT_ID}/{repository_name}"
     # registry_repo = f"{registry_host}/{repo_path}:{image_tag}"
 
@@ -552,6 +598,9 @@ def list_images():
     """List images in a repository - queries actual registry"""
     data = get_request_data()
     repository_name = data.get('repositoryName')
+
+    if not ecr_repository_exists(repository_name):
+        raise ValueError(f"Repository {repository_name} does not exist")
 
     repo_path = f"{ACCOUNT_ID}/{repository_name}"
 
@@ -622,6 +671,9 @@ def batch_get_image():
     repository_name = data.get('repositoryName')
     image_ids = data.get('imageIds', [])
     repo_path = f"{ACCOUNT_ID}/{repository_name}"
+
+    if not ecr_repository_exists(repository_name):
+        raise ValueError(f"Repository {repository_name} does not exist")
 
     images, failures = [], []
 
@@ -756,6 +808,9 @@ def batch_delete_image():
     repository_name = data.get('repositoryName')
     image_ids = data.get('imageIds', [])
 
+    if not ecr_repository_exists(repository_name):
+        raise ValueError(f"Repository {repository_name} does not exist")
+
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
@@ -816,6 +871,20 @@ def docker_registry_root():
 def docker_registry_proxy(path):
     """Proxy Docker Registry v2 API calls with detailed debug logging"""
     try:
+        repo = extract_repository_from_path(path)
+        logger.debug(f"v2 request: path={path}, repo={repo}")
+        # If it's a registry-level call (no repo) then skip repository existence check
+        if repo is not None:
+            # only enforce existence for APIs that require an existing repo
+            if not ecr_repository_exists(repo):
+                return docker_registry_error(
+                    "NAME_UNKNOWN",
+                    f"repository {repo} does not exist",
+                    status=404
+                )
+        else:
+            logger.critical(f"registry call only, dont think we should reach here")
+
         # Inject account ID namespace for isolation
         if not path.startswith(f"{ACCOUNT_ID}/"):
             path = f"{ACCOUNT_ID}/{path}"
@@ -828,8 +897,8 @@ def docker_registry_proxy(path):
 
         # logger.info(f"=== PROXY REQUEST ===")
         # logger.info(f"Method: {request.method}")
-        # logger.info(f"Path: {path}")
-        # logger.info(f"Full URL: {url}")
+        logger.info(f"Path: {path}")
+        logger.info(f"Full URL: {url}")
         # logger.info(f"Request Headers: {dict(request.headers)}")
 
         # Prepare headers - exclude problematic ones
@@ -944,6 +1013,9 @@ def upload_layer_part():
     part_last_byte = data.get('partLastByte', 0)
     layer_part_blob = str(data.get('layerPartBlob')) # base64 encoded
 
+    if not ecr_repository_exists(repository_name):
+        raise ValueError(f"Repository {repository_name} does not exist")
+
     # Store part temporarily
     upload_dir = Path(f'{FUNCTIONS_DIR}/uploads/{upload_id}')
     upload_dir.mkdir(parents=True, exist_ok=True)
@@ -965,6 +1037,9 @@ def complete_layer_upload():
     repository_name = data.get('repositoryName')
     upload_id = data.get('uploadId')
     layer_digests = data.get('layerDigests', [])
+
+    if not ecr_repository_exists(repository_name):
+        raise ValueError(f"Repository {repository_name} does not exist")
 
     upload_dir = Path(f'{FUNCTIONS_DIR}/uploads/{upload_id}')
 
@@ -1011,6 +1086,9 @@ def put_image():
 
     if not repository_name or not image_manifest:
         raise ValueError("repositoryName and imageManifest are required")
+
+    if not ecr_repository_exists(repository_name):
+        raise ValueError(f"Repository {repository_name} does not exist")
 
     repo_path = f"{ACCOUNT_ID}/{repository_name}"
 
@@ -1071,6 +1149,9 @@ def batch_get_image_enhanced():
     image_ids = data.get('imageIds', [])
     include_image_data = data.get('includeImageData', False)
     registry_host = get_request_server_address()
+
+    if not ecr_repository_exists(repository_name):
+        raise ValueError(f"Repository {repository_name} does not exist")
 
     repo_path = f"{ACCOUNT_ID}/{repository_name}"
     images, failures = [], []
@@ -2306,7 +2387,7 @@ def handle_request():
                 description=str(data.get('Description', '')),
                 kms_key_id=str(data.get('KeyId')),
                 overwrite=bool(data.get('Overwrite', False)),
-                allowed_pattern=str(data.get('AllowedPattern')),
+                allowed_pattern=data.get('AllowedPattern', None),
                 tags=data.get('Tags'),
                 tier=str(data.get('Tier', 'Standard'))
             )
