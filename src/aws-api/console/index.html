@@ -15,19 +15,20 @@
     </div>
 
     <div class="service-nav">
-        <button class="active" onclick="switchService('sqs')">SQS</button>
-        <button onclick="switchService('lambda')">Lambda</button>
-        <button onclick="switchService('ssm')">Systems Manager</button>
-        <button onclick="switchService('cloudwatch')">CloudWatch Logs</button>
-        <button onclick="switchService('ecr')">ECR</button>
-        <button onclick="switchService('s3')">S3</button>
+        <button class="active" onclick="switchService('sqs')" id="service-button-sqs">SQS</button>
+        <button onclick="switchService('lambda')" id="service-button-lambda">Lambda</button>
+        <button onclick="switchService('dynamodb')" id="service-button-ddb">DynamoDB</button>
+        <button onclick="switchService('ssm')" id="service-button-ssm">Systems Manager</button>
+        <button onclick="switchService('cloudwatch')" id="service-button-cloudwatch">CloudWatch Logs</button>
+        <button onclick="switchService('ecr')" id="service-button-ecr">ECR</button>
+        <button onclick="switchService('s3')" id="service-button-s3">S3</button>
     </div>
 
     <div class="container">
         <!-- SQS Panel -->
         <div id="sqs-panel" class="service-panel active">
             <div class="panel-header">
-                <h2>Amazon SQS Queues</h2>
+                <h2>SQS Queues</h2>
                 <div class="actions">
                     <button class="btn btn-primary" onclick="showCreateQueueModal()">Create Queue</button>
                     <button class="btn btn-secondary" onclick="loadQueues()">🔄 Refresh</button>
@@ -58,6 +59,44 @@
                     <div class="empty-state-icon">📬</div>
                     <h3>No queues found</h3>
                     <p>Create your first queue to get started</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- DynamoDB Panel -->
+        <div id="dynamodb-panel" class="service-panel">
+            <div class="panel-header">
+                <h2>DynamoDB Tables</h2>
+                <div class="actions">
+                    <button class="btn btn-primary" onclick="showCreateTableModal()">Create Table</button>
+                    <button class="btn btn-secondary" onclick="loadTables()">🔄 Refresh</button>
+                </div>
+            </div>
+            <div id="dynamodb-stats" class="stats-grid"></div>
+            <div class="card">
+                <div class="card-title">Tables</div>
+                <div id="dynamodb-loading" class="loading">
+                    <div class="spinner"></div>
+                    <div>Loading tables...</div>
+                </div>
+                <div id="dynamodb-content" style="display:none;">
+                    <table id="dynamodb-table">
+                        <thead>
+                            <tr>
+                                <th>Table Name</th>
+                                <th>Status</th>
+                                <th>Partition Key</th>
+                                <th>Sort Key</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div id="dynamodb-empty" class="empty-state" style="display:none;">
+                    <div class="empty-state-icon">📊</div>
+                    <h3>No tables found</h3>
+                    <p>Create your first DynamoDB table to get started</p>
                 </div>
             </div>
         </div>
@@ -143,7 +182,7 @@
             <div class="panel-header">
                 <h2>CloudWatch Logs</h2>
                 <div class="actions">
-                    <button class="btn btn-danger" id="delete-selected-log-groups" onclick="deleteSelectedLogGroups()" disabled>
+                    <button class="btn btn-danger" id="delete-selected-log-groups" onclick="deleteSelectedLogGroups()">
                         Delete Selected
                     </button>
                     <button class="btn btn-secondary" onclick="loadLogGroups()">🔄 Refresh</button>
@@ -183,7 +222,7 @@
         <!-- ECR Panel -->
         <div id="ecr-panel" class="service-panel">
             <div class="panel-header">
-                <h2>Amazon Elastic Container Registry</h2>
+                <h2>Elastic Container Registry</h2>
                 <div class="actions">
                     <button class="btn btn-primary" onclick="showCreateRepositoryModal()">Create Repository</button>
                     <button class="btn btn-secondary" onclick="loadRepositories()">🔄 Refresh</button>
@@ -221,7 +260,7 @@
         <!-- S3 Panel -->
         <div id="s3-panel" class="service-panel">
             <div class="panel-header">
-                <h2>Amazon S3</h2>
+                <h2>S3</h2>
                 <div class="actions">
                     <button class="btn btn-primary" onclick="showCreateBucketModal()">Create Bucket</button>
                     <button class="btn btn-secondary" onclick="loadBuckets()">🔄 Refresh</button>
@@ -496,6 +535,246 @@
         </div>
     </div>
 
+    <div id="bucket-details-modal" class="modal">
+        <div class="modal-content" style="max-width: 1500px;">
+            <div class="modal-header">Bucket Details: <span id="bucket-details-name"></span></div>
+            <div class="modal-body" id="bucket-details-content"></div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('bucket-details-modal')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="configure-lifecycle-modal" class="modal">
+        <div class="modal-content" style="max-width: 900px;">
+            <div class="modal-header">Configure Lifecycle Rule: <span id="lifecycle-bucket-name"></span></div>
+            <div class="modal-body">
+                <form id="configure-lifecycle-form" onsubmit="configureLifecycle(event)">
+                    <div class="form-group">
+                        <label>Rule Name/ID *</label>
+                        <input type="text" id="lifecycle-rule-id" required placeholder="MyLifecycleRule">
+                        <small style="color: #545B64; font-size: 12px;">Unique identifier for this lifecycle rule</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Status *</label>
+                        <select id="lifecycle-status" required>
+                            <option value="Enabled">Enabled</option>
+                            <option value="Disabled">Disabled</option>
+                        </select>
+                    </div>
+
+                    <h3 style="margin-top: 25px; margin-bottom: 15px; font-size: 18px; color: var(--aws-dark);">Scope</h3>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="radio" name="scope-type" value="all" checked onchange="toggleLifecycleScope()">
+                            Apply to all objects in the bucket
+                        </label>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="radio" name="scope-type" value="prefix" onchange="toggleLifecycleScope()">
+                            Limit scope by prefix
+                        </label>
+                    </div>
+
+                    <div class="form-group" id="lifecycle-prefix-group" style="display: none; margin-left: 30px;">
+                        <label>Prefix</label>
+                        <input type="text" id="lifecycle-prefix" placeholder="documents/">
+                        <small style="color: #545B64; font-size: 12px;">e.g., "documents/" or "logs/2024/"</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="radio" name="scope-type" value="tags" onchange="toggleLifecycleScope()">
+                            Limit scope by tags
+                        </label>
+                    </div>
+
+                    <div class="form-group" id="lifecycle-tags-group" style="display: none; margin-left: 30px;">
+                        <label>Tags (key=value, one per line)</label>
+                        <textarea id="lifecycle-tags" placeholder="Environment=Production&#10;Type=Archive" rows="3"></textarea>
+                        <small style="color: #545B64; font-size: 12px;">One tag per line in format: key=value</small>
+                    </div>
+
+                    <h3 style="margin-top: 25px; margin-bottom: 15px; font-size: 18px; color: var(--aws-dark);">Lifecycle Actions</h3>
+
+                    <!-- Expiration Actions -->
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="enable-expiration" style="width: auto; margin-right: 8px;" onchange="toggleExpirationActions()">
+                            <strong>Expire (delete) objects</strong>
+                        </label>
+                    </div>
+
+                    <div id="expiration-actions" style="display: none; margin-left: 30px; margin-bottom: 20px;">
+                        <div class="form-group">
+                            <label>
+                                <input type="radio" name="expiration-type" value="days" checked onchange="toggleExpirationType()">
+                                Delete after number of days
+                            </label>
+                        </div>
+
+                        <div class="form-group" id="expiration-days-group" style="margin-left: 30px;">
+                            <label>Number of Days *</label>
+                            <input type="number" id="expiration-days" min="1" placeholder="30">
+                            <small style="color: #545B64; font-size: 12px;">Objects will be deleted this many days after creation</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label>
+                                <input type="radio" name="expiration-type" value="date" onchange="toggleExpirationType()">
+                                Delete on specific date
+                            </label>
+                        </div>
+
+                        <div class="form-group" id="expiration-date-group" style="display: none; margin-left: 30px;">
+                            <label>Expiration Date *</label>
+                            <input type="date" id="expiration-date">
+                        </div>
+
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="expiration-expired-delete-marker" style="width: auto; margin-right: 8px;">
+                                Remove expired object delete markers
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="enable-noncurrent-expiration" style="width: auto; margin-right: 8px;" onchange="toggleNoncurrentExpirationActions()">
+                            <strong>Expire (delete) noncurrent versions</strong>
+                        </label>
+                    </div>
+
+                    <div id="noncurrent-expiration-actions" style="display: none; margin-left: 30px; margin-bottom: 20px;">
+                        <div class="form-group">
+                            <label>Number of Days *</label>
+                            <input type="number" id="noncurrent-expiration-days" min="1" placeholder="90">
+                            <small style="color: #545B64; font-size: 12px;">Noncurrent versions will be deleted this many days after becoming noncurrent</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Number of Newer Versions to Retain</label>
+                            <input type="number" id="noncurrent-newer-versions" min="1" placeholder="3">
+                            <small style="color: #545B64; font-size: 12px;">Keep this many recent noncurrent versions</small>
+                        </div>
+                    </div>
+
+                    <!-- Abort Incomplete Multipart Uploads -->
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="enable-abort-multipart" style="width: auto; margin-right: 8px;" onchange="toggleAbortMultipartActions()">
+                            <strong>Abort incomplete multipart uploads</strong>
+                        </label>
+                    </div>
+
+                    <div id="abort-multipart-actions" style="display: none; margin-left: 30px; margin-bottom: 20px;">
+                        <div class="form-group">
+                            <label>Days After Initiation *</label>
+                            <input type="number" id="abort-multipart-days" min="1" placeholder="7">
+                            <small style="color: #545B64; font-size: 12px;">Delete incomplete multipart uploads after this many days</small>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" form="configure-lifecycle-form" class="btn btn-primary">Add Lifecycle Rule</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('configure-lifecycle-modal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="configure-notifications-modal" class="modal">
+        <div class="modal-content" style="max-width: 900px;">
+            <div class="modal-header">Configure Event Notifications: <span id="notification-bucket-name"></span></div>
+            <div class="modal-body">
+                <form id="configure-notifications-form" onsubmit="configureNotifications(event)">
+                    <div class="form-group">
+                        <label>Notification Type *</label>
+                        <select id="notification-type" required onchange="updateNotificationDestination()">
+                            <option value="">-- Select Type --</option>
+                            <option value="Queue">SQS Queue</option>
+                            <!-- <option value="Topic">SNS Topic</option> -->
+                            <option value="Lambda">Lambda Function</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group" id="notification-destination-group" style="display: none;">
+                        <label id="notification-destination-label">Destination ARN *</label>
+                        <input type="text" id="notification-destination" placeholder="arn:aws:sqs:region:account:queue-name">
+                        <small style="color: #545B64; font-size: 12px;">
+                            Format: arn:aws:sqs:region:account:queue-name (or sns/lambda)
+                        </small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Events *</label>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px;">
+                            <label style="display: flex; align-items: center; gap: 8px;">
+                                <input type="checkbox" class="event-checkbox" value="s3:ObjectCreated:*">
+                                All Object Created Events
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px;">
+                                <input type="checkbox" class="event-checkbox" value="s3:ObjectCreated:Put">
+                                Object Created (Put)
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px;">
+                                <input type="checkbox" class="event-checkbox" value="s3:ObjectCreated:Post">
+                                Object Created (Post)
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px;">
+                                <input type="checkbox" class="event-checkbox" value="s3:ObjectCreated:Copy">
+                                Object Created (Copy)
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px;">
+                                <input type="checkbox" class="event-checkbox" value="s3:ObjectRemoved:*">
+                                All Object Removed Events
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px;">
+                                <input type="checkbox" class="event-checkbox" value="s3:ObjectRemoved:Delete">
+                                Object Removed (Delete)
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="use-prefix-filter" style="width: auto; margin-right: 8px;" onchange="togglePrefixFilter()">
+                            Filter by prefix/suffix
+                        </label>
+                    </div>
+
+                    <div id="prefix-filter-section" style="display: none;">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                            <div class="form-group">
+                                <label>Prefix (optional)</label>
+                                <input type="text" id="notification-prefix" placeholder="images/">
+                            </div>
+                            <div class="form-group">
+                                <label>Suffix (optional)</label>
+                                <input type="text" id="notification-suffix" placeholder=".jpg">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Notification ID (optional)</label>
+                        <input type="text" id="notification-id" placeholder="MyNotificationRule">
+                        <small style="color: #545B64; font-size: 12px;">Leave empty for auto-generated ID</small>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" form="configure-notifications-form" class="btn btn-primary">Add Notification</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('configure-notifications-modal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
     <div id="upload-object-modal" class="modal">
         <div class="modal-content">
             <div class="modal-header">Upload Object</div>
@@ -563,6 +842,279 @@
             <div class="modal-footer">
                 <button type="submit" form="move-object-form" class="btn btn-primary">Move</button>
                 <button type="button" class="btn btn-secondary" onclick="closeModal('move-object-modal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- DynamoDB Modals -->
+    <div id="create-table-modal" class="modal">
+        <div class="modal-content" style="max-width: 800px;">
+            <div class="modal-header">Create DynamoDB Table</div>
+            <div class="modal-body">
+                <form id="create-table-form" onsubmit="createTable(event)">
+                    <div class="form-group">
+                        <label>Table Name *</label>
+                        <input type="text" id="table-name" required placeholder="my-table">
+                    </div>
+
+                    <h3 style="margin-top: 20px; margin-bottom: 15px;">Primary Key</h3>
+
+                    <div class="form-group">
+                        <label>Partition Key Name *</label>
+                        <input type="text" id="partition-key-name" required placeholder="id">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Partition Key Type *</label>
+                        <select id="partition-key-type" required>
+                            <option value="S">String</option>
+                            <option value="N">Number</option>
+                            <option value="B">Binary</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="has-sort-key" style="width: auto; margin-right: 8px;" onchange="toggleSortKey()">
+                            Add Sort Key
+                        </label>
+                    </div>
+
+                    <div id="sort-key-section" style="display: none;">
+                        <div class="form-group">
+                            <label>Sort Key Name</label>
+                            <input type="text" id="sort-key-name" placeholder="timestamp">
+                        </div>
+
+                        <div class="form-group">
+                            <label>Sort Key Type</label>
+                            <select id="sort-key-type">
+                                <option value="S">String</option>
+                                <option value="N">Number</option>
+                                <option value="B">Binary</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <h3 style="margin-top: 20px; margin-bottom: 15px;">Table Settings</h3>
+
+                    <div class="form-group">
+                        <label>Billing Mode</label>
+                        <select id="billing-mode" onchange="toggleBillingMode()">
+                            <option value="PAY_PER_REQUEST">On-Demand</option>
+                            <option value="PROVISIONED">Provisioned</option>
+                        </select>
+                    </div>
+
+                    <div id="provisioned-settings" style="display: none;">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                            <div class="form-group">
+                                <label>Read Capacity Units</label>
+                                <input type="number" id="read-capacity" value="5" min="1">
+                            </div>
+                            <div class="form-group">
+                                <label>Write Capacity Units</label>
+                                <input type="number" id="write-capacity" value="5" min="1">
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" form="create-table-form" class="btn btn-primary">Create Table</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('create-table-modal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="table-details-modal" class="modal">
+        <div class="modal-content" style="max-width: 1200px;">
+            <div class="modal-header">Table Details: <span id="table-details-name"></span></div>
+            <div class="modal-body" id="table-details-content"></div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('table-details-modal')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="table-items-modal" class="modal">
+        <div class="modal-content" style="max-width: 1400px;">
+            <div class="modal-header">Items: <span id="table-items-name"></span></div>
+            <div class="modal-body">
+                <div style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap;">
+                    <button class="btn btn-primary" onclick="showPutItemModal()">Put Item</button>
+                    <button class="btn btn-secondary" onclick="showQueryModal()">Query</button>
+                    <button class="btn btn-secondary" onclick="showScanModal()">Scan</button>
+                    <button class="btn btn-secondary" onclick="loadTableItems()">🔄 Refresh</button>
+                </div>
+                <div id="table-items-content"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('table-items-modal')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="put-item-modal" class="modal">
+        <div class="modal-content" style="max-width: 800px;">
+            <div class="modal-header">Put Item</div>
+            <div class="modal-body">
+                <form id="put-item-form" onsubmit="putItem(event)">
+                    <div class="form-group">
+                        <label>Item JSON *</label>
+                        <textarea id="item-json" required placeholder='{"id": {"S": "123"}, "name": {"S": "Example"}}' style="min-height: 300px; font-family: monospace;"></textarea>
+                        <small style="color: #545B64; font-size: 12px;">Use DynamoDB JSON format: {"AttributeName": {"S": "value"}} for strings, {"N": "123"} for numbers, etc.</small>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" form="put-item-form" class="btn btn-primary">Put Item</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('put-item-modal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="query-modal" class="modal">
+        <div class="modal-content" style="max-width: 800px;">
+            <div class="modal-header">Query Items</div>
+            <div class="modal-body">
+                <form id="query-form" onsubmit="queryItems(event)">
+                    <div class="form-group">
+                        <label>Partition Key Value *</label>
+                        <input type="text" id="query-partition-value" required placeholder="Enter partition key value">
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="query-has-sort" style="width: auto; margin-right: 8px;" onchange="toggleQuerySortKey()">
+                            Add Sort Key Condition
+                        </label>
+                    </div>
+
+                    <div id="query-sort-section" style="display: none;">
+                        <div class="form-group">
+                            <label>Sort Key Condition</label>
+                            <select id="query-sort-operator" onchange="updateQuerySortOperator()">
+                                <option value="=">=</option>
+                                <option value="<">&lt;</option>
+                                <option value="<=">&lt;=</option>
+                                <option value=">">&gt;</option>
+                                <option value=">=">&gt;=</option>
+                                <option value="begins_with">begins_with</option>
+                                <option value="between">between</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Sort Key Value</label>
+                            <input type="text" id="query-sort-value" placeholder="Enter sort key value">
+                        </div>
+
+                        <div class="form-group" id="query-sort-value2-group" style="display: none;">
+                            <label>Sort Key Value 2 (for between)</label>
+                            <input type="text" id="query-sort-value2" placeholder="Enter second value">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Limit (optional)</label>
+                        <input type="number" id="query-limit" placeholder="Max items to return" min="1">
+                    </div>
+                </form>
+                <div id="query-results" style="margin-top: 20px;"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" form="query-form" class="btn btn-primary">Execute Query</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('query-modal')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="scan-modal" class="modal">
+        <div class="modal-content" style="max-width: 800px;">
+            <div class="modal-header">Scan Items</div>
+            <div class="modal-body">
+                <form id="scan-form" onsubmit="scanItems(event)">
+                    <div class="form-group">
+                        <label>Limit (optional)</label>
+                        <input type="number" id="scan-limit" placeholder="Max items to return" min="1">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Filter Expression (optional)</label>
+                        <input type="text" id="scan-filter" placeholder="e.g., #name = :value">
+                        <small style="color: #545B64; font-size: 12px;">Leave empty to scan all items</small>
+                    </div>
+                </form>
+                <div id="scan-results" style="margin-top: 20px;"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" form="scan-form" class="btn btn-primary">Execute Scan</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('scan-modal')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="create-gsi-modal" class="modal">
+        <div class="modal-content" style="max-width: 800px;">
+            <div class="modal-header">Create Global Secondary Index</div>
+            <div class="modal-body">
+                <form id="create-gsi-form" onsubmit="createGSI(event)">
+                    <div class="form-group">
+                        <label>Index Name *</label>
+                        <input type="text" id="gsi-name" required placeholder="my-gsi-index">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Partition Key *</label>
+                        <input type="text" id="gsi-partition-key" required placeholder="attribute-name">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Partition Key Type *</label>
+                        <select id="gsi-partition-type" required>
+                            <option value="S">String</option>
+                            <option value="N">Number</option>
+                            <option value="B">Binary</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="gsi-has-sort" style="width: auto; margin-right: 8px;" onchange="toggleGSISortKey()">
+                            Add Sort Key
+                        </label>
+                    </div>
+
+                    <div id="gsi-sort-section" style="display: none;">
+                        <div class="form-group">
+                            <label>Sort Key</label>
+                            <input type="text" id="gsi-sort-key" placeholder="attribute-name">
+                        </div>
+
+                        <div class="form-group">
+                            <label>Sort Key Type</label>
+                            <select id="gsi-sort-type">
+                                <option value="S">String</option>
+                                <option value="N">Number</option>
+                                <option value="B">Binary</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Projection Type *</label>
+                        <select id="gsi-projection" required>
+                            <option value="ALL">All attributes</option>
+                            <option value="KEYS_ONLY">Keys only</option>
+                            <option value="INCLUDE">Include specific attributes</option>
+                        </select>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" form="create-gsi-form" class="btn btn-primary">Create Index</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('create-gsi-modal')">Cancel</button>
             </div>
         </div>
     </div>
