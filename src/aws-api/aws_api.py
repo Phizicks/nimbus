@@ -5,7 +5,7 @@ Provides a local endpoint that handles the AWS API calls
 import re
 from typing import Dict
 import boto3
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify, Response, send_file
 import requests
 import json
 import base64
@@ -2202,12 +2202,17 @@ def delete_function_logging_config(function_name):
             "message": str(e)
         }), 500
 
+
 # Console
 @app.route('/styles.css', methods=['GET'], strict_slashes=False)
 def console_css():
     with open('console/styles.css', 'r') as f:
         html_content = f.read()
     return html_content, 200, {'Content-Type': 'text/css'}
+
+@app.route('/logo.png', methods=['GET'], strict_slashes=False)
+def console_nimbus():
+    return send_file('console/nimbus-icon-transparent.png', mimetype='image/png')
 
 @app.route('/app.js', methods=['GET'], strict_slashes=False)
 def console_js():

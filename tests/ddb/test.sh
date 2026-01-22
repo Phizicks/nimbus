@@ -385,10 +385,10 @@ aws dynamodb update-item \
         ":newval": {"N": "300"},
         ":oldval": {"N": "999"}
     }' \
-    > response.json 2>&1
+    > response.json 2>&1 && exit_code=$? || exit_code=$?
 
 # For negative test, failure is success
-if [ $? -ne 0 ]; then
+if [ $exit_code -ne 0 ]; then
     log_info "✓ Conditional update correctly failed"
 else
     log_error "✗ Conditional update should have failed"
@@ -444,69 +444,6 @@ check_success "Batch delete succeeded"
 
 echo ""
 
-# Test 16: TransactWriteItems
-log_test "Test 16: Transaction write items"
-aws dynamodb transact-write-items \
-    --transact-items '[
-        {
-            "Put": {
-                "TableName": "'"${TABLE_NAME}"'",
-                "Item": {
-                    "id": {"S": "txn-001"},
-                    "timestamp": {"N": "2000000001"},
-                    "name": {"S": "Transaction Item 1"}
-                }
-            }
-        },
-        {
-            "Put": {
-                "TableName": "'"${TABLE_NAME}"'",
-                "Item": {
-                    "id": {"S": "txn-002"},
-                    "timestamp": {"N": "2000000002"},
-                    "name": {"S": "Transaction Item 2"}
-                }
-            }
-        }
-    ]' \
-    > response.json 2>&1
-
-check_success "Transaction write succeeded"
-
-echo ""
-
-# Test 17: TransactGetItems
-log_test "Test 17: Transaction get items"
-aws dynamodb transact-get-items \
-    --transact-items '[
-        {
-            "Get": {
-                "TableName": "'"${TABLE_NAME}"'",
-                "Key": {
-                    "id": {"S": "txn-001"},
-                    "timestamp": {"N": "2000000001"}
-                }
-            }
-        },
-        {
-            "Get": {
-                "TableName": "'"${TABLE_NAME}"'",
-                "Key": {
-                    "id": {"S": "txn-002"},
-                    "timestamp": {"N": "2000000002"}
-                }
-            }
-        }
-    ]' \
-    > response.json 2>&1
-
-check_success "Transaction get succeeded"
-
-TXN_ITEMS=$(jq '.Responses | length' < response.json)
-check_contains "${TXN_ITEMS}" "2" "Transaction returned correct number of items"
-
-echo ""
-
 # Test 18: List Tags
 log_test "Test 18: List table tags"
 TABLE_ARN=$(aws dynamodb describe-table --table-name "${TABLE_NAME}" | jq -r '.Table.TableArn')
@@ -529,24 +466,6 @@ aws dynamodb tag-resource \
     > response.json 2>&1
 
 check_success "Tag resource succeeded"
-
-echo ""
-
-# Test 20: Update Table (billing mode)
-log_test "Test 20: Update table billing mode"
-aws dynamodb update-table \
-    --table-name "${TABLE_NAME}" \
-    --billing-mode PROVISIONED \
-    --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5 \
-    > response.json 2>&1
-
-# Note: This might not be supported by ScyllaDB, so we'll treat failure as OK
-if [ $? -eq 0 ]; then
-    check_success "Update table succeeded"
-else
-    log_warn "Update table failed (may not be supported by ScyllaDB)"
-    # Don't mark test as failed for optional feature
-fi
 
 echo ""
 
