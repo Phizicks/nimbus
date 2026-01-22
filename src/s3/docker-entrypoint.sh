@@ -20,16 +20,12 @@ while true; do
     sleep 1
 done
 
-# Add webhook target and enable it
+# Add webhook target and enable it TODO, move to service to bootstrap first setup
 mc admin config set localcloud notify_webhook:1 endpoint=http://api:4566/webhook/sqs queue_limit=1000
 mc admin config set localcloud notify_webhook:1 enable=on
 
 # Restart MinIO service (non-interactive)
 mc admin service restart --json localcloud
-
-# subscribe to webhook events
-#mc event add localcloud/input-queue arn:minio:sqs::1:webhook --event put
-#mc event add localcloud/bucket2 arn:minio:sqs::1:webhook --event put,delete
 
 echo -e "localcloud\nlocalcloud" | mc alias set localcloud http://api:4566
 
