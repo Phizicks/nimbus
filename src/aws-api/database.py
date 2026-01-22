@@ -137,17 +137,6 @@ class Database:
             ON ssm_parameters(account_id, region, parameter_name)
         ''')
 
-        # S3 Bucket Notification Mappings table
-        # cursor.execute('''
-        #     CREATE TABLE IF NOT EXISTS s3_notification_mappings (
-        #         bucket_name TEXT NOT NULL,
-        #         notification_id TEXT NOT NULL,
-        #         queue_arn TEXT NOT NULL,
-        #         minio_webhook_arn TEXT NOT NULL,
-        #         created_at TEXT NOT NULL,
-        #         PRIMARY KEY (bucket_name, notification_id)
-        #     )
-        # ''')
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS s3_notification_configs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -161,11 +150,6 @@ class Database:
                 UNIQUE(bucket_name, notification_id)
             )
         ''')
-        # Index for quick lookup by bucket
-        # cursor.execute('''
-        #     CREATE INDEX IF NOT EXISTS idx_s3_notifications_bucket
-        #     ON s3_notification_mappings(bucket_name)
-        # ''')
 
         conn.commit()
         conn.close()
@@ -361,42 +345,6 @@ class Database:
             functions.append(function_data)
 
         return functions
-
-    # def save_s3_notification_mapping(self, bucket_name, notification_id, queue_arn, minio_webhook_arn):
-    #     """Save S3 notification ARN mapping"""
-    #     conn = sqlite3.connect(DB_PATH)
-    #     cursor = conn.cursor()
-
-    #     now = datetime.now(timezone.utc).isoformat()
-
-    #     cursor.execute('''
-    #         INSERT OR REPLACE INTO s3_notification_mappings (
-    #             bucket_name, notification_id, queue_arn,
-    #             minio_webhook_arn, created_at
-    #         ) VALUES (?, ?, ?, ?, ?)
-    #     ''', (bucket_name, notification_id, queue_arn, minio_webhook_arn, now))
-
-    #     conn.commit()
-    #     conn.close()
-    #     logger.info(f"Saved S3 notification mapping: {bucket_name}/{notification_id} -> {queue_arn}")
-
-    # def get_s3_notification_mapping(self, bucket_name, minio_webhook_arn):
-    #     """Get user queue ARN from MinIO webhook ARN"""
-    #     conn = sqlite3.connect(DB_PATH)
-    #     cursor = conn.cursor()
-
-    #     cursor.execute('''
-    #         SELECT notification_id, queue_arn
-    #         FROM s3_notification_mappings
-    #         WHERE bucket_name = ? AND minio_webhook_arn = ?
-    #     ''', (bucket_name, minio_webhook_arn))
-
-    #     row = cursor.fetchone()
-    #     conn.close()
-
-    #     if row:
-    #         return {'notification_id': row[0], 'queue_arn': row[1]}
-    #     return None
 
     def get_bucket_notification_configs(self, bucket_name):
         """Get all notification configurations for a bucket"""
