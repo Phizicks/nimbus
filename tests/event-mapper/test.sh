@@ -11,10 +11,10 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 cleanup() {
-    aws sqs delete-queue --queue-url http://localhost:4566/456645664566/ems-basic-queue 2>/dev/null || true
-    aws sqs delete-queue --queue-url http://localhost:4566/456645664566/ems-result-queue 2>/dev/null || true
-    aws lambda delete-function --function-name ems-lambda-test 2>/dev/null || true
-    uuid=$(aws lambda list-event-source-mappings | jq -r '.EventSourceMappings[] | select(.FunctionArn == "arn:aws:lambda:ap-southeast-2:456645664566:function:ems-lambda-test").UUID')
+    aws sqs delete-queue --queue-url http://localhost:4566/456645664566/esm-basic-queue 2>/dev/null || true
+    aws sqs delete-queue --queue-url http://localhost:4566/456645664566/esm-result-queue 2>/dev/null || true
+    aws lambda delete-function --function-name esm-lambda-test 2>/dev/null || true
+    uuid=$(aws lambda list-event-source-mappings | jq -r '.EventSourceMappings[] | select(.FunctionArn == "arn:aws:lambda:ap-southeast-2:456645664566:function:esm-lambda-test").UUID')
     aws lambda delete-event-source-mapping --uuid $uuid 2>/dev/null || true
     rm response.json 2>/dev/null || true
 }
@@ -51,50 +51,50 @@ print_test "Setting up SQS queues"
 # Create queues
 log_info "Creating source queue..."
 queue_url=$(aws sqs create-queue \
-  --queue-name ems-basic-queue \
+  --queue-name esm-basic-queue \
   --attributes VisibilityTimeout=2,MessageRetentionPeriod=300 \
   --output text)
 queue_arn=$(aws sqs get-queue-attributes --queue-url $queue_url --attribute-names QueueArn --output text --query 'Attributes.QueueArn')
 log_success "Created source queue: $queue_url with ARN: $queue_arn"
 
 result_queue_url=$(aws sqs create-queue \
-  --queue-name ems-result-queue \
+  --queue-name esm-result-queue \
   --attributes VisibilityTimeout=2,MessageRetentionPeriod=300 \
   --output text)
 result_queue_arn=$(aws sqs get-queue-attributes --queue-url $queue_url --attribute-names QueueArn --output text --query 'Attributes.QueueArn')
 log_success "Created result queue: $result_queue_url with ARN: $result_queue_arn"
 
 log_info "Creating Lambda function..."
-aws lambda delete-function --function-name ems-lambda-test 2>/dev/null || true
+aws lambda delete-function --function-name esm-lambda-test 2>/dev/null || true
 result=$(aws lambda create-function \
-  --function-name ems-lambda-test \
+  --function-name esm-lambda-test \
   --runtime nodejs22.x \
   --handler sqs.handler \
   --role arn:aws:iam::456645664566:role/nodejs-role \
   --zip-file fileb://function.zip \
   --environment Variables="{RESULT_QUEUE_URL=$result_queue_url,AWS_ENDPOINT_URL_SQS=http://api:4566}") || true
-log_success "Created Lambda function: ems-lambda-test"
+log_success "Created Lambda function: esm-lambda-test"
 
 # Ensure mapping exists
 log_info "Setting up Event Source Mapping from SQS to Lambda..."
 
-ems_uuid=$(aws lambda list-event-source-mappings --function-name ems-lambda-test | jq -r ".EventSourceMappings[]? | select(.EventSourceArn==\"$queue_arn\") | .UUID")
-[ -n "$ems_uuid" ] && aws lambda delete-event-source-mapping --uid $ems_uuid || true
+esm_uuid=$(aws lambda list-event-source-mappings --function-name esm-lambda-test | jq -r ".EventSourceMappings[]? | select(.EventSourceArn==\"$queue_arn\") | .UUID")
+[ -n "$esm_uuid" ] && aws lambda delete-event-source-mapping --uid $esm_uuid || true
 
-if [ -z "$ems_uuid" ]; then
+if [ -z "$esm_uuid" ]; then
   # Create new
   aws lambda create-event-source-mapping \
     --event-source-arn "$queue_arn" \
-    --function-name ems-lambda-test \
+    --function-name esm-lambda-test \
     --batch-size 1 \
     --enabled
   log_success "Created new ESM (enabled)"
 else
   # Update existing to enabled
   aws lambda update-event-source-mapping \
-    --uuid "$ems_uuid" \
+    --uuid "$esm_uuid" \
     --enabled
-  log_success "Re-enabled existing ESM: $ems_uuid"
+  log_success "Re-enabled existing ESM: $esm_uuid"
 fi
 log_success "Event Source Mapping set up."
 

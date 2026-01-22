@@ -10,7 +10,7 @@ let currentPrefix = '';
 const S3_CONFIG = {
     accessKeyId: 'localcloud',
     secretAccessKey: 'localcloud',
-    region: 'ap-apsoutheast-2',
+    region: 'ap-southeast-2',
     endpoint: 'http://localhost:4566'
 };
 
@@ -178,6 +178,7 @@ function switchService(service) {
     document.getElementById(`${service}-panel`).classList.add('active');
 
     if (service === 'sqs') loadQueues();
+    else if (service === 'dynamodb') loadTables();
     else if (service === 'lambda') loadFunctions();
     else if (service === 'ssm') loadParameters();
     else if (service === 'cloudwatch') loadLogGroups();
@@ -191,6 +192,776 @@ function closeModal(modalId) {
 
 function showModal(modalId) {
     document.getElementById(modalId).classList.add('active');
+}
+
+// ============================================================================
+// DYNAMODB FUNCTIONS
+// ============================================================================
+
+let currentTableName = '';
+let currentTableKeys = {};
+
+async function loadTables() {
+    const loading = document.getElementById('dynamodb-loading');
+    const content = document.getElementById('dynamodb-content');
+    const empty = document.getElementById('dynamodb-empty');
+
+    loading.style.display = 'block';
+    content.style.display = 'none';
+    empty.style.display = 'none';
+
+    try {
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.0',
+                'X-Amz-Target': 'DynamoDB_20120810.ListTables'
+            },
+            body: JSON.stringify({})
+        });
+
+        const data = await response.json();
+        const tableNames = data.TableNames || [];
+
+        if (tableNames.length === 0) {
+            loading.style.display = 'none';
+            empty.style.display = 'block';
+            updateDynamoDBStats(0);
+            return;
+        }
+
+        const tbody = document.querySelector('#dynamodb-table tbody');
+        tbody.innerHTML = '';
+
+        for (const tableName of tableNames) {
+            const detailsResponse = await fetch(API_BASE, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-amz-json-1.0',
+                    'X-Amz-Target': 'DynamoDB_20120810.DescribeTable'
+                },
+                body: JSON.stringify({ TableName: tableName })
+            });
+
+            const tableData = await detailsResponse.json();
+            const table = tableData.Table || {};
+
+            const keySchema = table.KeySchema || [];
+            const partitionKey = keySchema.find(k => k.KeyType === 'HASH');
+            const sortKey = keySchema.find(k => k.KeyType === 'RANGE');
+
+            const row = tbody.insertRow();
+            row.innerHTML = `
+                <td><strong>${tableName}</strong></td>
+                <td><span class="badge ${table.TableStatus === 'ACTIVE' ? 'badge-success' : 'badge-info'}">${table.TableStatus || 'UNKNOWN'}</span></td>
+                <td>${partitionKey ? partitionKey.AttributeName : 'N/A'}</td>
+                <td>${sortKey ? sortKey.AttributeName : '-'}</td>
+                <td>
+                    <div class="action-buttons">
+                        <button class="btn btn-secondary" onclick="viewTableDetails('${tableName}')">Details</button>
+                        <button class="btn btn-primary" onclick="viewTableItems('${tableName}')">Items</button>
+                        <button class="btn btn-secondary" onclick="showCreateGSIModal('${tableName}')">Add GSI</button>
+                        <button class="btn btn-danger" onclick="deleteTable('${tableName}')">Delete</button>
+                    </div>
+                </td>
+            `;
+        }
+
+        updateDynamoDBStats(tableNames.length);
+        loading.style.display = 'none';
+        content.style.display = 'block';
+
+    } catch (error) {
+        console.error('Error loading tables:', error);
+        loading.innerHTML = '<p style="color: var(--danger);">Error loading tables</p>';
+    }
+}
+
+function updateDynamoDBStats(tableCount) {
+    const statsDiv = document.getElementById('dynamodb-stats');
+    statsDiv.innerHTML = `
+        <div class="stat-card">
+            <div class="stat-label">Total Tables</div>
+            <div class="stat-value">${tableCount}</div>
+        </div>
+    `;
+}
+
+function showCreateTableModal() {
+    document.getElementById('table-name').value = '';
+    document.getElementById('partition-key-name').value = '';
+    document.getElementById('partition-key-type').value = 'S';
+    document.getElementById('has-sort-key').checked = false;
+    document.getElementById('sort-key-name').value = '';
+    document.getElementById('sort-key-type').value = 'S';
+    document.getElementById('billing-mode').value = 'PAY_PER_REQUEST';
+    toggleSortKey();
+    toggleBillingMode();
+    showModal('create-table-modal');
+}
+
+function toggleSortKey() {
+    const hasSortKey = document.getElementById('has-sort-key').checked;
+    document.getElementById('sort-key-section').style.display = hasSortKey ? 'block' : 'none';
+}
+
+function toggleBillingMode() {
+    const billingMode = document.getElementById('billing-mode').value;
+    document.getElementById('provisioned-settings').style.display =
+        billingMode === 'PROVISIONED' ? 'block' : 'none';
+}
+
+async function createTable(event) {
+    event.preventDefault();
+
+    const tableName = document.getElementById('table-name').value;
+    const partitionKeyName = document.getElementById('partition-key-name').value;
+    const partitionKeyType = document.getElementById('partition-key-type').value;
+    const hasSortKey = document.getElementById('has-sort-key').checked;
+    const billingMode = document.getElementById('billing-mode').value;
+
+    const keySchema = [{
+        AttributeName: partitionKeyName,
+        KeyType: 'HASH'
+    }];
+
+    const attributeDefinitions = [{
+        AttributeName: partitionKeyName,
+        AttributeType: partitionKeyType
+    }];
+
+    if (hasSortKey) {
+        const sortKeyName = document.getElementById('sort-key-name').value;
+        const sortKeyType = document.getElementById('sort-key-type').value;
+
+        if (sortKeyName) {
+            keySchema.push({
+                AttributeName: sortKeyName,
+                KeyType: 'RANGE'
+            });
+
+            attributeDefinitions.push({
+                AttributeName: sortKeyName,
+                AttributeType: sortKeyType
+            });
+        }
+    }
+
+    const requestBody = {
+        TableName: tableName,
+        KeySchema: keySchema,
+        AttributeDefinitions: attributeDefinitions,
+        BillingMode: billingMode
+    };
+
+    if (billingMode === 'PROVISIONED') {
+        requestBody.ProvisionedThroughput = {
+            ReadCapacityUnits: parseInt(document.getElementById('read-capacity').value),
+            WriteCapacityUnits: parseInt(document.getElementById('write-capacity').value)
+        };
+    }
+
+    try {
+        await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.0',
+                'X-Amz-Target': 'DynamoDB_20120810.CreateTable'
+            },
+            body: JSON.stringify(requestBody)
+        });
+
+        closeModal('create-table-modal');
+        showNotification(`Table ${tableName} created successfully`, 'success');
+        loadTables();
+    } catch (error) {
+        console.error('Error creating table:', error);
+        showNotification('Error creating table', 'error');
+    }
+}
+
+async function viewTableDetails(tableName) {
+    try {
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.0',
+                'X-Amz-Target': 'DynamoDB_20120810.DescribeTable'
+            },
+            body: JSON.stringify({ TableName: tableName })
+        });
+
+        const data = await response.json();
+        const table = data.Table || {};
+
+        document.getElementById('table-details-name').textContent = tableName;
+        const content = document.getElementById('table-details-content');
+
+        const keySchema = table.KeySchema || [];
+        const partitionKey = keySchema.find(k => k.KeyType === 'HASH');
+        const sortKey = keySchema.find(k => k.KeyType === 'RANGE');
+
+        let html = `
+            <div class="detail-row">
+                <div class="detail-label">Table Name</div>
+                <div class="detail-value">${table.TableName}</div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">Table ARN</div>
+                <div class="detail-value"><code>${table.TableArn || 'N/A'}</code></div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">Status</div>
+                <div class="detail-value"><span class="badge ${table.TableStatus === 'ACTIVE' ? 'badge-success' : 'badge-info'}">${table.TableStatus}</span></div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">Partition Key</div>
+                <div class="detail-value">${partitionKey ? partitionKey.AttributeName : 'N/A'}</div>
+            </div>
+        `;
+
+        if (sortKey) {
+            html += `
+                <div class="detail-row">
+                    <div class="detail-label">Sort Key</div>
+                    <div class="detail-value">${sortKey.AttributeName}</div>
+                </div>
+            `;
+        }
+
+        html += `
+            <div class="detail-row">
+                <div class="detail-label">Item Count</div>
+                <div class="detail-value">${table.ItemCount || 0}</div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">Table Size</div>
+                <div class="detail-value">${((table.TableSizeBytes || 0) / 1024).toFixed(2)} KB</div>
+            </div>
+        `;
+
+        if (table.BillingModeSummary) {
+            html += `
+                <div class="detail-row">
+                    <div class="detail-label">Billing Mode</div>
+                    <div class="detail-value">${table.BillingModeSummary.BillingMode}</div>
+                </div>
+            `;
+        }
+
+        if (table.GlobalSecondaryIndexes && table.GlobalSecondaryIndexes.length > 0) {
+            html += `
+                <div class="detail-row">
+                    <div class="detail-label">Global Secondary Indexes</div>
+                    <div class="detail-value">
+                        <table style="width: 100%; margin-top: 10px;">
+                            <thead>
+                                <tr>
+                                    <th>Index Name</th>
+                                    <th>Status</th>
+                                    <th>Partition Key</th>
+                                    <th>Sort Key</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+            `;
+
+            for (const gsi of table.GlobalSecondaryIndexes) {
+                const gsiPartition = gsi.KeySchema.find(k => k.KeyType === 'HASH');
+                const gsiSort = gsi.KeySchema.find(k => k.KeyType === 'RANGE');
+
+                html += `
+                    <tr>
+                        <td>${gsi.IndexName}</td>
+                        <td><span class="badge ${gsi.IndexStatus === 'ACTIVE' ? 'badge-success' : 'badge-info'}">${gsi.IndexStatus}</span></td>
+                        <td>${gsiPartition ? gsiPartition.AttributeName : '-'}</td>
+                        <td>${gsiSort ? gsiSort.AttributeName : '-'}</td>
+                    </tr>
+                `;
+            }
+
+            html += `
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }
+
+        content.innerHTML = html;
+        showModal('table-details-modal');
+
+    } catch (error) {
+        console.error('Error loading table details:', error);
+        showNotification('Error loading table details', 'error');
+    }
+}
+
+async function viewTableItems(tableName) {
+    currentTableName = tableName;
+
+    try {
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.0',
+                'X-Amz-Target': 'DynamoDB_20120810.DescribeTable'
+            },
+            body: JSON.stringify({ TableName: tableName })
+        });
+
+        const data = await response.json();
+        const table = data.Table || {};
+
+        currentTableKeys = {
+            partition: table.KeySchema.find(k => k.KeyType === 'HASH')?.AttributeName,
+            sort: table.KeySchema.find(k => k.KeyType === 'RANGE')?.AttributeName,
+            attributes: table.AttributeDefinitions || []
+        };
+
+        document.getElementById('table-items-name').textContent = tableName;
+        showModal('table-items-modal');
+        loadTableItems();
+
+    } catch (error) {
+        console.error('Error loading table schema:', error);
+        showNotification('Error loading table schema', 'error');
+    }
+}
+
+async function loadTableItems() {
+    const content = document.getElementById('table-items-content');
+    content.innerHTML = '<div class="loading"><div class="spinner"></div><div>Loading items...</div></div>';
+
+    try {
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.0',
+                'X-Amz-Target': 'DynamoDB_20120810.Scan'
+            },
+            body: JSON.stringify({
+                TableName: currentTableName,
+                Limit: 25
+            })
+        });
+
+        const data = await response.json();
+        const items = data.Items || [];
+
+        if (items.length === 0) {
+            content.innerHTML = '<p>No items found in table</p>';
+            return;
+        }
+
+        let html = `<div style="overflow-x: auto;"><table style="width: 100%;"><thead><tr>`;
+
+        const allAttributes = new Set();
+        items.forEach(item => {
+            Object.keys(item).forEach(key => allAttributes.add(key));
+        });
+
+        allAttributes.forEach(attr => {
+            html += `<th>${attr}</th>`;
+        });
+        html += `<th>Actions</th></tr></thead><tbody>`;
+
+        items.forEach((item) => {
+            html += '<tr>';
+            allAttributes.forEach(attr => {
+                const value = item[attr];
+                let displayValue = 'N/A';
+
+                if (value) {
+                    if (value.S !== undefined) displayValue = value.S;
+                    else if (value.N !== undefined) displayValue = value.N;
+                    else if (value.BOOL !== undefined) displayValue = value.BOOL.toString();
+                    else if (value.NULL !== undefined) displayValue = 'NULL';
+                    else if (value.M !== undefined) displayValue = JSON.stringify(value.M);
+                    else if (value.L !== undefined) displayValue = JSON.stringify(value.L);
+                    else displayValue = JSON.stringify(value);
+                }
+
+                html += `<td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;">${displayValue}</td>`;
+            });
+
+            html += `<td><button class="btn btn-danger" onclick='deleteItem(${JSON.stringify(item)})'>Delete</button></td></tr>`;
+        });
+
+        html += '</tbody></table></div>';
+
+        if (data.LastEvaluatedKey) {
+            html += '<p style="margin-top: 15px; color: #545B64;">Showing first 25 items. Use Query/Scan for more results.</p>';
+        }
+
+        content.innerHTML = html;
+
+    } catch (error) {
+        console.error('Error loading items:', error);
+        content.innerHTML = '<p style="color: var(--danger);">Error loading items</p>';
+    }
+}
+
+function showPutItemModal() {
+    const example = {};
+    if (currentTableKeys.partition) {
+        const partitionAttr = currentTableKeys.attributes.find(a => a.AttributeName === currentTableKeys.partition);
+        const partitionType = partitionAttr ? partitionAttr.AttributeType : 'S';
+        example[currentTableKeys.partition] = { [partitionType]: partitionType === 'N' ? '123' : 'example-value' };
+    }
+
+    if (currentTableKeys.sort) {
+        const sortAttr = currentTableKeys.attributes.find(a => a.AttributeName === currentTableKeys.sort);
+        const sortType = sortAttr ? sortAttr.AttributeType : 'S';
+        example[currentTableKeys.sort] = { [sortType]: sortType === 'N' ? '456' : 'sort-value' };
+    }
+
+    example.exampleAttribute = { S: 'example-data' };
+
+    document.getElementById('item-json').value = JSON.stringify(example, null, 2);
+    showModal('put-item-modal');
+}
+
+async function putItem(event) {
+    event.preventDefault();
+    const itemJson = document.getElementById('item-json').value;
+
+    try {
+        const item = JSON.parse(itemJson);
+
+        await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.0',
+                'X-Amz-Target': 'DynamoDB_20120810.PutItem'
+            },
+            body: JSON.stringify({
+                TableName: currentTableName,
+                Item: item
+            })
+        });
+
+        closeModal('put-item-modal');
+        showNotification('Item added successfully', 'success');
+        loadTableItems();
+    } catch (error) {
+        console.error('Error putting item:', error);
+        showNotification('Error adding item: ' + error.message, 'error');
+    }
+}
+
+function showQueryModal() {
+    document.getElementById('query-partition-value').value = '';
+    document.getElementById('query-has-sort').checked = false;
+    document.getElementById('query-sort-value').value = '';
+    document.getElementById('query-limit').value = '';
+    document.getElementById('query-results').innerHTML = '';
+    toggleQuerySortKey();
+    showModal('query-modal');
+}
+
+function toggleQuerySortKey() {
+    const hasSort = document.getElementById('query-has-sort').checked;
+    document.getElementById('query-sort-section').style.display = hasSort ? 'block' : 'none';
+}
+
+function updateQuerySortOperator() {
+    const isBetween = document.getElementById('query-sort-operator').value === 'between';
+    document.getElementById('query-sort-value2-group').style.display = isBetween ? 'block' : 'none';
+}
+
+async function queryItems(event) {
+    event.preventDefault();
+    const partitionValue = document.getElementById('query-partition-value').value;
+    const hasSort = document.getElementById('query-has-sort').checked;
+    const limit = document.getElementById('query-limit').value;
+
+    const partitionAttr = currentTableKeys.attributes.find(a => a.AttributeName === currentTableKeys.partition);
+    const partitionType = partitionAttr ? partitionAttr.AttributeType : 'S';
+
+    let keyConditionExpression = `#pk = :pkval`;
+    let expressionAttributeNames = {
+        '#pk': currentTableKeys.partition
+    };
+    let expressionAttributeValues = {
+        ':pkval': { [partitionType]: partitionValue }
+    };
+
+    if (hasSort && currentTableKeys.sort) {
+        const sortOperator = document.getElementById('query-sort-operator').value;
+        const sortValue = document.getElementById('query-sort-value').value;
+        const sortAttr = currentTableKeys.attributes.find(a => a.AttributeName === currentTableKeys.sort);
+        const sortType = sortAttr ? sortAttr.AttributeType : 'S';
+
+        expressionAttributeNames['#sk'] = currentTableKeys.sort;
+
+        if (sortOperator === 'between') {
+            const sortValue2 = document.getElementById('query-sort-value2').value;
+            keyConditionExpression += ` AND #sk BETWEEN :skval1 AND :skval2`;
+            expressionAttributeValues[':skval1'] = { [sortType]: sortValue };
+            expressionAttributeValues[':skval2'] = { [sortType]: sortValue2 };
+        } else if (sortOperator === 'begins_with') {
+            keyConditionExpression += ` AND begins_with(#sk, :skval)`;
+            expressionAttributeValues[':skval'] = { [sortType]: sortValue };
+        } else {
+            keyConditionExpression += ` AND #sk ${sortOperator} :skval`;
+            expressionAttributeValues[':skval'] = { [sortType]: sortValue };
+        }
+    }
+
+    const requestBody = {
+        TableName: currentTableName,
+        KeyConditionExpression: keyConditionExpression,
+        ExpressionAttributeNames: expressionAttributeNames,
+        ExpressionAttributeValues: expressionAttributeValues
+    };
+
+    if (limit) {
+        requestBody.Limit = parseInt(limit);
+    }
+
+    try {
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.0',
+                'X-Amz-Target': 'DynamoDB_20120810.Query'
+            },
+            body: JSON.stringify(requestBody)
+        });
+
+        const data = await response.json();
+        displayQueryResults(data.Items || [], 'query-results');
+    } catch (error) {
+        console.error('Error querying items:', error);
+        showNotification('Error executing query: ' + error.message, 'error');
+    }
+}
+
+function showScanModal() {
+    document.getElementById('scan-limit').value = '';
+    document.getElementById('scan-filter').value = '';
+    document.getElementById('scan-results').innerHTML = '';
+    showModal('scan-modal');
+}
+
+async function scanItems(event) {
+    event.preventDefault();
+    const limit = document.getElementById('scan-limit').value;
+    const filter = document.getElementById('scan-filter').value;
+
+    const requestBody = {
+        TableName: currentTableName
+    };
+
+    if (limit) {
+        requestBody.Limit = parseInt(limit);
+    }
+
+    if (filter) {
+        requestBody.FilterExpression = filter;
+    }
+
+    try {
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.0',
+                'X-Amz-Target': 'DynamoDB_20120810.Scan'
+            },
+            body: JSON.stringify(requestBody)
+        });
+
+        const data = await response.json();
+        displayQueryResults(data.Items || [], 'scan-results');
+    } catch (error) {
+        console.error('Error scanning items:', error);
+        showNotification('Error executing scan: ' + error.message, 'error');
+    }
+}
+
+function displayQueryResults(items, containerId) {
+    const container = document.getElementById(containerId);
+    if (items.length === 0) {
+        container.innerHTML = '<p>No items found</p>';
+        return;
+    }
+
+    let html = `<div class="card-title">Results (${items.length} items)</div><div style="overflow-x: auto;"><table style="width: 100%;"><thead><tr>`;
+
+    const allAttributes = new Set();
+    items.forEach(item => {
+        Object.keys(item).forEach(key => allAttributes.add(key));
+    });
+
+    allAttributes.forEach(attr => {
+        html += `<th>${attr}</th>`;
+    });
+    html += `</tr></thead><tbody>`;
+
+    items.forEach(item => {
+        html += '<tr>';
+        allAttributes.forEach(attr => {
+            const value = item[attr];
+            let displayValue = 'N/A';
+
+            if (value) {
+                if (value.S !== undefined) displayValue = value.S;
+                else if (value.N !== undefined) displayValue = value.N;
+                else if (value.BOOL !== undefined) displayValue = value.BOOL.toString();
+                else if (value.NULL !== undefined) displayValue = 'NULL';
+                else displayValue = JSON.stringify(value);
+            }
+
+            html += `<td>${displayValue}</td>`;
+        });
+        html += '</tr>';
+    });
+
+    html += '</tbody></table></div>';
+    container.innerHTML = html;
+}
+
+async function deleteItem(item) {
+    const key = {};
+    if (currentTableKeys.partition && item[currentTableKeys.partition]) {
+        key[currentTableKeys.partition] = item[currentTableKeys.partition];
+    }
+
+    if (currentTableKeys.sort && item[currentTableKeys.sort]) {
+        key[currentTableKeys.sort] = item[currentTableKeys.sort];
+    }
+
+    showConfirmModal(
+        'Are you sure you want to delete this item?',
+        async () => {
+            try {
+                await fetch(API_BASE, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-amz-json-1.0',
+                        'X-Amz-Target': 'DynamoDB_20120810.DeleteItem'
+                    },
+                    body: JSON.stringify({
+                        TableName: currentTableName,
+                        Key: key
+                    })
+                });
+
+                showNotification('Item deleted successfully', 'success');
+                loadTableItems();
+            } catch (error) {
+                console.error('Error deleting item:', error);
+                showNotification('Error deleting item', 'error');
+            }
+        }
+    );
+}
+
+async function deleteTable(tableName) {
+    showConfirmModal(
+        `Are you sure you want to delete table: ${tableName}?<br><br>This cannot be undone.`,
+        async () => {
+            try {
+                await fetch(API_BASE, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-amz-json-1.0',
+                        'X-Amz-Target': 'DynamoDB_20120810.DeleteTable'
+                    },
+                    body: JSON.stringify({ TableName: tableName })
+                });
+                showNotification(`Table ${tableName} deleted successfully`, 'success');
+                loadTables();
+            } catch (error) {
+                console.error('Error deleting table:', error);
+                showNotification('Error deleting table', 'error');
+            }
+        }
+    );
+}
+function showCreateGSIModal(tableName) {
+    currentTableName = tableName;
+    document.getElementById('gsi-name').value = '';
+    document.getElementById('gsi-partition-key').value = '';
+    document.getElementById('gsi-partition-type').value = 'S';
+    document.getElementById('gsi-has-sort').checked = false;
+    document.getElementById('gsi-sort-key').value = '';
+    document.getElementById('gsi-sort-type').value = 'S';
+    document.getElementById('gsi-projection').value = 'ALL';
+    toggleGSISortKey();
+    showModal('create-gsi-modal');
+}
+
+function toggleGSISortKey() {
+    const hasSort = document.getElementById('gsi-has-sort').checked;
+    document.getElementById('gsi-sort-section').style.display = hasSort ? 'block' : 'none';
+}
+
+async function createGSI(event) {
+    event.preventDefault();
+    const indexName = document.getElementById('gsi-name').value;
+    const partitionKey = document.getElementById('gsi-partition-key').value;
+    const partitionType = document.getElementById('gsi-partition-type').value;
+    const hasSort = document.getElementById('gsi-has-sort').checked;
+    const projectionType = document.getElementById('gsi-projection').value;
+
+    const keySchema = [{
+        AttributeName: partitionKey,
+        KeyType: 'HASH'
+    }];
+
+    const attributeDefinitions = [{
+        AttributeName: partitionKey,
+        AttributeType: partitionType
+    }];
+
+    if (hasSort) {
+        const sortKey = document.getElementById('gsi-sort-key').value;
+        const sortType = document.getElementById('gsi-sort-type').value;
+
+        if (sortKey) {
+            keySchema.push({
+                AttributeName: sortKey,
+                KeyType: 'RANGE'
+            });
+
+            attributeDefinitions.push({
+                AttributeName: sortKey,
+                AttributeType: sortType
+            });
+        }
+    }
+
+    try {
+        await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.0',
+                'X-Amz-Target': 'DynamoDB_20120810.UpdateTable'
+            },
+            body: JSON.stringify({
+                TableName: currentTableName,
+                AttributeDefinitions: attributeDefinitions,
+                GlobalSecondaryIndexUpdates: [{
+                    Create: {
+                        IndexName: indexName,
+                        KeySchema: keySchema,
+                        Projection: {
+                            ProjectionType: projectionType
+                        }
+                    }
+                }]
+            })
+        });
+
+        closeModal('create-gsi-modal');
+        showNotification(`GSI ${indexName} created successfully`, 'success');
+        loadTables();
+    } catch (error) {
+        console.error('Error creating GSI:', error);
+        showNotification('Error creating GSI: ' + error.message, 'error');
+    }
 }
 
 // ============================================================================
@@ -393,7 +1164,7 @@ async function peekMessage(queueUrl, queueName) {
                 </div>
                 <div class="detail-row">
                     <div class="detail-label">Body</div>
-                    <div class="detail-value"><pre class="code-block">${msg.Body}</pre></div>
+                    <div class="detail-value"><pre class="code-block">${JSON.stringify(JSON.parse(msg.Body), null, 2)}</pre></div>
                 </div>
                 ${msg.Attributes ? `
                 <div class="detail-row">
@@ -461,7 +1232,7 @@ async function receiveMessage(queueUrl, queueName) {
                 </div>
                 <div class="detail-row">
                     <div class="detail-label">Body</div>
-                    <div class="detail-value"><pre class="code-block">${msg.Body}</pre></div>
+                    <div class="detail-value"><pre class="code-block">${JSON.stringify(JSON.parse(msg.Body), null, 2)}</pre></div>
                 </div>
                 <p style="margin-top: 15px; color: var(--success); font-size: 14px;">
                     <strong>✓ Message received and deleted from queue</strong>
@@ -813,7 +1584,8 @@ async function testFunction(event) {
 
 function viewFunctionLogs(functionName) {
     const logGroupName = `/aws/lambda/${functionName}`;
-    const cloudwatchBtn = document.querySelector('.service-nav button:nth-child(4)');
+    // const cloudwatchBtn = document.querySelector('.service-nav button:nth-child(4)');
+    const cloudwatchBtn = document.getElementById('service-button-cloudwatch');
     cloudwatchBtn.click();
     setTimeout(() => {
         viewLogStreams(logGroupName);
@@ -1689,7 +2461,7 @@ async function viewLogEvents(logGroupName, logStreamName) {
             for (const event of events) {
                 const timestamp = new Date(event.timestamp).toLocaleString();
                 html += `
-                    <div style="border-bottom: 1px solid #EAEDED; padding: 10px 0; display: flex; align-items: flex-start;">
+                    <div style="border-bottom: 1px solid #EAEDED; padding: 3px 0; display: flex; align-items: flex-start;">
                         <div style="font-size: 12px; color: #545B64; margin-right: 10px; flex-shrink: 0; width: 140px;">
                         ${timestamp}
                         </div>
@@ -2057,6 +2829,778 @@ async function deleteRepository(repositoryName, hasImages) {
 // S3 FUNCTIONS
 // ============================================================================
 
+function showConfigureNotificationsModal(bucketName) {
+    document.getElementById('notification-bucket-name').textContent = bucketName;
+    document.getElementById('configure-notifications-form').reset();
+    document.getElementById('notification-destination-group').style.display = 'none';
+    document.getElementById('prefix-filter-section').style.display = 'none';
+    showModal('configure-notifications-modal');
+}
+
+function updateNotificationDestination() {
+    const type = document.getElementById('notification-type').value;
+    const group = document.getElementById('notification-destination-group');
+    const label = document.getElementById('notification-destination-label');
+    const input = document.getElementById('notification-destination');
+
+    if (type) {
+        group.style.display = 'block';
+
+        if (type === 'Queue') {
+            label.textContent = 'SQS Queue ARN *';
+            input.placeholder = 'arn:aws:sqs:us-east-1:000000000000:my-queue';
+        // } else if (type === 'Topic') {
+        //     label.textContent = 'SNS Topic ARN *';
+        //     input.placeholder = 'arn:aws:sns:us-east-1:000000000000:my-topic';
+        } else if (type === 'Lambda') {
+            label.textContent = 'Lambda Function ARN *';
+            input.placeholder = 'arn:aws:lambda:us-east-1:000000000000:function:my-function';
+        }
+    } else {
+        group.style.display = 'none';
+    }
+}
+
+function togglePrefixFilter() {
+    const useFilter = document.getElementById('use-prefix-filter').checked;
+    document.getElementById('prefix-filter-section').style.display = useFilter ? 'block' : 'none';
+}
+
+async function configureNotifications(event) {
+    event.preventDefault();
+
+    const bucketName = document.getElementById('notification-bucket-name').textContent;
+    const type = document.getElementById('notification-type').value;
+    const destination = document.getElementById('notification-destination').value;
+    const notificationId = document.getElementById('notification-id').value || `notification-${Date.now()}`;
+
+    // Get selected events
+    const eventCheckboxes = document.querySelectorAll('.event-checkbox:checked');
+    const events = Array.from(eventCheckboxes).map(cb => cb.value);
+
+    if (events.length === 0) {
+        showNotification('Please select at least one event type', 'error');
+        return;
+    }
+
+    // Build notification configuration
+    const config = {
+        Id: notificationId,
+        Events: events
+    };
+
+    // Add destination based on type
+    if (type === 'Queue') {
+        config.QueueArn = destination;
+    } else if (type === 'Topic') {
+        config.TopicArn = destination;
+    } else if (type === 'Lambda') {
+        config.LambdaFunctionArn = destination;
+    }
+
+    // Add filters if specified
+    const useFilter = document.getElementById('use-prefix-filter').checked;
+    if (useFilter) {
+        const prefix = document.getElementById('notification-prefix').value;
+        const suffix = document.getElementById('notification-suffix').value;
+
+        if (prefix || suffix) {
+            config.Filter = {
+                Key: {
+                    FilterRules: []
+                }
+            };
+
+            if (prefix) {
+                config.Filter.Key.FilterRules.push({
+                    Name: 'prefix',
+                    Value: prefix
+                });
+            }
+
+            if (suffix) {
+                config.Filter.Key.FilterRules.push({
+                    Name: 'suffix',
+                    Value: suffix
+                });
+            }
+        }
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}s3/buckets/${bucketName}/notification`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                type: type,
+                configuration: config
+            })
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.message || 'Failed to configure notification');
+        }
+
+        closeModal('configure-notifications-modal');
+        showNotification('Event notification configured successfully', 'success');
+
+        // Refresh bucket details
+        viewBucketDetails(bucketName);
+    } catch (error) {
+        console.error('Error configuring notification:', error);
+        showNotification('Error configuring notification: ' + error.message, 'error');
+    }
+}
+
+// let transitionCounter = 0;
+// let noncurrentTransitionCounter = 0;
+
+function showConfigureLifecycleModal(bucketName) {
+    document.getElementById('lifecycle-bucket-name').textContent = bucketName;
+    document.getElementById('configure-lifecycle-form').reset();
+
+    // Reset counters and containers
+    // transitionCounter = 0;
+    // noncurrentTransitionCounter = 0;
+    // document.getElementById('transitions-container').innerHTML = '';
+    // document.getElementById('noncurrent-transitions-container').innerHTML = '';
+
+    // Hide all conditional sections
+    document.getElementById('lifecycle-prefix-group').style.display = 'none';
+    document.getElementById('lifecycle-tags-group').style.display = 'none';
+    // document.getElementById('transition-actions').style.display = 'none';
+    document.getElementById('expiration-actions').style.display = 'none';
+    // document.getElementById('noncurrent-transition-actions').style.display = 'none';
+    document.getElementById('noncurrent-expiration-actions').style.display = 'none';
+    document.getElementById('abort-multipart-actions').style.display = 'none';
+
+    showModal('configure-lifecycle-modal');
+}
+
+function toggleLifecycleScope() {
+    const scopeType = document.querySelector('input[name="scope-type"]:checked').value;
+    document.getElementById('lifecycle-prefix-group').style.display = scopeType === 'prefix' ? 'block' : 'none';
+    document.getElementById('lifecycle-tags-group').style.display = scopeType === 'tags' ? 'block' : 'none';
+}
+
+// function toggleTransitionActions() {
+//     const enabled = document.getElementById('enable-transition').checked;
+//     document.getElementById('transition-actions').style.display = enabled ? 'block' : 'none';
+//     if (enabled && document.getElementById('transitions-container').children.length === 0) {
+//         addTransition();
+//     }
+// }
+
+function toggleExpirationActions() {
+    const enabled = document.getElementById('enable-expiration').checked;
+    document.getElementById('expiration-actions').style.display = enabled ? 'block' : 'none';
+}
+
+function toggleExpirationType() {
+    const expirationType = document.querySelector('input[name="expiration-type"]:checked').value;
+    document.getElementById('expiration-days-group').style.display = expirationType === 'days' ? 'block' : 'none';
+    document.getElementById('expiration-date-group').style.display = expirationType === 'date' ? 'block' : 'none';
+}
+
+// function toggleNoncurrentTransitionActions() {
+//     const enabled = document.getElementById('enable-noncurrent-transition').checked;
+//     document.getElementById('noncurrent-transition-actions').style.display = enabled ? 'block' : 'none';
+//     if (enabled && document.getElementById('noncurrent-transitions-container').children.length === 0) {
+//         addNoncurrentTransition();
+//     }
+// }
+
+function toggleNoncurrentExpirationActions() {
+    const enabled = document.getElementById('enable-noncurrent-expiration').checked;
+    document.getElementById('noncurrent-expiration-actions').style.display = enabled ? 'block' : 'none';
+}
+
+function toggleAbortMultipartActions() {
+    const enabled = document.getElementById('enable-abort-multipart').checked;
+    document.getElementById('abort-multipart-actions').style.display = enabled ? 'block' : 'none';
+}
+
+// function addTransition() {
+//     const container = document.getElementById('transitions-container');
+//     const id = transitionCounter++;
+
+//     const div = document.createElement('div');
+//     div.className = 'form-group';
+//     div.id = `transition-${id}`;
+//     div.style.padding = '15px';
+//     div.style.border = '1px solid var(--border)';
+//     div.style.borderRadius = '4px';
+//     div.style.marginBottom = '10px';
+//     div.style.background = '#fafafa';
+
+//     div.innerHTML = `
+//         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+//             <strong>Transition ${id + 1}</strong>
+//             <button type="button" class="btn btn-danger" onclick="removeTransition(${id})" style="padding: 4px 8px; font-size: 12px;">Remove</button>
+//         </div>
+//         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+//             <div>
+//                 <label style="font-size: 13px;">Days After Creation *</label>
+//                 <input type="number" id="transition-days-${id}" min="1" placeholder="30" required style="width: 100%; padding: 8px;">
+//             </div>
+//             <div>
+//                 <label style="font-size: 13px;">Storage Class *</label>
+//                 <select id="transition-storage-${id}" required style="width: 100%; padding: 8px;">
+//                     <option value="">-- Select --</option>
+//                     <option value="STANDARD_IA">Standard-IA</option>
+//                     <option value="ONEZONE_IA">One Zone-IA</option>
+//                     <option value="INTELLIGENT_TIERING">Intelligent-Tiering</option>
+//                     <option value="GLACIER">Glacier Flexible Retrieval</option>
+//                     <option value="GLACIER_IR">Glacier Instant Retrieval</option>
+//                     <option value="DEEP_ARCHIVE">Glacier Deep Archive</option>
+//                 </select>
+//             </div>
+//         </div>
+//     `;
+
+//     container.appendChild(div);
+// }
+
+// function removeTransition(id) {
+//     const element = document.getElementById(`transition-${id}`);
+//     if (element) {
+//         element.remove();
+//     }
+// }
+
+// function addNoncurrentTransition() {
+//     const container = document.getElementById('noncurrent-transitions-container');
+//     const id = noncurrentTransitionCounter++;
+
+//     const div = document.createElement('div');
+//     div.className = 'form-group';
+//     div.id = `noncurrent-transition-${id}`;
+//     div.style.padding = '15px';
+//     div.style.border = '1px solid var(--border)';
+//     div.style.borderRadius = '4px';
+//     div.style.marginBottom = '10px';
+//     div.style.background = '#fafafa';
+
+//     div.innerHTML = `
+//         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+//             <strong>Noncurrent Transition ${id + 1}</strong>
+//             <button type="button" class="btn btn-danger" onclick="removeNoncurrentTransition(${id})" style="padding: 4px 8px; font-size: 12px;">Remove</button>
+//         </div>
+//         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+//             <div>
+//                 <label style="font-size: 13px;">Days After Becoming Noncurrent *</label>
+//                 <input type="number" id="noncurrent-transition-days-${id}" min="1" placeholder="30" required style="width: 100%; padding: 8px;">
+//             </div>
+//             <div>
+//                 <label style="font-size: 13px;">Storage Class *</label>
+//                 <select id="noncurrent-transition-storage-${id}" required style="width: 100%; padding: 8px;">
+//                     <option value="">-- Select --</option>
+//                     <option value="STANDARD_IA">Standard-IA</option>
+//                     <option value="ONEZONE_IA">One Zone-IA</option>
+//                     <option value="INTELLIGENT_TIERING">Intelligent-Tiering</option>
+//                     <option value="GLACIER">Glacier Flexible Retrieval</option>
+//                     <option value="GLACIER_IR">Glacier Instant Retrieval</option>
+//                     <option value="DEEP_ARCHIVE">Glacier Deep Archive</option>
+//                 </select>
+//             </div>
+//         </div>
+//         <div style="margin-top: 10px;">
+//             <label style="font-size: 13px;">Number of Newer Versions to Retain</label>
+//             <input type="number" id="noncurrent-transition-newer-${id}" min="1" placeholder="Leave empty for all" style="width: 100%; padding: 8px;">
+//         </div>
+//     `;
+
+//     container.appendChild(div);
+// }
+
+// function removeNoncurrentTransition(id) {
+//     const element = document.getElementById(`noncurrent-transition-${id}`);
+//     if (element) {
+//         element.remove();
+//     }
+// }
+
+async function configureLifecycle(event) {
+    event.preventDefault();
+
+    const bucketName = document.getElementById('lifecycle-bucket-name').textContent;
+    const ruleId = document.getElementById('lifecycle-rule-id').value;
+    const status = document.getElementById('lifecycle-status').value;
+
+    // Build the lifecycle rule
+    const rule = {
+        ID: ruleId,
+        Status: status
+    };
+
+    // Add scope/filter
+    const scopeType = document.querySelector('input[name="scope-type"]:checked').value;
+
+    if (scopeType === 'all') {
+        rule.Prefix = '';
+    } else if (scopeType === 'prefix') {
+        rule.Prefix = document.getElementById('lifecycle-prefix').value || '';
+    } else if (scopeType === 'tags') {
+        const tagsText = document.getElementById('lifecycle-tags').value.trim();
+        if (tagsText) {
+            const tags = tagsText.split('\n').map(line => {
+                const [key, value] = line.split('=').map(s => s.trim());
+                return { Key: key, Value: value };
+            }).filter(tag => tag.Key && tag.Value);
+
+            if (tags.length > 0) {
+                rule.Filter = {
+                    And: {
+                        Tags: tags
+                    }
+                };
+            }
+        }
+    }
+
+    // Add transitions
+    // if (document.getElementById('enable-transition').checked) {
+    //     const transitions = [];
+    //     // for (let i = 0; i < transitionCounter; i++) {
+    //     //     const daysInput = document.getElementById(`transition-days-${i}`);
+    //     //     const storageInput = document.getElementById(`transition-storage-${i}`);
+
+    //     //     if (daysInput && storageInput && daysInput.value && storageInput.value) {
+    //     //         transitions.push({
+    //     //             Days: parseInt(daysInput.value),
+    //     //             StorageClass: storageInput.value
+    //     //         });
+    //     //     }
+    //     // }
+
+    //     // if (transitions.length > 0) {
+    //     //     rule.Transitions = transitions;
+    //     // }
+    // }
+
+    // Add expiration
+    if (document.getElementById('enable-expiration').checked) {
+        const expirationType = document.querySelector('input[name="expiration-type"]:checked').value;
+        rule.Expiration = {};
+
+        if (expirationType === 'days') {
+            const days = document.getElementById('expiration-days').value;
+            if (days) {
+                rule.Expiration.Days = parseInt(days);
+            }
+        } else if (expirationType === 'date') {
+            const date = document.getElementById('expiration-date').value;
+            if (date) {
+                rule.Expiration.Date = new Date(date).toISOString();
+            }
+        }
+
+        if (document.getElementById('expiration-expired-delete-marker').checked) {
+            rule.Expiration.ExpiredObjectDeleteMarker = true;
+        }
+    }
+
+    // Add noncurrent version transitions
+    // if (document.getElementById('enable-noncurrent-transition').checked) {
+    //     const noncurrentTransitions = [];
+    //     for (let i = 0; i < noncurrentTransitionCounter; i++) {
+    //         const daysInput = document.getElementById(`noncurrent-transition-days-${i}`);
+    //         const storageInput = document.getElementById(`noncurrent-transition-storage-${i}`);
+    //         const newerInput = document.getElementById(`noncurrent-transition-newer-${i}`);
+
+    //         if (daysInput && storageInput && daysInput.value && storageInput.value) {
+    //             const transition = {
+    //                 NoncurrentDays: parseInt(daysInput.value),
+    //                 StorageClass: storageInput.value
+    //             };
+
+    //             if (newerInput && newerInput.value) {
+    //                 transition.NewerNoncurrentVersions = parseInt(newerInput.value);
+    //             }
+
+    //             noncurrentTransitions.push(transition);
+    //         }
+    //     }
+
+    //     if (noncurrentTransitions.length > 0) {
+    //         rule.NoncurrentVersionTransitions = noncurrentTransitions;
+    //     }
+    // }
+
+    // Add noncurrent version expiration
+    if (document.getElementById('enable-noncurrent-expiration').checked) {
+        const days = document.getElementById('noncurrent-expiration-days').value;
+        const newerVersions = document.getElementById('noncurrent-newer-versions').value;
+
+        if (days) {
+            rule.NoncurrentVersionExpiration = {
+                NoncurrentDays: parseInt(days)
+            };
+
+            if (newerVersions) {
+                rule.NoncurrentVersionExpiration.NewerNoncurrentVersions = parseInt(newerVersions);
+            }
+        }
+    }
+
+    // Add abort incomplete multipart upload
+    if (document.getElementById('enable-abort-multipart').checked) {
+        const days = document.getElementById('abort-multipart-days').value;
+        if (days) {
+            rule.AbortIncompleteMultipartUpload = {
+                DaysAfterInitiation: parseInt(days)
+            };
+        }
+    }
+
+    // Validate that at least one action is configured
+    const hasActions = rule.Transitions || rule.Expiration || rule.NoncurrentVersionTransitions ||
+                      rule.NoncurrentVersionExpiration || rule.AbortIncompleteMultipartUpload;
+
+    if (!hasActions) {
+        showNotification('Please configure at least one lifecycle action', 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}s3/buckets/${bucketName}/lifecycle`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rule: rule })
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.message || 'Failed to configure lifecycle rule');
+        }
+
+        closeModal('configure-lifecycle-modal');
+        showNotification('Lifecycle rule configured successfully', 'success');
+
+        // Refresh bucket details
+        viewBucketDetails(bucketName);
+    } catch (error) {
+        console.error('Error configuring lifecycle rule:', error);
+        showNotification('Error configuring lifecycle rule: ' + error.message, 'error');
+    }
+}
+
+async function viewBucketDetails(bucketName) {
+    try {
+        document.getElementById('bucket-details-name').textContent = bucketName;
+        const content = document.getElementById('bucket-details-content');
+        content.innerHTML = '<div class="loading"><div class="spinner"></div><div>Loading bucket details...</div></div>';
+
+        showModal('bucket-details-modal');
+
+        // Fetch lifecycle policies
+        let lifecyclePolicies = [];
+        try {
+            const lifecycleResponse = await fetch(`${API_BASE}s3/buckets/${bucketName}/lifecycle`);
+            if (lifecycleResponse.ok) {
+                const lifecycleData = await lifecycleResponse.json();
+                lifecyclePolicies = lifecycleData.Rules || [];
+            }
+        } catch (error) {
+            console.log('No lifecycle policies configured');
+        }
+
+        // Fetch notification configurations
+        let notificationConfig = null;
+        try {
+            const notificationResponse = await fetch(`${API_BASE}s3/buckets/${bucketName}/notification`);
+            if (notificationResponse.ok) {
+                notificationConfig = await notificationResponse.json();
+            }
+        } catch (error) {
+            console.log('No notification configurations');
+        }
+
+        // Build the details HTML
+        let html = `
+            <div class="detail-row">
+                <div class="detail-label">Bucket Name</div>
+                <div class="detail-value"><strong>${bucketName}</strong></div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">Region</div>
+                <div class="detail-value">${S3_CONFIG.region}</div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">Endpoint</div>
+                <div class="detail-value"><code>${S3_CONFIG.endpoint}/${bucketName}</code></div>
+            </div>
+        `;
+
+        // Lifecycle Policies Section
+        html += `
+            <h3 style="margin-top: 30px; margin-bottom: 15px; color: var(--aws-dark);">Lifecycle Policies</h3>
+        `;
+        html += `
+            <div style="margin-bottom: 15px;">
+                <button class="btn btn-primary" onclick="showConfigureLifecycleModal('${bucketName}')">
+                    Add Lifecycle Rule
+                </button>
+            </div>
+        `;
+        if (lifecyclePolicies.length === 0) {
+            html += `<p style="color: #545B64; font-style: italic;">No lifecycle policies configured</p>`;
+        } else {
+            html += `<table style="width: 100%; margin-bottom: 20px;">
+                <thead>
+                    <tr>
+                        <th>Rule ID</th>
+                        <th>Status</th>
+                        <th>Prefix/Filter</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>`;
+
+            for (const rule of lifecyclePolicies) {
+                const ruleId = rule.ID || 'N/A';
+                const status = rule.Status || 'Unknown';
+                const prefix = rule.Prefix || (rule.Filter?.Prefix) || 'All objects';
+
+                let actions = [];
+                if (rule.Expiration) {
+                    if (rule.Expiration.Days) {
+                        actions.push(`Delete after ${rule.Expiration.Days} days`);
+                    }
+                    if (rule.Expiration.Date) {
+                        actions.push(`Delete on ${rule.Expiration.Date}`);
+                    }
+                }
+                if (rule.Transitions) {
+                    for (const transition of rule.Transitions) {
+                        actions.push(`Transition to ${transition.StorageClass} after ${transition.Days} days`);
+                    }
+                }
+                if (rule.NoncurrentVersionExpiration) {
+                    actions.push(`Delete noncurrent versions after ${rule.NoncurrentVersionExpiration.NoncurrentDays} days`);
+                }
+
+                const actionsText = actions.length > 0 ? actions.join('<br>') : 'None';
+
+                html += `
+                    <tr>
+                        <td><code>${ruleId}</code></td>
+                        <td><span class="badge ${status === 'Enabled' ? 'badge-success' : 'badge-danger'}">${status}</span></td>
+                        <td>${prefix}</td>
+                        <td style="font-size: 13px;">${actionsText}</td>
+                        <td>
+                            <button class="btn btn-danger" onclick="deleteLifecycleRule('${bucketName}', '${ruleId}')">Delete</button>
+                        </td>
+                    </tr>
+                `;
+            }
+
+            html += `</tbody></table>`;
+        }
+
+        // Notification Configuration Section
+        html += `
+            <h3 style="margin-top: 30px; margin-bottom: 15px; color: var(--aws-dark);">Event Notifications</h3>
+        `;
+
+        html += `
+            <div style="margin: 20px 0;">
+                <button class="btn btn-primary" onclick="showConfigureNotificationsModal('${bucketName}')">
+                    Configure Event Notifications
+                </button>
+            </div>
+        `;
+        let hasNotifications = false;
+
+        if (notificationConfig) {
+            // SQS Queue Configurations
+            if (notificationConfig.QueueConfigurations && notificationConfig.QueueConfigurations.length > 0) {
+                hasNotifications = true;
+                html += `
+                    <h4 style="margin-top: 20px; margin-bottom: 10px; font-size: 16px;">SQS Queue Notifications</h4>
+                    <table style="width: 100%; margin-bottom: 20px;">
+                        <thead>
+                            <tr>
+                                <th>Queue ARN</th>
+                                <th>Events</th>
+                                <th>Filter</th>
+                                <th>Suffix</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>`;
+
+                for (const config of notificationConfig.QueueConfigurations) {
+                    const queueArn = config.QueueArn || 'N/A';
+                    const queueName = queueArn.split(':').pop();
+                    const events = config.Events ? config.Events.join(', ') : 'None';
+                    const filter = config.Filter?.Key?.FilterRules?.[0] ?
+                        `${config.Filter.Key.FilterRules[0].Name}: ${config.Filter.Key.FilterRules[0].Value}` :
+                        'All objects';
+                    const suffix = config.Filter?.Key?.FilterRules?.[0] ?
+                        `${config.Filter.Key.FilterRules[1].Name}: ${config.Filter.Key.FilterRules[1].Value}` :
+                        'All objects';
+                    html += `
+                        <tr>
+                            <td>
+                                <div><strong>${queueName}</strong></div>
+                                <div style="font-size: 11px; color: #545B64; margin-top: 4px;"><code>${queueArn}</code></div>
+                            </td>
+                            <td style="font-size: 13px;">${events}</td>
+                            <td style="font-size: 13px;">${filter}</td>
+                            <td style="font-size: 13px;">${suffix}</td>
+                            <td>
+                                <button class="btn btn-danger" onclick="deleteNotification('${bucketName}', '${config.Id}')">Delete</button>
+                            </td>
+                        </tr>
+                    `;
+                }
+
+                html += `</tbody></table>`;
+            }
+
+            // Lambda Function Configurations
+            if (notificationConfig.LambdaFunctionConfigurations && notificationConfig.LambdaFunctionConfigurations.length > 0) {
+                hasNotifications = true;
+                html += `
+                    <h4 style="margin-top: 20px; margin-bottom: 10px; font-size: 16px;">Lambda Function Notifications</h4>
+                    <table style="width: 100%; margin-bottom: 20px;">
+                        <thead>
+                            <tr>
+                                <th>Function ARN</th>
+                                <th>Events</th>
+                                <th>Filter</th>
+                            </tr>
+                        </thead>
+                        <tbody>`;
+
+                for (const config of notificationConfig.LambdaFunctionConfigurations) {
+                    const functionArn = config.LambdaFunctionArn || 'N/A';
+                    const functionName = functionArn.split(':').pop();
+                    const events = config.Events ? config.Events.join(', ') : 'None';
+                    const filter = config.Filter?.Key?.FilterRules?.[0] ?
+                        `${config.Filter.Key.FilterRules[0].Name}: ${config.Filter.Key.FilterRules[0].Value}` :
+                        'All objects';
+
+                    html += `
+                        <tr>
+                            <td>
+                                <div><strong>${functionName}</strong></div>
+                                <div style="font-size: 11px; color: #545B64; margin-top: 4px;"><code>${functionArn}</code></div>
+                            </td>
+                            <td style="font-size: 13px;">${events}</td>
+                            <td style="font-size: 13px;">${filter}</td>
+                        </tr>
+                    `;
+                }
+
+                html += `</tbody></table>`;
+            }
+
+            // SNS Topic Configurations
+            // if (notificationConfig.TopicConfigurations && notificationConfig.TopicConfigurations.length > 0) {
+            //     hasNotifications = true;
+            //     html += `
+            //         <h4 style="margin-top: 20px; margin-bottom: 10px; font-size: 16px;">SNS Topic Notifications</h4>
+            //         <table style="width: 100%; margin-bottom: 20px;">
+            //             <thead>
+            //                 <tr>
+            //                     <th>Topic ARN</th>
+            //                     <th>Events</th>
+            //                     <th>Filter</th>
+            //                 </tr>
+            //             </thead>
+            //             <tbody>`;
+
+            //     for (const config of notificationConfig.TopicConfigurations) {
+            //         const topicArn = config.TopicArn || 'N/A';
+            //         const topicName = topicArn.split(':').pop();
+            //         const events = config.Events ? config.Events.join(', ') : 'None';
+            //         const filter = config.Filter?.Key?.FilterRules?.[0] ?
+            //             `${config.Filter.Key.FilterRules[0].Name}: ${config.Filter.Key.FilterRules[0].Value}` :
+            //             'All objects';
+
+            //         html += `
+            //             <tr>
+            //                 <td>
+            //                     <div><strong>${topicName}</strong></div>
+            //                     <div style="font-size: 11px; color: #545B64; margin-top: 4px;"><code>${topicArn}</code></div>
+            //                 </td>
+            //                 <td style="font-size: 13px;">${events}</td>
+            //                 <td style="font-size: 13px;">${filter}</td>
+            //             </tr>
+            //         `;
+            //     }
+
+            //     html += `</tbody></table>`;
+            // }
+        }
+
+        if (!hasNotifications) {
+            html += `<p style="color: #545B64; font-style: italic;">No event notifications configured</p>`;
+        }
+
+        content.innerHTML = html;
+
+    } catch (error) {
+        console.error('Error loading bucket details:', error);
+        const content = document.getElementById('bucket-details-content');
+        content.innerHTML = `<p style="color: var(--danger);">Error loading bucket details: ${error.message}</p>`;
+    }
+}
+
+async function deleteNotification(bucketName, notificationId) {
+    showConfirmModal(
+        `Are you sure you want to delete notification: ${notificationId}?`,
+        async () => {
+            try {
+                const response = await fetch(`${API_BASE}s3/buckets/${bucketName}/notification/${notificationId}`, {
+                    method: 'DELETE'
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.message || 'Failed to delete notification');
+                }
+
+                showNotification('Event notification deleted successfully', 'success');
+
+                // Refresh bucket details
+                viewBucketDetails(bucketName);
+            } catch (error) {
+                console.error('Error deleting notification:', error);
+                showNotification('Error deleting notification: ' + error.message, 'error');
+            }
+        }
+    );
+}
+
+// delete function:
+async function deleteLifecycleRule(bucketName, ruleId) {
+    showConfirmModal(
+        `Are you sure you want to delete lifecycle rule: ${ruleId}?`,
+        async () => {
+            try {
+                const response = await fetch(`${API_BASE}s3/buckets/${bucketName}/lifecycle/${ruleId}`, {
+                    method: 'DELETE'
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.message || 'Failed to delete lifecycle rule');
+                }
+
+                showNotification('Lifecycle rule deleted successfully', 'success');
+                viewBucketDetails(bucketName);
+            } catch (error) {
+                console.error('Error deleting lifecycle rule:', error);
+                showNotification('Error deleting lifecycle rule: ' + error.message, 'error');
+            }
+        }
+    );
+}
+
 async function loadBuckets() {
     const loading = document.getElementById('s3-loading');
     const content = document.getElementById('s3-content');
@@ -2099,6 +3643,7 @@ async function loadBuckets() {
                 <td>${createdDate}</td>
                 <td>
                     <div class="action-buttons">
+                        <button class="btn btn-secondary" onclick="viewBucketDetails('${bucket.Name}')">Details</button>
                         <button class="btn btn-secondary" onclick="viewBucketObjects('${bucket.Name}')">View Objects</button>
                         <button class="btn btn-danger" onclick="deleteBucket('${bucket.Name}')">Delete</button>
                     </div>
@@ -2567,6 +4112,6 @@ async function deleteBucket(bucketName) {
 // INITIALIZATION
 // ============================================================================
 
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener('DOMContentLoaded', function() {
     loadQueues();
 });

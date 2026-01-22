@@ -1,18 +1,20 @@
 services:
   s3:
-    image: minio/minio
+    # image: minio/minio
+    build:
+      context: ../src/s3
     ports:
       - "9000:9000"
       - "9001:9001"
     environment:
       MINIO_ROOT_USER: localcloud
       MINIO_ROOT_PASSWORD: localcloud
+      AWS_ENDPOINT_URL: http://api:4566
       LOG_LEVEL: DEBUG
-    command: server --console-address ":9001" /data
     volumes:
-      - data:/data
+      - data-s3:/data
     networks:
       - localcloud
 
 volumes:
-  data:
+  data-s3:
