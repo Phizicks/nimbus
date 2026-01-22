@@ -15,7 +15,6 @@ import hmac
 import custom_logger
 import logging
 import docker
-from docker_api import DockerClientWrapper, DockerInfoError
 from datetime import datetime, timezone, timedelta
 import zipfile
 import shutil
@@ -29,8 +28,11 @@ from database import Database
 import sqlite3
 from ssm_parameters import SSMParameterStore
 import socket
-from urllib.parse import urlparse
-
+from urllib.parse import urlparse, parse_qs
+from botocore.config import Config
+from botocore.awsrequest import AWSRequest
+from botocore.credentials import Credentials
+from botocore.auth import SigV4Auth
 
 class C:
     RED = '\033[91m'
@@ -136,6 +138,52 @@ def esm_find_mapping_by_function(function_name: str):
         if m.get('FunctionName') == function_name:
             return m
     return None
+
+
+def proxy_to_sqs(operation, records):
+    """Proxy S3 event records to SQS using boto3 in LocalStack"""
+    # SQS endpoint for LocalStack
+    SQS_ENDPOINT = os.getenv('SQS_ENDPOINT', 'http://sqs:4566')
+    QUEUE_URL = os.getenv('SQS_QUEUE_URL', 'http://sqs:4566/000000000000/my-queue')  # Adjust account & queue
+
+    # Create boto3 SQS client pointing to LocalStack
+    sqs_client = boto3.client(
+        'sqs',
+        endpoint_url=SQS_ENDPOINT,
+        region_name='us-east-1',
+        aws_access_key_id='test',      # Required even in LocalStack
+        aws_secret_access_key='test'
+    )
+
+    try:
+        # Send each record as a message (or send all together)
+        # Option: send batch if multiple records
+        entries = []
+        for i, record in enumerate(records):
+            entries.append({
+                'Id': str(i),
+                'MessageBody': json.dumps(record)
+            })
+
+        if len(entries) == 1:
+            # Single message
+            response = sqs_client.send_message(
+                QueueUrl=QUEUE_URL,
+                MessageBody=json.dumps(records[0])
+            )
+        else:
+            # Batch (up to 10)
+            response = sqs_client.send_message_batch(
+                QueueUrl=QUEUE_URL,
+                Entries=entries
+            )
+
+        logger.debug(f"Sent to SQS: {response}")
+        return {'status': 'success', 'response': response}
+
+    except Exception as e:
+        logger.error(f"Failed to send to SQS: {e}")
+        return {'status': 'error', 'error': str(e)}
 
 
 def dynamodb_request(method: str, path: str, **kwargs):
@@ -247,7 +295,7 @@ def get_sqs_client():
     session = get_boto3_session()
     # Allow overriding endpoint via env for tests
     endpoint = os.getenv('AWS_ENDPOINT_URL_SQS', 'http://sqs:4566')
-    from botocore.config import Config
+
     cfg = Config(retries={'max_attempts': 2})
     _sqs_client = session.client('sqs', endpoint_url=endpoint, config=cfg)
     return _sqs_client
@@ -285,7 +333,6 @@ def get_request_data():
     # Form-encoded protocol (application/x-www-form-urlencoded)
     if 'urlencoded' in content_type:
         try:
-            from urllib.parse import parse_qs
             raw_data = request.get_data(as_text=True)
             if raw_data:
                 parsed = parse_qs(raw_data, keep_blank_values=True)
@@ -895,10 +942,10 @@ def upload_layer_part():
     upload_id = data.get('uploadId')
     part_first_byte = data.get('partFirstByte', 0)
     part_last_byte = data.get('partLastByte', 0)
-    layer_part_blob = data.get('layerPartBlob')  # base64 encoded
+    layer_part_blob = str(data.get('layerPartBlob')) # base64 encoded
 
     # Store part temporarily
-    upload_dir = FUNCTIONS_DIR / 'uploads' / upload_id
+    upload_dir = Path(f'{FUNCTIONS_DIR}/uploads/{upload_id}')
     upload_dir.mkdir(parents=True, exist_ok=True)
 
     part_file = upload_dir / f"part_{part_first_byte}_{part_last_byte}"
@@ -919,7 +966,7 @@ def complete_layer_upload():
     upload_id = data.get('uploadId')
     layer_digests = data.get('layerDigests', [])
 
-    upload_dir = FUNCTIONS_DIR / 'uploads' / upload_id
+    upload_dir = Path(f'{FUNCTIONS_DIR}/uploads/{upload_id}')
 
     # Combine all parts
     combined_data = b''
@@ -1297,7 +1344,8 @@ def logging_request():
     """
     Log incoming requests
     """
-    logger.debug(f"Request: {request.method} {request.path} from {request.remote_addr}, Headers: {dict(request.headers)}")
+    if request.path != '/health':
+        logger.debug(f"Request: {request.method} {request.path} from {request.remote_addr}, Headers: {dict(request.headers)}")
 
 @app.route('/2018-06-01/runtime/invocation/next', methods=['GET'])
 def runtime_next_invocation():
@@ -1530,20 +1578,104 @@ def update_function_configuration(function_name):
         }), 500
 
 # S3 Webhook
-@app.route('/webhook/s3', methods=['POST'])
+@app.route('/webhook/sqs', methods=['POST'])
 def webhook_s3():
-    """Post S3 events"""
+    """Single webhook receives ALL S3 events, routes to matching queues"""
     try:
-        pass
+        event_data = request.get_json()
+        logger.info(f'S3 Webhook received: {json.dumps(event_data)}')
+
+        for record in event_data.get('Records', []):
+            bucket_name = record['s3']['bucket']['name']
+            event_name = record['eventName']  # e.g., 's3:ObjectCreated:Put'
+            object_key = record['s3']['object']['key']
+
+            # Get ALL notification configs for this bucket
+            configs = db.get_bucket_notification_configs(bucket_name)
+
+            if not configs:
+                logger.warning(f"No notification configs found for bucket {bucket_name}")
+                continue
+
+            # Find which configs match this event
+            matched_queues = []
+            for config in configs:
+                if event_matches_config(event_name, object_key, config):
+                    matched_queues.append(config['queue_url'])
+                    send_event_to_queue(config['queue_url'], record)
+                    logger.info(f"Routed {event_name} on {object_key} to queue {config['queue_url']}")
+
+            if not matched_queues:
+                logger.warning(f"Event {event_name} on {object_key} matched no notification configs")
+
+        return '', 200
+    except Exception as e:
+        logger.error(f"Webhook error: {e}", exc_info=True)
+        return '', 500
+
+def event_matches_config(event_name, object_key, config):
+    """Check if S3 event matches notification configuration"""
+    # Parse event patterns from config
+    event_patterns = config.get('event_patterns')
+    if isinstance(event_patterns, str):
+        event_patterns = json.loads(event_patterns)
+
+    # Check if event type matches any pattern
+    event_match = False
+    for pattern in event_patterns:
+        if pattern.endswith('*'):
+            # Wildcard match: "s3:ObjectCreated:*" matches "s3:ObjectCreated:Put"
+            prefix = pattern[:-1]
+            if event_name.startswith(prefix):
+                event_match = True
+                break
+        elif pattern == event_name:
+            # Exact match
+            event_match = True
+            break
+
+    if not event_match:
+        logger.debug(f"Event {event_name} doesn't match patterns {event_patterns}")
+        return False
+
+    # Check filter rules (prefix/suffix) if present
+    filter_rules = config.get('filter_rules')
+    if filter_rules:
+        if isinstance(filter_rules, str):
+            filter_rules = json.loads(filter_rules)
+
+        for rule in filter_rules:
+            name = rule.get('Name', '').lower()
+            value = rule.get('Value', '')
+
+            if name == 'prefix' and not object_key.startswith(value):
+                logger.debug(f"Object key {object_key} doesn't match prefix {value}")
+                return False
+            if name == 'suffix' and not object_key.endswith(value):
+                logger.debug(f"Object key {object_key} doesn't match suffix {value}")
+                return False
+
+    return True
+
+def send_event_to_queue(queue_url, record):
+    """Send S3 event record to SQS queue"""
+    try:
+        sqs_client = get_sqs_client()
+
+        # Wrap single record in Records array (AWS S3 event format)
+        message_body = json.dumps({'Records': [record]})
+
+        response = sqs_client.send_message(
+            QueueUrl=queue_url,
+            MessageBody=message_body
+        )
+
+        logger.debug(f"Sent message to {queue_url}: {response.get('MessageId')}")
+        return response
 
     except Exception as e:
-        logger.error(f"Failed to check DynamoDB status: {e}", exc_info=True)
-        return jsonify({
-            'status': 'unavailable',
-            'endpoint': DYNAMODB_ENDPOINT,
-            'error': str(e)
-        }), 503
-
+        logger.error(f"Failed to send event to queue {queue_url}: {e}", exc_info=True)
+        raise
 
 # DDB debug endpoint
 @app.route('/debug/dynamodb-status', methods=['GET'])
@@ -1580,13 +1712,13 @@ def dynamodb_status():
             'error': str(e)
         }), 503
 
-# EMS debug endpoint
-@app.route('/debug/ems-status', methods=['GET'])
-def ems_status():
-    status_code, data = esm_request('GET', '/internal/ems/status')
+# ESM debug endpoint
+@app.route('/debug/esm-status', methods=['GET'])
+def esm_status():
+    status_code, data = esm_request('GET', '/internal/esm/status')
     if status_code == 200:
         return jsonify(data), 200
-    return jsonify({'message': 'EMS status unavailable'}), 502
+    return jsonify({'message': 'ESM status unavailable'}), 502
 
 # Lambda debug endpoint
 @app.route('/debug/lambda-status', methods=['GET'])
@@ -1934,44 +2066,6 @@ def parse_sqs_request():
 
         # Parse raw body data (AWS CLI sends form-encoded in raw body)
         try:
-            from urllib.parse import parse_qs
-            raw_data = request.get_data(as_text=True)
-            if raw_data:
-                logger.debug(f"Raw data: {raw_data[:200]}")
-                parsed = parse_qs(raw_data, keep_blank_values=True)
-                # parse_qs returns lists, get first value
-                data = {k: v[0] if isinstance(v, list) and len(v) > 0 else v
-                       for k, v in parsed.items()}
-                logger.debug(f"Parsed from raw data: {list(data.keys())}")
-                return data
-        except Exception as e:
-            logger.error(f"Error parsing raw data: {e}")
-    else:
-        # GET request - use query string
-        data = dict(request.args)
-
-    return data
-
-def parse_sqs_request():
-    """Parse SQS request parameters from query string or POST data"""
-    data = {}
-
-    if request.method == 'POST':
-        # Try request.form first (parsed by Flask)
-        if request.form:
-            data = dict(request.form)
-            logger.debug(f"Parsed from request.form: {list(data.keys())}")
-            return data
-
-        # Try request.args (query string)
-        if request.args:
-            data = dict(request.args)
-            logger.debug(f"Parsed from request.args: {list(data.keys())}")
-            return data
-
-        # Parse raw body data (AWS CLI sends form-encoded in raw body)
-        try:
-            from urllib.parse import parse_qs
             raw_data = request.get_data(as_text=True)
             if raw_data:
                 logger.debug(f"Raw data: {raw_data[:200]}")
@@ -2201,49 +2295,49 @@ def handle_request():
     try:
         if operation == 'PutParameter':
             result = ssm.put_parameter(
-                name=data['Name'],
-                value=data['Value'],
-                parameter_type=data.get('Type', 'String'),
-                description=data.get('Description', ''),
-                kms_key_id=data.get('KeyId'),
-                overwrite=data.get('Overwrite', False),
-                allowed_pattern=data.get('AllowedPattern'),
+                name=str(data['Name']),
+                value=str(data['Value']),
+                parameter_type=str(data.get('Type', 'String')),
+                description=str(data.get('Description', '')),
+                kms_key_id=str(data.get('KeyId')),
+                overwrite=bool(data.get('Overwrite', False)),
+                allowed_pattern=str(data.get('AllowedPattern')),
                 tags=data.get('Tags'),
-                tier=data.get('Tier', 'Standard')
+                tier=str(data.get('Tier', 'Standard'))
             )
             return jsonify(result)
 
         elif operation == 'GetParameter':
             result = ssm.get_parameter(
-                name=data['Name'],
-                with_decryption=data.get('WithDecryption', False)
+                name=str(data['Name']),
+                with_decryption=bool(data.get('WithDecryption', False))
             )
             return jsonify(result)
 
         elif operation == 'GetParameters':
             result = ssm.get_parameters(
                 names=data['Names'],
-                with_decryption=data.get('WithDecryption', False)
+                with_decryption=bool(data.get('WithDecryption', False))
             )
             return jsonify(result)
 
         elif operation == 'GetParametersByPath':
             result = ssm.get_parameters_by_path(
-                path=data['Path'],
-                recursive=data.get('Recursive', False),
-                with_decryption=data.get('WithDecryption', False),
-                max_results=data.get('MaxResults', 10)
+                path=str(data['Path']),
+                recursive=bool(data.get('Recursive', False)),
+                with_decryption=bool(data.get('WithDecryption', False)),
+                max_results=int(data.get('MaxResults', 10))
             )
             return jsonify(result)
 
         elif operation == 'DeleteParameter':
-            result = ssm.delete_parameter(name=data['Name'])
+            result = ssm.delete_parameter(name=str(data['Name']))
             return jsonify(result)
 
         elif operation == 'DescribeParameters':
             result = ssm.describe_parameters(
                 filters=data.get('Filters'),
-                max_results=data.get('MaxResults', 50)
+                max_results=int(data.get('MaxResults', 50))
             )
             return jsonify(result)
 
@@ -2255,8 +2349,8 @@ def handle_request():
 
         elif operation == 'GetParameterHistory':
             result = ssm.get_parameter_history(
-                name=data['Name'],
-                with_decryption=data.get('WithDecryption', False),
+                name=str(data['Name']),
+                with_decryption=bool(data.get('WithDecryption', False)),
                 max_results=data.get('MaxResults', 50)
             )
             return jsonify(result)
@@ -2480,7 +2574,6 @@ def get_action_from_request():
 
     if 'application/x-www-form-urlencoded' in content_type:
         try:
-            from urllib.parse import parse_qs
             raw_data = request.get_data(as_text=True)
             if raw_data:
                 parsed = parse_qs(raw_data, keep_blank_values=True)
@@ -2533,8 +2626,474 @@ def proxy_to_s3():
     # Build response with proper headers
     excluded = {'transfer-encoding', 'connection'}
     response_headers = [(k, v) for k, v in resp.headers.items() if k.lower() not in excluded]
-
+    logger.critical(f'{response_headers}')
     return Response(resp.content, status=resp.status_code, headers=response_headers)
+
+# Handles aws cli s3 commands
+@app.route('/<bucket_name>', methods=['PUT'])
+def handle_bucket_operations(bucket_name):
+    """Handle bucket-level operations like notification configuration"""
+
+    # Check if this is a notification configuration request
+    if 'notification' in request.args:
+        # Extract from request body (JSON or form-encoded)
+        data = get_request_data()
+
+        # The actual MinIO config is already set globally via webhook in Dockerfile
+        notification_id = data.get('Id', f"notification-{int(time.time() * 1000)}") # TODO use this if notification not set
+        queue_arn = data.get('QueueArn') or data.get('Queue')
+        events = data.get('Events', [])
+
+        logger.critical(f'--DATA-- {data}')
+
+        # Handle both direct events list or nested in QueueConfiguration
+        if 'QueueConfigurations' in data:
+            set_bucket_webhook_notication(bucket_name, queue_arn.split(':')[-1])
+
+            # Batch config
+            for config in data['QueueConfigurations']:
+                save_single_notification_config(bucket_name, config)
+        else:
+            # Single config
+            save_single_notification_config(bucket_name, data)
+
+        # Return success (don't proxy to MinIO)
+        return Response('', status=200)
+
+    # Otherwise, proxy to S3 normally
+    return proxy_to_s3()
+
+def set_bucket_webhook_notication(bucket_name, queue_name):
+    config_payload = {
+        "key_values": {
+            "notify_webhook:1": f"endpoint=http://api:4566/webhook/sqs/{queue_name} queue_limit=1000 enable=on"
+        }
+    }
+
+    # Prepare SigV4 auth
+    creds = Credentials('localcloud', 'localcloud')
+    request = AWSRequest(
+        method="PUT",
+        url=f"http://s3:9000/minio/admin/v3/set-config-kv",
+        data=json.dumps(config_payload),
+        headers={"Content-Type": "application/json"}
+    )
+    SigV4Auth(creds, "s3", "us-east-1").add_auth(request)
+
+    # Convert AWSRequest to requests-compatible
+    auth_headers = dict(request.headers.items())
+
+    # Send the request
+    data = json.dumps(config_payload)
+
+    resp = requests.put(f"http://s3:9000/minio/admin/v3/set-config-kv", headers=auth_headers, data=data)
+
+    logger.critical(f'STATUS: {resp.status_code}')
+    logger.critical(f'RESPONSE: {resp.text}')
+
+def save_single_notification_config(bucket_name, config):
+    """Helper to save a single notification configuration"""
+    notification_id = config.get('Id', f"notification-{int(time.time() * 1000)}")
+    queue_arn = config.get('QueueArn') or config.get('Queue')
+    events = config.get('Events', [])
+
+    # Extract filter rules
+    filter_rules = []
+    filter_config = config.get('Filter', {})
+    if filter_config:
+        key_filters = filter_config.get('Key', {})
+        filter_rules = key_filters.get('FilterRules', [])
+
+    # Convert queue ARN to queue URL
+    queue_name = queue_arn.split(':')[-1]
+    queue_url = f"http://sqs:4566/{ACCOUNT_ID}/{queue_name}"
+
+    # Save to database
+    db.save_notification_config(
+        bucket_name=bucket_name,
+        notification_id=notification_id,
+        queue_arn=queue_arn,
+        queue_url=queue_url,
+        event_patterns=events,
+        filter_rules=filter_rules
+    )
+
+    logger.info(f"Saved notification config {notification_id} for bucket {bucket_name}")
+
+# TODO try make api dynamically create bucket->queue webhooks for each bucket event
+def configure_bucket_notification_webhook(bucket_name, notification_id, queue_arn, events=[], filters=[]):
+    # Extract queue name from ARN
+    queue_name = queue_arn.split(':')[-1]
+
+    # Create unique webhook ID
+    webhook_id = f"webhook-{notification_id}"
+
+    s3 = boto3.client(
+        "s3",
+        endpoint_url="http://s3:9000",
+        aws_access_key_id="localcloud",
+        aws_secret_access_key="localcloud",
+        config=Config(signature_version="s3v4"),
+        region_name="us-east-1"
+    )
+
+    notification_config = {
+        "QueueConfigurations": [
+            {
+                "Id": "webhook-config",
+                "QueueArn": "arn:minio:sqs::1:webhook",
+                "Events": ["s3:ObjectCreated:*"],  # Change to whatever events you want
+            }
+        ]
+    }
+
+    s3.put_bucket_notification_configuration(
+        Bucket=bucket_name,
+        NotificationConfiguration=notification_config
+    )
+
+@app.route('/<bucket_name>', methods=['GET'])
+def handle_bucket_get_operations(bucket_name):
+    """Handle GET operations on buckets"""
+
+    # Check if this is a notification configuration request
+    if 'notification' in request.args:
+        # Return configs from database in S3 API format
+        configs = db.get_bucket_notification_configs(bucket_name)
+
+        queue_configurations = []
+        for config in configs:
+            events = json.loads(config['event_patterns']) if isinstance(config['event_patterns'], str) else config['event_patterns']
+            filter_rules = json.loads(config['filter_rules']) if config.get('filter_rules') and isinstance(config['filter_rules'], str) else []
+
+            queue_config = {
+                'Id': config['notification_id'],
+                'QueueArn': config['queue_arn'],
+                'Events': events
+            }
+
+            if filter_rules:
+                queue_config['Filter'] = {
+                    'Key': {
+                        'FilterRules': filter_rules
+                    }
+                }
+
+            queue_configurations.append(queue_config)
+
+        # Return JSON response
+        # return jsonify({
+        #     'QueueConfigurations': queue_configurations
+        # }), 200
+        # Build XML string - some reason this one requies xml???
+        xml_body = "<NotificationConfiguration>\n"
+        for q in queue_configurations:
+            xml_body += f"""
+            <QueueConfiguration>
+                <Id>{q['Id']}</Id>
+                <Queue>{q['QueueArn']}</Queue>
+                <Event>{q['Event']}</Event>
+            </QueueConfiguration>
+            """
+        xml_body += "\n</NotificationConfiguration>"
+        # Future - TopicConfigurations
+        # TODO - LambdaFunctionConfigurations
+        return Response(xml_body, status=200, mimetype='application/xml')
+
+    # Otherwise, proxy to S3 normally
+    return proxy_to_s3()
+
+# TODO
+# def handle_get_bucket_notification(bucket_name):
+#     """Intercept and transform GET notification configuration responses"""
+#     try:
+#         # Use boto3 to get from MinIO (clean!)
+#         s3_client = get_s3_client()
+#         response = s3_client.get_bucket_notification_configuration(Bucket=bucket_name)
+
+#         # Transform MinIO webhook ARNs back to user queue ARNs
+#         if 'QueueConfigurations' in response:
+#             for config in response['QueueConfigurations']:
+#                 minio_arn = config.get('QueueArn')
+#                 notification_id = config.get('Id')
+
+#                 # Actually, not sure we need this at all now
+#                 # if minio_arn and minio_arn.startswith('arn:minio:'):
+#                     # Look up the original user queue ARN
+#                     # mapping = db.get_s3_notification_mapping(bucket_name, minio_arn)
+#                     # if mapping and mapping['notification_id'] == notification_id:
+#                     #     config['QueueArn'] = mapping['user_queue_arn']
+#                     #     logger.info(f"Restored ARN: {minio_arn} -> {mapping['user_queue_arn']}")
+
+
+#     except Exception as e:
+#         logger.error(f"Error getting notification configuration: {e}", exc_info=True)
+
+#         # Return empty configuration XML (valid response when no notifications configured)
+#         empty_config = '<?xml version="1.0" encoding="UTF-8"?>\n<NotificationConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"/>'
+#         return Response(empty_config, status=200, mimetype='application/xml')
+
+@app.route('/s3/buckets/<bucket_name>/notification', methods=['GET'])
+def get_bucket_notifications(bucket_name):
+    """Get bucket notification configuration from database"""
+    try:
+        configs = db.get_bucket_notification_configs(bucket_name)
+
+        queue_configurations = []
+        for config in configs:
+            # Parse JSON strings
+            events = json.loads(config['event_patterns']) if isinstance(config['event_patterns'], str) else config['event_patterns']
+            filter_rules = json.loads(config['filter_rules']) if config.get('filter_rules') and isinstance(config['filter_rules'], str) else []
+
+            queue_config = {
+                'Id': config['notification_id'],
+                'QueueArn': config['queue_arn'],
+                'Events': events
+            }
+
+            if filter_rules:
+                queue_config['Filter'] = {
+                    'Key': {
+                        'FilterRules': filter_rules
+                    }
+                }
+
+            queue_configurations.append(queue_config)
+
+        return jsonify({
+            'QueueConfigurations': queue_configurations
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error retrieving bucket notifications: {e}", exc_info=True)
+        return jsonify({
+            '__type': 'ServiceException',
+            'message': str(e)
+        }), 500
+
+def put_bucket_notification_configuration(bucket_name, configuration):
+    # bucket_name, queue_arn
+    session = get_boto3_session()
+    s3_client = session.client('s3', endpoint_url=S3_ENDPOINT)
+    logger.critical(f'Put Configuration: {configuration}')
+    # TODO mapping SQS to minio webhook
+    # if 'QueueArn' in configuration:
+    #     queue_arn = configuration['QueueArn']
+    #     self._writing_sqs_mapping(queue_arn, webhook_arn)
+
+    configure_bucket_notification_webhook(bucket_name, time.time(), configuration['QueueArn'].split(':')[-1])
+
+    configuration['QueueArn'] = 'arn:minio:sqs::1:webhook'
+    try:
+        return jsonify({
+            '__type': 'ServiceException',
+            'message': s3_client.put_bucket_notification_configuration(
+                Bucket=bucket_name,
+                NotificationConfiguration={
+                    'QueueConfigurations': [
+                        configuration
+                    ]
+                }
+            )}
+        ), 200
+    except Exception as e:
+        return jsonify({
+            '__type': 'ServiceException',
+            'message': str(e)
+        }), 500
+
+# TODO Handles web console s3 commands
+@app.route('/s3/buckets/<bucket_name>/notification', methods=['POST'])
+def put_bucket_notifications(bucket_name):
+    """Set bucket notification configuration - saves to DB only"""
+    try:
+        data = request.get_json() or {}
+
+        if 'configuration' not in data:
+            return jsonify({
+                '__type': 'InvalidParameterException',
+                'message': "Missing 'configuration' in request"
+            }), 400
+
+        config = data['configuration']
+        queue_arn = config.get('QueueArn')
+        notification_id = config.get('Id')
+        events = config.get('Events', [])
+        filter_config = config.get('Filter', {})
+
+        if not queue_arn or not notification_id:
+            return jsonify({
+                '__type': 'InvalidParameterException',
+                'message': "QueueArn and Id are required in configuration"
+            }), 400
+
+        # Extract filter rules
+        filter_rules = []
+        if filter_config:
+            key_filters = filter_config.get('Key', {})
+            filter_rules = key_filters.get('FilterRules', [])
+
+        # Convert queue ARN to queue URL
+        # ARN format: arn:aws:sqs:region:account:queue-name
+        queue_name = queue_arn.split(':')[-1]
+        queue_url = f"http://sqs:4566/{ACCOUNT_ID}/{queue_name}"  # TODO um, do we need the url or just arn?
+
+        # push minio webhook changes
+        # set_bucket_webhook_notication(bucket_name, queue_name)
+        put_bucket_notification_configuration(bucket_name, config)
+
+        # Save to database
+        db.save_notification_config(
+            bucket_name=bucket_name,
+            notification_id=notification_id,
+            queue_arn=queue_arn,
+            queue_url=queue_url,
+            event_patterns=events,
+            filter_rules=filter_rules
+        )
+
+        logger.info(f"Saved notification config {notification_id} for bucket {bucket_name}")
+
+        return jsonify({
+            'success': True,
+            'configuration': config
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error setting bucket notifications: {e}", exc_info=True)
+        return jsonify({
+            '__type': 'ServiceException',
+            'message': str(e)
+        }), 500
+
+@app.route('/s3/buckets/<bucket_name>/notification/<notification_id>', methods=['DELETE'])
+def delete_bucket_notification(bucket_name, notification_id):
+    """Delete a specific bucket notification configuration"""
+    try:
+        db.delete_notification_config(bucket_name, notification_id)
+
+        logger.info(f"Deleted notification {notification_id} from bucket {bucket_name}")
+        return jsonify({'success': True}), 200
+
+    except Exception as e:
+        logger.error(f"Error deleting bucket notification: {e}", exc_info=True)
+        return jsonify({
+            '__type': 'ServiceException',
+            'message': str(e)
+        }), 500
+
+@app.route('/s3/buckets/<bucket_name>/lifecycle', methods=['GET'])
+def get_bucket_lifecycle(bucket_name):
+    """Get bucket lifecycle configuration from MinIO"""
+    try:
+        from botocore.exceptions import ClientError
+
+        s3_client = get_s3_client()
+
+        try:
+            response = s3_client.get_bucket_lifecycle_configuration(Bucket=bucket_name)
+            return jsonify({'Rules': response.get('Rules', [])}), 200
+
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', '')
+            if error_code in ('NoSuchLifecycleConfiguration', 'NoSuchBucket'):
+                return jsonify({'Rules': []}), 200
+            raise
+
+    except Exception as e:
+        logger.error(f"Error getting lifecycle configuration: {e}", exc_info=True)
+        return jsonify({'__type': 'ServiceException', 'message': str(e)}), 500
+
+@app.route('/s3/buckets/<bucket_name>/lifecycle', methods=['POST'])
+def add_bucket_lifecycle_rule(bucket_name):
+    """Add a lifecycle rule to bucket"""
+    try:
+        from botocore.exceptions import ClientError
+
+        data = request.get_json() or {}
+        new_rule = data.get('rule')
+
+        if not new_rule:
+            return jsonify({'__type': 'InvalidParameterException', 'message': 'Missing rule'}), 400
+
+        s3_client = get_s3_client()
+
+        # Get existing rules
+        existing_rules = []
+        try:
+            response = s3_client.get_bucket_lifecycle_configuration(Bucket=bucket_name)
+            existing_rules = response.get('Rules', [])
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', '')
+            if error_code not in ('NoSuchLifecycleConfiguration', 'NoSuchBucket'):
+                raise
+
+        # Check for duplicate ID
+        rule_id = new_rule.get('ID')
+        if any(r.get('ID') == rule_id for r in existing_rules):
+            return jsonify({'__type': 'InvalidParameterException', 'message': f'Rule ID {rule_id} exists'}), 400
+
+        # Add and save
+        existing_rules.append(new_rule)
+        s3_client.put_bucket_lifecycle_configuration(
+            Bucket=bucket_name,
+            LifecycleConfiguration={'Rules': existing_rules}
+        )
+
+        logger.info(f"Added lifecycle rule {rule_id} to {bucket_name}")
+        return jsonify({'success': True, 'rule': new_rule}), 200
+
+    except Exception as e:
+        logger.error(f"Error adding lifecycle rule: {e}", exc_info=True)
+        return jsonify({'__type': 'ServiceException', 'message': str(e)}), 500
+
+@app.route('/s3/buckets/<bucket_name>/lifecycle/<rule_id>', methods=['DELETE'])
+def delete_bucket_lifecycle_rule(bucket_name, rule_id):
+    """Delete a specific lifecycle rule"""
+    try:
+        from botocore.exceptions import ClientError
+
+        s3_client = get_s3_client()
+
+        try:
+            response = s3_client.get_bucket_lifecycle_configuration(Bucket=bucket_name)
+            rules = response.get('Rules', [])
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', '')
+            if error_code == 'NoSuchLifecycleConfiguration':
+                return jsonify({
+                    '__type': 'NoSuchLifecycleConfiguration',
+                    'message': 'No lifecycle config'
+                }), 404
+            raise
+
+        # Remove the rule
+        updated_rules = [r for r in rules if r.get('ID') != rule_id]
+
+        if len(updated_rules) == len(rules):
+            return jsonify({
+                '__type': 'NoSuchLifecycleRule',
+                'message': f'Rule {rule_id} not found'
+            }), 404
+
+        # Update or delete config
+        if updated_rules:
+            s3_client.put_bucket_lifecycle_configuration(
+                Bucket=bucket_name,
+                LifecycleConfiguration={'Rules': updated_rules}
+            )
+        else:
+            s3_client.delete_bucket_lifecycle(Bucket=bucket_name)
+
+        logger.info(f"Deleted lifecycle rule {rule_id} from {bucket_name}")
+        return jsonify({'success': True}), 200
+
+    except Exception as e:
+        logger.error(f"Error deleting lifecycle rule: {e}", exc_info=True)
+        return jsonify({
+            '__type': 'ServiceException',
+            'message': str(e)
+        }), 500
 
 @app.route('/s3/buckets', methods=['GET'])
 def list_s3_buckets():
@@ -2749,6 +3308,11 @@ def catch_all(path):
     # Then in handle_request():
     service, operation = get_service_from_user_agent()
     if service and service.lower() in ('s3', 's3api'):
+        # if operation == 'PutBucketNotificationConfiguration':
+        #     return handle_put_bucket_notification(path)
+        # elif operation == 'GetBucketNotificationConfiguration':
+        #     return handle_get_bucket_notification(path)
+
         logger.info(f"Routing to S3: service={service}, operation={operation}")
         return proxy_to_s3()
 
@@ -2757,13 +3321,16 @@ def catch_all(path):
     logger.warning(f"Operation detected: {operation}")
     logger.warning(f"Query params: {vars(request.args)}")
     logger.warning(f"Available routes: {[str(rule) for rule in app.url_map.iter_rules()]}")
+    try:
+        data = request.get_json() or {}
+        logger.warning(f'Data: {json.dumps(data)}')
+    except Exception as e:
+        pass
     return jsonify({
         'errorMessage': f'Route not found: {request.method} /{path}',
         'errorType': 'RouteNotFoundException',
         'availableRoutes': [str(rule) for rule in app.url_map.iter_rules()]
     }), 404
-
-
 
 def get_function_by_container_ip(container_ip):
     """Look up function name by container IP address"""
@@ -2785,7 +3352,6 @@ def get_function_by_container_ip(container_ip):
     logger.warning(f"No function found for IP {container_ip}")
     return None
 
-
 def get_function_by_container_id(container_id):
     """Look up function name by container ID"""
     conn = sqlite3.connect(DB_PATH)
@@ -2801,7 +3367,6 @@ def get_function_by_container_id(container_id):
 
     return row[0] if row else None
 
-
 def delete_container_mapping(function_name):
     """Delete container mapping for a function"""
     conn = sqlite3.connect(DB_PATH)
@@ -2813,7 +3378,6 @@ def delete_container_mapping(function_name):
     conn.commit()
     conn.close()
     logger.info(f"Deleted container mapping for {function_name}")
-
 
 def list_container_mappings():
     """List all container mappings"""
@@ -2860,7 +3424,8 @@ def create_event_source_mapping_endpoint():
 @app.route('/2015-03-31/event-source-mappings/', methods=['GET'], strict_slashes=False)
 def list_event_source_mapping_endpoint():
     """List event source mappings"""
-    status, resp = esm_request('GET', '/2015-03-31/event-source-mappings/')
+    function_name = request.args.get('FunctionName', default='', type=str)
+    status, resp = esm_request('GET', f'/2015-03-31/event-source-mappings/?FunctionName={function_name}' if function_name else '/2015-03-31/event-source-mappings/')
     return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
 
 @app.route('/2015-03-31/event-source-mappings/<uuid>', methods=['GET'], strict_slashes=False)

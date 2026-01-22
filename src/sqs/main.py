@@ -854,13 +854,14 @@ queue_manager = None
 
 
 @app.before_request
-def initialize():
+def logging_request():
     """Initialize queue manager on first request"""
     global queue_manager
     if queue_manager is None:
         queue_manager = QueueManager(ACCOUNT_ID, REGION)
         queue_manager.start()
-    logger.debug(f"Request: {request.method} {request.path} from {request.remote_addr}, Headers: {dict(request.headers)}")
+    if request.path != '/healthcheck':
+        logger.debug(f"Request: {request.method} {request.path} from {request.remote_addr}, Headers: {dict(request.headers)}")
 
 
 @app.route('/health', methods=['GET'])

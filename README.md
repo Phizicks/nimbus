@@ -19,7 +19,8 @@ A **complete, free AWS services emulator** for local development. Nimbus provide
 | **ECR** | Push/pull images, repositories, authentication | ✅ Full |
 | **SQS** | Queues, messages, dead-letter queues, FIFO | ✅ Full |
 | **Event Source Mapping** | SQS → Lambda triggers, batch processing | ✅ Full |
-| **S3** | Basic operations (via MinIO) | ✅ Basic |
+| **S3** | Basic operations (via MinIO) | ✅ Full |
+| **DDB** | Most - No streams yet (via Scylla) | ✅ Full |
 | **SSM Parameter Store** | Parameters, versions, encryption | ✅ Full |
 | **CloudWatch Logs** | Log groups/streams, filtering | ✅ Full |
 
@@ -87,7 +88,7 @@ EOF
 ### 3. Set your profile
 
 ```bash
-export AWS_PROFILE=localcloud
+export AWS_PROFILE=nimbus
 ```
 
 ### 4. Test it works
@@ -298,7 +299,7 @@ docker compose logs -f
 docker compose logs -f lambda
 
 # View Lambda container logs
-docker logs localcloud-lambda-{function-name}-{instance-id}
+docker compose logs lambda-{function-name}-{instance-id}
 ```
 
 ## Architecture

@@ -15,13 +15,13 @@
     </div>
 
     <div class="service-nav">
-        <button class="active" onclick="switchService('sqs')">SQS</button>
-        <button onclick="switchService('lambda')">Lambda</button>
-        <button onclick="switchService('dynamodb')">DynamoDB</button>
-        <button onclick="switchService('ssm')">Systems Manager</button>
-        <button onclick="switchService('cloudwatch')">CloudWatch Logs</button>
-        <button onclick="switchService('ecr')">ECR</button>
-        <button onclick="switchService('s3')">S3</button>
+        <button class="active" onclick="switchService('sqs')" id="service-button-sqs">SQS</button>
+        <button onclick="switchService('lambda')" id="service-button-lambda">Lambda</button>
+        <button onclick="switchService('dynamodb')" id="service-button-ddb">DynamoDB</button>
+        <button onclick="switchService('ssm')" id="service-button-ssm">Systems Manager</button>
+        <button onclick="switchService('cloudwatch')" id="service-button-cloudwatch">CloudWatch Logs</button>
+        <button onclick="switchService('ecr')" id="service-button-ecr">ECR</button>
+        <button onclick="switchService('s3')" id="service-button-s3">S3</button>
     </div>
 
     <div class="container">
@@ -182,7 +182,7 @@
             <div class="panel-header">
                 <h2>CloudWatch Logs</h2>
                 <div class="actions">
-                    <button class="btn btn-danger" id="delete-selected-log-groups" onclick="deleteSelectedLogGroups()" disabled>
+                    <button class="btn btn-danger" id="delete-selected-log-groups" onclick="deleteSelectedLogGroups()">
                         Delete Selected
                     </button>
                     <button class="btn btn-secondary" onclick="loadLogGroups()">🔄 Refresh</button>
@@ -531,6 +531,246 @@
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="closeModal('bucket-objects-modal')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="bucket-details-modal" class="modal">
+        <div class="modal-content" style="max-width: 1500px;">
+            <div class="modal-header">Bucket Details: <span id="bucket-details-name"></span></div>
+            <div class="modal-body" id="bucket-details-content"></div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('bucket-details-modal')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="configure-lifecycle-modal" class="modal">
+        <div class="modal-content" style="max-width: 900px;">
+            <div class="modal-header">Configure Lifecycle Rule: <span id="lifecycle-bucket-name"></span></div>
+            <div class="modal-body">
+                <form id="configure-lifecycle-form" onsubmit="configureLifecycle(event)">
+                    <div class="form-group">
+                        <label>Rule Name/ID *</label>
+                        <input type="text" id="lifecycle-rule-id" required placeholder="MyLifecycleRule">
+                        <small style="color: #545B64; font-size: 12px;">Unique identifier for this lifecycle rule</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Status *</label>
+                        <select id="lifecycle-status" required>
+                            <option value="Enabled">Enabled</option>
+                            <option value="Disabled">Disabled</option>
+                        </select>
+                    </div>
+
+                    <h3 style="margin-top: 25px; margin-bottom: 15px; font-size: 18px; color: var(--aws-dark);">Scope</h3>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="radio" name="scope-type" value="all" checked onchange="toggleLifecycleScope()">
+                            Apply to all objects in the bucket
+                        </label>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="radio" name="scope-type" value="prefix" onchange="toggleLifecycleScope()">
+                            Limit scope by prefix
+                        </label>
+                    </div>
+
+                    <div class="form-group" id="lifecycle-prefix-group" style="display: none; margin-left: 30px;">
+                        <label>Prefix</label>
+                        <input type="text" id="lifecycle-prefix" placeholder="documents/">
+                        <small style="color: #545B64; font-size: 12px;">e.g., "documents/" or "logs/2024/"</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="radio" name="scope-type" value="tags" onchange="toggleLifecycleScope()">
+                            Limit scope by tags
+                        </label>
+                    </div>
+
+                    <div class="form-group" id="lifecycle-tags-group" style="display: none; margin-left: 30px;">
+                        <label>Tags (key=value, one per line)</label>
+                        <textarea id="lifecycle-tags" placeholder="Environment=Production&#10;Type=Archive" rows="3"></textarea>
+                        <small style="color: #545B64; font-size: 12px;">One tag per line in format: key=value</small>
+                    </div>
+
+                    <h3 style="margin-top: 25px; margin-bottom: 15px; font-size: 18px; color: var(--aws-dark);">Lifecycle Actions</h3>
+
+                    <!-- Expiration Actions -->
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="enable-expiration" style="width: auto; margin-right: 8px;" onchange="toggleExpirationActions()">
+                            <strong>Expire (delete) objects</strong>
+                        </label>
+                    </div>
+
+                    <div id="expiration-actions" style="display: none; margin-left: 30px; margin-bottom: 20px;">
+                        <div class="form-group">
+                            <label>
+                                <input type="radio" name="expiration-type" value="days" checked onchange="toggleExpirationType()">
+                                Delete after number of days
+                            </label>
+                        </div>
+
+                        <div class="form-group" id="expiration-days-group" style="margin-left: 30px;">
+                            <label>Number of Days *</label>
+                            <input type="number" id="expiration-days" min="1" placeholder="30">
+                            <small style="color: #545B64; font-size: 12px;">Objects will be deleted this many days after creation</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label>
+                                <input type="radio" name="expiration-type" value="date" onchange="toggleExpirationType()">
+                                Delete on specific date
+                            </label>
+                        </div>
+
+                        <div class="form-group" id="expiration-date-group" style="display: none; margin-left: 30px;">
+                            <label>Expiration Date *</label>
+                            <input type="date" id="expiration-date">
+                        </div>
+
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="expiration-expired-delete-marker" style="width: auto; margin-right: 8px;">
+                                Remove expired object delete markers
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="enable-noncurrent-expiration" style="width: auto; margin-right: 8px;" onchange="toggleNoncurrentExpirationActions()">
+                            <strong>Expire (delete) noncurrent versions</strong>
+                        </label>
+                    </div>
+
+                    <div id="noncurrent-expiration-actions" style="display: none; margin-left: 30px; margin-bottom: 20px;">
+                        <div class="form-group">
+                            <label>Number of Days *</label>
+                            <input type="number" id="noncurrent-expiration-days" min="1" placeholder="90">
+                            <small style="color: #545B64; font-size: 12px;">Noncurrent versions will be deleted this many days after becoming noncurrent</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Number of Newer Versions to Retain</label>
+                            <input type="number" id="noncurrent-newer-versions" min="1" placeholder="3">
+                            <small style="color: #545B64; font-size: 12px;">Keep this many recent noncurrent versions</small>
+                        </div>
+                    </div>
+
+                    <!-- Abort Incomplete Multipart Uploads -->
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="enable-abort-multipart" style="width: auto; margin-right: 8px;" onchange="toggleAbortMultipartActions()">
+                            <strong>Abort incomplete multipart uploads</strong>
+                        </label>
+                    </div>
+
+                    <div id="abort-multipart-actions" style="display: none; margin-left: 30px; margin-bottom: 20px;">
+                        <div class="form-group">
+                            <label>Days After Initiation *</label>
+                            <input type="number" id="abort-multipart-days" min="1" placeholder="7">
+                            <small style="color: #545B64; font-size: 12px;">Delete incomplete multipart uploads after this many days</small>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" form="configure-lifecycle-form" class="btn btn-primary">Add Lifecycle Rule</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('configure-lifecycle-modal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="configure-notifications-modal" class="modal">
+        <div class="modal-content" style="max-width: 900px;">
+            <div class="modal-header">Configure Event Notifications: <span id="notification-bucket-name"></span></div>
+            <div class="modal-body">
+                <form id="configure-notifications-form" onsubmit="configureNotifications(event)">
+                    <div class="form-group">
+                        <label>Notification Type *</label>
+                        <select id="notification-type" required onchange="updateNotificationDestination()">
+                            <option value="">-- Select Type --</option>
+                            <option value="Queue">SQS Queue</option>
+                            <!-- <option value="Topic">SNS Topic</option> -->
+                            <option value="Lambda">Lambda Function</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group" id="notification-destination-group" style="display: none;">
+                        <label id="notification-destination-label">Destination ARN *</label>
+                        <input type="text" id="notification-destination" placeholder="arn:aws:sqs:region:account:queue-name">
+                        <small style="color: #545B64; font-size: 12px;">
+                            Format: arn:aws:sqs:region:account:queue-name (or sns/lambda)
+                        </small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Events *</label>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px;">
+                            <label style="display: flex; align-items: center; gap: 8px;">
+                                <input type="checkbox" class="event-checkbox" value="s3:ObjectCreated:*">
+                                All Object Created Events
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px;">
+                                <input type="checkbox" class="event-checkbox" value="s3:ObjectCreated:Put">
+                                Object Created (Put)
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px;">
+                                <input type="checkbox" class="event-checkbox" value="s3:ObjectCreated:Post">
+                                Object Created (Post)
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px;">
+                                <input type="checkbox" class="event-checkbox" value="s3:ObjectCreated:Copy">
+                                Object Created (Copy)
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px;">
+                                <input type="checkbox" class="event-checkbox" value="s3:ObjectRemoved:*">
+                                All Object Removed Events
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px;">
+                                <input type="checkbox" class="event-checkbox" value="s3:ObjectRemoved:Delete">
+                                Object Removed (Delete)
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="use-prefix-filter" style="width: auto; margin-right: 8px;" onchange="togglePrefixFilter()">
+                            Filter by prefix/suffix
+                        </label>
+                    </div>
+
+                    <div id="prefix-filter-section" style="display: none;">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                            <div class="form-group">
+                                <label>Prefix (optional)</label>
+                                <input type="text" id="notification-prefix" placeholder="images/">
+                            </div>
+                            <div class="form-group">
+                                <label>Suffix (optional)</label>
+                                <input type="text" id="notification-suffix" placeholder=".jpg">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Notification ID (optional)</label>
+                        <input type="text" id="notification-id" placeholder="MyNotificationRule">
+                        <small style="color: #545B64; font-size: 12px;">Leave empty for auto-generated ID</small>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" form="configure-notifications-form" class="btn btn-primary">Add Notification</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('configure-notifications-modal')">Cancel</button>
             </div>
         </div>
     </div>

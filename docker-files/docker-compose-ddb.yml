@@ -6,15 +6,15 @@ services:
       - --memory 2G
       - --alternator-port=4700
       - --alternator-write-isolation=always
-    ports:
-      - "4700:4700"
+    # ports:
+    #   - "4700:4700"
     networks:
       - localcloud
     volumes:
       - ddb-data:/var/lib/scylla
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      test: ["CMD", "curl", "-f", "http://localhost:4700/"]
       interval: 10s
       timeout: 5s
       retries: 5

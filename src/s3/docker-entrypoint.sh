@@ -14,12 +14,24 @@ echo "MinIO started."
 # Configure mc alias
 mc alias set localcloud http://127.0.0.1:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD
 
+while true; do
+    curl -q http://api:4566/health > /dev/null 2>&1
+    [ $? -eq 0 ] && break
+    sleep 1
+done
+
 # Add webhook target and enable it
-mc admin config set localcloud notify_webhook:1 endpoint=http://api:4566/webhook/s3 queue_limit=1000
+mc admin config set localcloud notify_webhook:1 endpoint=http://api:4566/webhook/sqs queue_limit=1000
 mc admin config set localcloud notify_webhook:1 enable=on
 
 # Restart MinIO service (non-interactive)
 mc admin service restart --json localcloud
+
+# subscribe to webhook events
+#mc event add localcloud/input-queue arn:minio:sqs::1:webhook --event put
+#mc event add localcloud/bucket2 arn:minio:sqs::1:webhook --event put,delete
+
+echo -e "localcloud\nlocalcloud" | mc alias set localcloud http://api:4566
 
 # Keep container alive
 wait

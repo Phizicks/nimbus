@@ -47,6 +47,8 @@ cleanup_queues() {
     log_success "Cleanup complete"
 }
 
+trap 'sleep 5 && cleanup_queues' EXIT
+
 # Test: Basic Queue Operations
 test_basic_queue_operations() {
     print_test "Test 1: Basic Queue Operations"
@@ -640,8 +642,6 @@ test_message_attributes() {
 
     log_success "Message attributes test passed"
 }
-
-trap 'sleep 5 && cleanup_queues' EXIT
 
 # Main execution
 main() {

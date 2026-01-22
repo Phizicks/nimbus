@@ -5,6 +5,7 @@ import threading
 import time
 import os
 import sqlite3
+import json
 import uuid
 import requests
 from typing import Dict, List, Optional
@@ -24,7 +25,7 @@ DB_PATH = os.getenv('STORAGE_PATH', '/data') + '/event_source_mappings.db'
 
 # Helper to create QueueManager and EventSourceMapping singletons
 _queue_manager = None
-_ems_service = None
+_esm_service = None
 
 
 class DuplicateMappingError(Exception):
@@ -163,19 +164,26 @@ class EMSDatabase:
             logger.error(f"Error getting mapping: {e}", exc_info=True)
             return None
 
-    def get_all_mappings(self) -> List[Dict]:
+    def get_all_mappings(self, function_name: str = '') -> List[Dict]:
         """Get all event source mappings"""
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT * FROM event_source_mappings
-                    ORDER BY last_modified DESC
-                """)
+
+                query = """SELECT * FROM event_source_mappings"""
+                params = []
+
+                if function_name:
+                    query += " WHERE function_name = ?"
+                    params.append(function_name)
+
+                query += " ORDER BY last_modified DESC"
+
+                cursor.execute(query, params)
                 rows = cursor.fetchall()
                 return [self._row_to_dict(row) for row in rows]
         except Exception as e:
-            logger.error(f"Error getting all mappings: {e}", exc_info=True)
+            logger.error(f"Error getting mappings: {e}", exc_info=True)
             return []
 
     def get_enabled_mappings(self) -> List[Dict]:
@@ -370,9 +378,9 @@ class EventSourceMapping:
         logger.info(f"Created event source mapping {mapping_uuid}: {queue_name} -> {function_name}")
         return mapping
 
-    def list_event_source_mappings(self) -> Dict:
+    def list_event_source_mappings(self, function_name='') -> Dict:
         """List event source mappings"""
-        mappings = self.db.get_all_mappings()
+        mappings = self.db.get_all_mappings(function_name)
         return {'EventSourceMappings': mappings}
 
     def get_event_source_mapping_by_function(self, function_name: str) -> Optional[Dict]:
@@ -397,14 +405,14 @@ class EventSourceMapping:
         return False
 
     def update_event_source_mapping(self, mapping_uuid: str,
-                                   enabled: Optional[bool] = None,
-                                   batch_size: Optional[int] = None) -> Optional[Dict]:
-        """Update an existing mapping"""
+                                    enabled: Optional[bool] = None,
+                                    batch_size: Optional[int] = None) -> Optional[Dict]:
         mapping = self.db.get_mapping_by_uuid(mapping_uuid)
         if not mapping:
             return None
 
         updates = {}
+        start_after_update = False
 
         if enabled is not None:
             old_state = mapping['State']
@@ -412,7 +420,7 @@ class EventSourceMapping:
             updates['State'] = new_state
 
             if old_state == 'Disabled' and enabled:
-                self._start_polling(mapping_uuid)
+                start_after_update = True
             elif old_state == 'Enabled' and not enabled:
                 self._stop_polling(mapping_uuid)
 
@@ -421,6 +429,9 @@ class EventSourceMapping:
 
         if updates:
             if self.db.update_mapping(mapping_uuid, updates):
+                if start_after_update:
+                    # Now DB shows Enabled, safe to start polling
+                    self._start_polling(mapping_uuid)
                 return self.db.get_mapping_by_uuid(mapping_uuid)
 
         return mapping
@@ -711,7 +722,6 @@ class EventSourceMapping:
             return
 
         self._running = True
-        logger.info("EMS service starting...")
 
         # Start cleanup thread for stale invocations
         self.cleanup_thread = threading.Thread(
@@ -758,6 +768,7 @@ class EventSourceMapping:
 
     def _cleanup_worker(self):
         """Cleanup worker - currently unused but kept for future use"""
+        logger.info("EMS Cleanup service starting...")
         while self._running:
             try:
                 time.sleep(60)
@@ -835,25 +846,21 @@ def sqs_request(action: str, payload: dict, timeout: int = 30):
 
 
 def get_or_create_services():
-    global _queue_manager, _ems_service
-    if _queue_manager and _ems_service:
-        return _queue_manager, _ems_service
+    global _queue_manager, _esm_service
+
+    # Return existing instance. so called Singleton.
+    if _esm_service is not None:
+        return _queue_manager, _esm_service
 
     account_id = os.getenv('LOCAL_AWS_ACCOUNT_ID', '456645664566')
     region = os.getenv('AWS_REGION', 'ap-southeast-2')
 
-    # QueueManager now runs as a separate service; calls go via the local API gateway
-    # Keep `_queue_manager` as None to indicate HTTP usage.
     _queue_manager = None
+    _esm_service = EventSourceMapping(_queue_manager, account_id, region)
+    _esm_service.start()
 
-    try:
-        _ems_service = EventSourceMapping(_queue_manager, account_id, region)
-        _ems_service.start()
-    except Exception as e:
-        logger.error(f"Failed to start EMS service: {e}")
-        _ems_service = None
+    return _queue_manager, _esm_service
 
-    return _queue_manager, _ems_service
 
 @app.route('/health', methods=['GET'])
 def healthcheck():
@@ -866,8 +873,8 @@ def healthcheck():
 @app.route('/2015-03-31/event-source-mappings/', methods=['POST'], strict_slashes=False)
 def create_mapping_api():
     """Create a new event source mapping"""
-    qm, ems = get_or_create_services()
-    if not ems:
+    qm, esm = get_or_create_services()
+    if not esm:
         return jsonify({'message': 'EMS service not available'}), 500
 
     data = request.get_json() or {}
@@ -880,7 +887,7 @@ def create_mapping_api():
         return jsonify({'message': 'EventSourceArn and FunctionName required'}), 400
 
     try:
-        mapping = ems.create_event_source_mapping(event_source_arn, function_name, batch_size, enabled)
+        mapping = esm.create_event_source_mapping(event_source_arn, function_name, batch_size, enabled)
         return jsonify(mapping), 201
     except DuplicateMappingError as e:
         logger.info(f"Duplicate mapping requested: {e}")
@@ -892,18 +899,19 @@ def create_mapping_api():
 
 @app.route('/2015-03-31/event-source-mappings/', methods=['GET'], strict_slashes=False)
 def list_mappings_api():
-    qm, ems = get_or_create_services()
-    if not ems:
+    qm, esm = get_or_create_services()
+    function_name = request.args.get('FunctionName', default='', type=str)
+    if not esm:
         return jsonify({'message': 'EMS service not available'}), 500
-    return jsonify(ems.list_event_source_mappings())
+    return jsonify(esm.list_event_source_mappings(function_name))
 
 
 @app.route('/2015-03-31/event-source-mappings/<mapping_uuid>', methods=['GET'], strict_slashes=False)
 def get_mapping_api(mapping_uuid):
-    qm, ems = get_or_create_services()
-    if not ems:
+    qm, esm = get_or_create_services()
+    if not esm:
         return jsonify({'message': 'EMS service not available'}), 500
-    mapping = ems.get_event_source_mapping(mapping_uuid)
+    mapping = esm.get_event_source_mapping(mapping_uuid)
     if not mapping:
         return jsonify({'message': 'Mapping not found'}), 404
     return jsonify(mapping)
@@ -911,15 +919,15 @@ def get_mapping_api(mapping_uuid):
 
 @app.route('/2015-03-31/event-source-mappings/<mapping_uuid>', methods=['PATCH'], strict_slashes=False)
 def update_mapping_api(mapping_uuid):
-    qm, ems = get_or_create_services()
-    if not ems:
+    qm, esm = get_or_create_services()
+    if not esm:
         return jsonify({'message': 'EMS service not available'}), 500
     data = request.get_json() or {}
     enabled = data.get('Enabled') if 'Enabled' in data else None
     batch_size = data.get('BatchSize') if 'BatchSize' in data else None
 
     try:
-        updated = ems.update_event_source_mapping(mapping_uuid, enabled=enabled, batch_size=batch_size)
+        updated = esm.update_event_source_mapping(mapping_uuid, enabled=enabled, batch_size=batch_size)
         if not updated:
             return jsonify({'message': 'Mapping not found'}), 404
         return jsonify(updated)
@@ -930,42 +938,42 @@ def update_mapping_api(mapping_uuid):
 
 @app.route('/2015-03-31/event-source-mappings/<mapping_uuid>', methods=['DELETE'], strict_slashes=False)
 def delete_mapping_api(mapping_uuid):
-    qm, ems = get_or_create_services()
-    if not ems:
-        return jsonify({'message': 'EMS service not available'}), 500
-    ok = ems.delete_event_source_mapping(mapping_uuid)
+    qm, esm = get_or_create_services()
+    if not esm:
+        return jsonify({'message': 'ESM service not available'}), 500
+    ok = esm.delete_event_source_mapping(mapping_uuid)
     if not ok:
         return jsonify({'message': 'Mapping not found or failed to delete'}), 404
     return ('', 204)
 
 
-@app.route('/internal/ems/<mapping_uuid>/start', methods=['POST'], strict_slashes=False)
+@app.route('/internal/esm/<mapping_uuid>/start', methods=['POST'], strict_slashes=False)
 def start_mapping_api(mapping_uuid):
-    qm, ems = get_or_create_services()
-    if not ems:
+    qm, esm = get_or_create_services()
+    if not esm:
         return jsonify({'message': 'EMS service not available'}), 500
-    mapping = ems.get_event_source_mapping(mapping_uuid)
+    mapping = esm.get_event_source_mapping(mapping_uuid)
     if not mapping:
         return jsonify({'message': 'Mapping not found'}), 404
-    ems._start_polling(mapping_uuid)
+    esm._start_polling(mapping_uuid)
     return ('', 202)
 
 
-@app.route('/internal/ems/<mapping_uuid>/stop', methods=['POST'], strict_slashes=False)
+@app.route('/internal/esm/<mapping_uuid>/stop', methods=['POST'], strict_slashes=False)
 def stop_mapping_api(mapping_uuid):
-    qm, ems = get_or_create_services()
-    if not ems:
+    qm, esm = get_or_create_services()
+    if not esm:
         return jsonify({'message': 'EMS service not available'}), 500
-    ems._stop_polling(mapping_uuid)
+    esm._stop_polling(mapping_uuid)
     return ('', 202)
 
 
-@app.route('/internal/ems/status', methods=['GET'], strict_slashes=False)
-def ems_status_api():
-    qm, ems = get_or_create_services()
-    if not ems:
+@app.route('/internal/esm/status', methods=['GET'], strict_slashes=False)
+def esm_status_api():
+    qm, esm = get_or_create_services()
+    if not esm:
         return jsonify({'message': 'EMS service not available'}), 500
-    return jsonify(ems.get_status())
+    return jsonify(esm.get_status())
 
 
 if __name__ == '__main__':

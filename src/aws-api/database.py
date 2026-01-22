@@ -137,6 +137,36 @@ class Database:
             ON ssm_parameters(account_id, region, parameter_name)
         ''')
 
+        # S3 Bucket Notification Mappings table
+        # cursor.execute('''
+        #     CREATE TABLE IF NOT EXISTS s3_notification_mappings (
+        #         bucket_name TEXT NOT NULL,
+        #         notification_id TEXT NOT NULL,
+        #         queue_arn TEXT NOT NULL,
+        #         minio_webhook_arn TEXT NOT NULL,
+        #         created_at TEXT NOT NULL,
+        #         PRIMARY KEY (bucket_name, notification_id)
+        #     )
+        # ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS s3_notification_configs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bucket_name TEXT NOT NULL,
+                notification_id TEXT NOT NULL,
+                queue_arn TEXT NOT NULL,
+                queue_url TEXT NOT NULL,
+                event_patterns TEXT NOT NULL,
+                filter_rules TEXT,
+                created_at TEXT NOT NULL,
+                UNIQUE(bucket_name, notification_id)
+            )
+        ''')
+        # Index for quick lookup by bucket
+        # cursor.execute('''
+        #     CREATE INDEX IF NOT EXISTS idx_s3_notifications_bucket
+        #     ON s3_notification_mappings(bucket_name)
+        # ''')
+
         conn.commit()
         conn.close()
         logger.info("Database initialized successfully")
@@ -331,3 +361,163 @@ class Database:
             functions.append(function_data)
 
         return functions
+
+    # def save_s3_notification_mapping(self, bucket_name, notification_id, queue_arn, minio_webhook_arn):
+    #     """Save S3 notification ARN mapping"""
+    #     conn = sqlite3.connect(DB_PATH)
+    #     cursor = conn.cursor()
+
+    #     now = datetime.now(timezone.utc).isoformat()
+
+    #     cursor.execute('''
+    #         INSERT OR REPLACE INTO s3_notification_mappings (
+    #             bucket_name, notification_id, queue_arn,
+    #             minio_webhook_arn, created_at
+    #         ) VALUES (?, ?, ?, ?, ?)
+    #     ''', (bucket_name, notification_id, queue_arn, minio_webhook_arn, now))
+
+    #     conn.commit()
+    #     conn.close()
+    #     logger.info(f"Saved S3 notification mapping: {bucket_name}/{notification_id} -> {queue_arn}")
+
+    # def get_s3_notification_mapping(self, bucket_name, minio_webhook_arn):
+    #     """Get user queue ARN from MinIO webhook ARN"""
+    #     conn = sqlite3.connect(DB_PATH)
+    #     cursor = conn.cursor()
+
+    #     cursor.execute('''
+    #         SELECT notification_id, queue_arn
+    #         FROM s3_notification_mappings
+    #         WHERE bucket_name = ? AND minio_webhook_arn = ?
+    #     ''', (bucket_name, minio_webhook_arn))
+
+    #     row = cursor.fetchone()
+    #     conn.close()
+
+    #     if row:
+    #         return {'notification_id': row[0], 'queue_arn': row[1]}
+    #     return None
+
+    def get_bucket_notification_configs(self, bucket_name):
+        """Get all notification configurations for a bucket"""
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT notification_id, queue_arn, queue_url, event_patterns, filter_rules
+            FROM s3_notification_configs
+            WHERE bucket_name = ?
+        ''', (bucket_name,))
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        configs = []
+        for row in rows:
+            configs.append({
+                'notification_id': row[0],
+                'queue_arn': row[1],
+                'queue_url': row[2],
+                'event_patterns': row[3],
+                'filter_rules': row[4]
+            })
+
+        return configs
+
+    def save_notification_config(self, bucket_name, notification_id, queue_arn, queue_url, event_patterns, filter_rules):
+        """Save S3 notification configuration"""
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        # Ensure JSON strings
+        if isinstance(event_patterns, list):
+            event_patterns = json.dumps(event_patterns)
+        if isinstance(filter_rules, list):
+            filter_rules = json.dumps(filter_rules)
+
+        cursor.execute('''
+            INSERT OR REPLACE INTO s3_notification_configs
+            (bucket_name, notification_id, queue_arn, queue_url, event_patterns, filter_rules, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (bucket_name, notification_id, queue_arn, queue_url, event_patterns, filter_rules,
+            datetime.now(timezone.utc).isoformat()))
+
+        conn.commit()
+        conn.close()
+
+        logger.info(f"Saved notification config {notification_id} for bucket {bucket_name}")
+
+    def delete_notification_config(self, bucket_name, notification_id):
+        """Delete S3 notification configuration"""
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            DELETE FROM s3_notification_configs
+            WHERE bucket_name = ? AND notification_id = ?
+        ''', (bucket_name, notification_id))
+
+        conn.commit()
+        conn.close()
+
+        logger.info(f"Deleted notification config {notification_id} for bucket {bucket_name}")
+
+    def get_minio_webhook_arn(self, bucket_name, notification_id):
+        """Get MinIO webhook ARN from notification ID"""
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT minio_webhook_arn
+            FROM s3_notification_mappings
+            WHERE bucket_name = ? AND notification_id = ?
+        ''', (bucket_name, notification_id))
+
+        row = cursor.fetchone()
+        conn.close()
+
+        return row[0] if row else None
+
+    def delete_s3_notification_mappings(self, bucket_name):
+        """Delete all notification mappings for a bucket"""
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            DELETE FROM s3_notification_mappings
+            WHERE bucket_name = ?
+        ''', (bucket_name,))
+
+        conn.commit()
+        conn.close()
+        logger.info(f"Deleted S3 notification mappings for bucket: {bucket_name}")
+
+    def get_queue_arn_for_bucket_event(self, bucket_name):
+        """Get all queue ARNs configured for a bucket (for webhook routing)"""
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT notification_id, queue_arn
+            FROM s3_notification_mappings
+            WHERE bucket_name = ?
+        ''', (bucket_name,))
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [{'notification_id': row[0], 'queue_arn': row[1]} for row in rows]
+
+    def delete_s3_notification_mapping(self, bucket_name, notification_id):
+        """Delete a specific notification mapping"""
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            DELETE FROM s3_notification_mappings
+            WHERE bucket_name = ? AND notification_id = ?
+        ''', (bucket_name, notification_id))
+
+        conn.commit()
+        conn.close()
+        logger.info(f"Deleted S3 notification mapping: {bucket_name}/{notification_id}")
