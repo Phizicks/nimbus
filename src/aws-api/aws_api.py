@@ -1975,11 +1975,6 @@ def delete_function_event_invoke_config_endpoint(function_name):
             'message': str(e)
         }), 500
 
-@app.route('/test', methods=['GET'])
-def test_containers():
-    containers = docker_client.containers.list(all=True, filters={"name": "localcloud-my-function"})
-    return jsonify([c.name for c in containers])
-
 # Removed @require_sigv4 decorator for now to simplify debugging
 @app.route('/2015-03-31/functions/<function_name>/invocations', methods=['POST'])
 @app.route('/2015-03-31/functions/<path:function_name>/invocations', methods=['POST'])
