@@ -55,9 +55,9 @@
     </div>
 
     <div class="service-nav">
-        <button class="active" onclick="switchService('sqs')" id="service-button-sqs">SQS</button>
+        <button onclick="switchService('sqs')" id="service-button-sqs">SQS</button>
         <button onclick="switchService('lambda')" id="service-button-lambda">Lambda</button>
-        <button onclick="switchService('dynamodb')" id="service-button-ddb">DynamoDB</button>
+        <button onclick="switchService('dynamodb')" id="service-button-dynamodb">DynamoDB</button>
         <button onclick="switchService('ssm')" id="service-button-ssm">Systems Manager</button>
         <button onclick="switchService('cloudwatch')" id="service-button-cloudwatch">CloudWatch Logs</button>
         <button onclick="switchService('ecr')" id="service-button-ecr">ECR</button>
@@ -66,7 +66,7 @@
 
     <div class="container">
         <!-- SQS Panel -->
-        <div id="sqs-panel" class="service-panel active">
+        <div id="sqs-panel" class="service-panel">
             <div class="panel-header">
                 <h2>SQS Queues</h2>
                 <div class="actions">

@@ -98,12 +98,6 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', fun
     }
 });
 
-// Initialize theme UI on page load
-window.addEventListener('DOMContentLoaded', function() {
-    const currentTheme = getCookie('theme') || 'system';
-    updateThemeUI(currentTheme);
-});
-
 // ============================================================================
 // Notification system
 function showNotification(message, type = 'info') {
@@ -257,16 +251,21 @@ async function signRequest(method, path, queryString = '', payload = '', headers
 // ============================================================================
 
 function switchService(service) {
+    // Save to localStorage
+    localStorage.setItem('activeTab', service);
+
+    // Update UI
     document.querySelectorAll('.service-nav button').forEach(btn => {
         btn.classList.remove('active');
     });
-    event.target.classList.add('active');
+    document.getElementById(`service-button-${service}`).classList.add('active');
 
     document.querySelectorAll('.service-panel').forEach(panel => {
         panel.classList.remove('active');
     });
     document.getElementById(`${service}-panel`).classList.add('active');
 
+    // Load appropriate data
     if (service === 'sqs') loadQueues();
     else if (service === 'dynamodb') loadTables();
     else if (service === 'lambda') loadFunctions();
@@ -4198,10 +4197,46 @@ async function deleteBucket(bucketName) {
     );
 }
 
+function sortByProperty(property, order = 'asc') {
+    return function(a, b) {
+      const valueA = typeof a[property] === 'string' ? a[property].toUpperCase() : a[property];
+      const valueB = typeof b[property] === 'string' ? b[property].toUpperCase() : b[property];
+
+      let comparison = 0;
+      if (valueA > valueB) {
+        comparison = 1;
+      } else if (valueA < valueB) {
+        comparison = -1;
+      }
+
+      // Apply descending order logic if requested
+      return order === 'desc' ? comparison * -1 : comparison;
+    };
+}
+// Eg dynamic column sorting
+// Sort by 'age' in descending order
+// students.sort(sortByProperty('age', 'desc'));
+
 // ============================================================================
 // INITIALIZATION
 // ============================================================================
 
 window.addEventListener('DOMContentLoaded', function() {
-    loadQueues();
+    // Initialize theme UI
+    const currentTheme = getCookie('theme') || 'system';
+    updateThemeUI(currentTheme);
+
+    // Load data for the active tab
+    const activeTab = localStorage.getItem('activeTab') || 'sqs';
+
+    if (activeTab === 'sqs') loadQueues();
+    else if (activeTab === 'dynamodb') loadTables();
+    else if (activeTab === 'lambda') loadFunctions();
+    else if (activeTab === 'ssm') loadParameters();
+    else if (activeTab === 'cloudwatch') loadLogGroups();
+    else if (activeTab === 'ecr') loadRepositories();
+    else if (activeTab === 's3') loadBuckets();
+
+    // Display the currently active tab
+    switchService(activeTab);
 });
