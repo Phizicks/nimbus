@@ -3434,7 +3434,7 @@ async function viewBucketDetails(bucketName) {
             </div>
         `;
         if (lifecyclePolicies.length === 0) {
-            html += `<p style="color: #545B64; font-style: italic;">No lifecycle policies configured</p>`;
+            html += `<p style="color: var(--text-primary); font-style: italic;">No lifecycle policies configured</p>`;
         } else {
             html += `<table style="width: 100%; margin-bottom: 20px;">
                 <thead>
@@ -3627,7 +3627,7 @@ async function viewBucketDetails(bucketName) {
         }
 
         if (!hasNotifications) {
-            html += `<p style="color: #545B64; font-style: italic;">No event notifications configured</p>`;
+            html += `<p style="color: var(--text-primary); font-style: italic;">No event notifications configured</p>`;
         }
 
         content.innerHTML = html;
