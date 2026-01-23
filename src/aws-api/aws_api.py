@@ -2742,7 +2742,7 @@ def proxy_to_s3():
     # Build response with proper headers
     excluded = {'transfer-encoding', 'connection'}
     response_headers = [(k, v) for k, v in resp.headers.items() if k.lower() not in excluded]
-    logger.critical(f'{response_headers}')
+    logger.debug(f'{response_headers}')
     return Response(resp.content, status=resp.status_code, headers=response_headers)
 
 # Handles aws cli s3 commands
@@ -2760,7 +2760,7 @@ def handle_bucket_operations(bucket_name):
         queue_arn = data.get('QueueArn') or data.get('Queue')
         events = data.get('Events', [])
 
-        logger.critical(f'--DATA-- {data}')
+        logger.debug(f'--DATA-- {data}')
 
         # Handle both direct events list or nested in QueueConfiguration
         if 'QueueConfigurations' in data:
