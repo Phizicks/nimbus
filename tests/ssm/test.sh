@@ -35,6 +35,7 @@ log_error() {
 log_info() {
     echo -e "${BLUE} $1${NC}"
 }
+cleanup
 
 # Get all parameters
 log_info "Testing get-parameters"

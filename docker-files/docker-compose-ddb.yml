@@ -12,7 +12,7 @@ services:
       - localcloud
     volumes:
       - ddb-data:/var/lib/scylla
-    restart: unless-stopped
+    restart: always
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:4700/"]
       interval: 10s

@@ -15,6 +15,96 @@ const S3_CONFIG = {
 };
 
 // ============================================================================
+// Theme Management
+// ============================================================================
+
+function getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(';').shift();
+}
+
+
+function setCookie(name, value, days = 365) {
+    const expires = new Date(Date.now() + days * 864e5).toUTCString();
+    document.cookie = `${name}=${value}; expires=${expires}; path=/`;
+}
+
+function setTheme(theme) {
+    // Save to cookie
+    setCookie('theme', theme);
+
+    // Apply theme
+    const html = document.documentElement;
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+    if (theme === 'dark' || (theme === 'system' && prefersDark)) {
+        html.setAttribute('data-theme', 'dark');
+    } else if (theme === 'light') {
+        html.setAttribute('data-theme', 'light');
+    } else {
+        // System mode - remove attribute to let CSS media query handle it
+        html.removeAttribute('data-theme');
+    }
+
+    // Update UI
+    updateThemeUI(theme);
+
+    // Close dropdown
+    document.getElementById('theme-dropdown').classList.remove('active');
+}
+
+function updateThemeUI(currentTheme) {
+    // Update icon in toggle button
+    const icon = document.getElementById('theme-icon');
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+    if (currentTheme === 'system') {
+        icon.textContent = prefersDark ? '🌙' : '☀️';
+    } else if (currentTheme === 'dark') {
+        icon.textContent = '🌙';
+    } else {
+        icon.textContent = '☀️';
+    }
+
+    // Update checkmarks
+    document.querySelectorAll('.theme-check').forEach(check => {
+        check.classList.remove('active');
+    });
+
+    document.getElementById(`${currentTheme}-check`).classList.add('active');
+}
+
+function toggleThemePicker() {
+    const dropdown = document.getElementById('theme-dropdown');
+    dropdown.classList.toggle('active');
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', function(event) {
+    const themePicker = document.querySelector('.theme-picker');
+    const dropdown = document.getElementById('theme-dropdown');
+
+    if (dropdown && themePicker && !themePicker.contains(event.target)) {
+        dropdown.classList.remove('active');
+    }
+});
+
+// Listen for system theme changes
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {
+    const currentTheme = getCookie('theme') || 'system';
+    if (currentTheme === 'system') {
+        setTheme('system');
+    }
+});
+
+// Initialize theme UI on page load
+window.addEventListener('DOMContentLoaded', function() {
+    const currentTheme = getCookie('theme') || 'system';
+    updateThemeUI(currentTheme);
+});
+
+// ============================================================================
 // Notification system
 function showNotification(message, type = 'info') {
     const container = document.getElementById('notification-container') || createNotificationContainer();
@@ -2461,8 +2551,8 @@ async function viewLogEvents(logGroupName, logStreamName) {
             for (const event of events) {
                 const timestamp = new Date(event.timestamp).toLocaleString();
                 html += `
-                    <div style="border-bottom: 1px solid #EAEDED; padding: 3px 0; display: flex; align-items: flex-start;">
-                        <div style="font-size: 12px; color: #545B64; margin-right: 10px; flex-shrink: 0; width: 140px;">
+                    <div style="border-bottom: 1px solid var(--border-color); padding: 3px 0; display: flex; align-items: flex-start;">
+                        <div style="font-size: 12px; color: var(--text-primary); margin-right: 10px; flex-shrink: 0; width: 140px;">
                         ${timestamp}
                         </div>
                         <div class="code-block" style="margin: 0;">${event.message}</div>
@@ -3763,7 +3853,7 @@ function renderObjects(objects, prefixes) {
     for (const prefix of prefixes) {
         const folderName = prefix.Prefix.substring(currentPrefix.length).replace(/\/$/, '');
         html += `
-            <div style="display: flex; align-items: center; padding: 12px; background: #f8f9fa; border-radius: 4px; gap: 12px;">
+            <div style="display: flex; align-items: center; padding: 12px; border-radius: 4px; gap: 12px;">
                 <div style="flex: 1; cursor: pointer;" onclick="viewBucketObjects('${currentBucket}', '${prefix.Prefix}')">
                     <span style="color: var(--aws-blue); font-size: 20px;">📁</span>
                     <strong style="margin-left: 8px;">${folderName}</strong>
@@ -3784,11 +3874,11 @@ function renderObjects(objects, prefixes) {
         const modifiedDate = obj.LastModified ? new Date(obj.LastModified).toLocaleString() : 'N/A';
 
         html += `
-            <div style="display: flex; align-items: center; padding: 12px; background: white; border: 1px solid #eaeded; border-radius: 4px; gap: 12px;">
+            <div style="display: flex; align-items: center; padding: 12px; border: 1px solid var(--border-light) border-radius: 4px; gap: 12px;">
                 <span style="font-size: 20px;">📄</span>
                 <div style="flex: 1; min-width: 0;">
                     <div style="font-weight: 500; overflow: hidden; text-overflow: ellipsis;">${fileName}</div>
-                    <div style="font-size: 12px; color: #545B64; margin-top: 4px;">
+                    <div style="font-size: 12px; color: var(--text-primary); margin-top: 4px;">
                         ${sizeDisplay} • ${modifiedDate}
                     </div>
                 </div>

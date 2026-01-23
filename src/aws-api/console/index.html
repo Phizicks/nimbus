@@ -1,16 +1,56 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LocalCloud Console</title>
-    <link rel="stylesheet" href="styles.css">
-</head>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Nimbus</title>
+        <!-- Theme script MUST run before CSS loads to prevent any white to dark mode flash -->
+        <script>
+            (function() {
+                function getCookie(name) {
+                    const value = `; ${document.cookie}`;
+                    const parts = value.split(`; ${name}=`);
+                    if (parts.length === 2) return parts.pop().split(';').shift();
+                }
+                const theme = getCookie('theme') || 'system';
+                const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+                if (theme === 'dark' || (theme === 'system' && prefersDark)) {
+                    document.documentElement.setAttribute('data-theme', 'dark');
+                } else if (theme === 'light') {
+                    document.documentElement.setAttribute('data-theme', 'light');
+                }
+            })();
+        </script>
+        <link rel="stylesheet" href="styles.css">
+    </head>
 <body>
     <div class="navbar">
         <div class="navbar-brand">
-            <div class="logo">AWS</div>
-            <span>LocalCloud Console</span>
+            <div class="logo"><img src="logo.png"></div>
+            <span>Nimbus</span>
+        </div>
+        <div class="theme-picker">
+            <button class="theme-toggle" onclick="toggleThemePicker()">
+                <span id="theme-icon">🌙</span>
+            </button>
+            <div id="theme-dropdown" class="theme-dropdown">
+                <div class="theme-option" onclick="setTheme('system')">
+                    <span class="theme-option-icon">🖥️</span>
+                    <span class="theme-option-label">System</span>
+                    <span id="system-check" class="theme-check">✓</span>
+                </div>
+                <div class="theme-option" onclick="setTheme('light')">
+                    <span class="theme-option-icon">☀️</span>
+                    <span class="theme-option-label">Light Mode</span>
+                    <span id="light-check" class="theme-check">✓</span>
+                </div>
+                <div class="theme-option" onclick="setTheme('dark')">
+                    <span class="theme-option-icon">🌙</span>
+                    <span class="theme-option-label">Dark Mode</span>
+                    <span id="dark-check" class="theme-check">✓</span>
+                </div>
+            </div>
         </div>
     </div>
 
