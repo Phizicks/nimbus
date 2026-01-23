@@ -3424,7 +3424,7 @@ async function viewBucketDetails(bucketName) {
 
         // Lifecycle Policies Section
         html += `
-            <h3 style="margin-top: 30px; margin-bottom: 15px; color: var(--aws-dark);">Lifecycle Policies</h3>
+            <h3 style="margin-top: 30px; margin-bottom: 15px; color: var(--text-primary);">Lifecycle Policies</h3>
         `;
         html += `
             <div style="margin-bottom: 15px;">
@@ -3490,7 +3490,7 @@ async function viewBucketDetails(bucketName) {
 
         // Notification Configuration Section
         html += `
-            <h3 style="margin-top: 30px; margin-bottom: 15px; color: var(--aws-dark);">Event Notifications</h3>
+            <h3 style="margin-top: 30px; margin-bottom: 15px; color: var(--text-primary);">Event Notifications</h3>
         `;
 
         html += `
