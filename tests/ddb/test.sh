@@ -42,21 +42,9 @@ cleanup() {
 
     rm -f response.json item.json 2>/dev/null || true
 
-    # Print test summary
-    echo ""
-    echo "======================================"
-    echo "Test Summary"
-    echo "======================================"
-    echo -e "Tests Run:    ${BLUE}${TESTS_RUN}${NC}"
-    echo -e "Tests Passed: ${GREEN}${TESTS_PASSED}${NC}"
-    echo -e "Tests Failed: ${RED}${TESTS_FAILED}${NC}"
-    echo "======================================"
-
-    if [ ${TESTS_FAILED} -gt 0 ]; then
-        exit 1
-    fi
 }
 trap cleanup EXIT
+
 
 # Function to print colored messages
 log_info() {
@@ -115,6 +103,7 @@ check_contains() {
         return 1
     fi
 }
+cleanup
 
 # Initial cleanup
 log_info "Performing initial cleanup..."
@@ -495,7 +484,16 @@ else
     log_info "✓ Table successfully removed from list"
 fi
 
+# Print test summary
 echo ""
 echo "======================================"
-echo "All tests completed!"
+echo "Test Summary"
 echo "======================================"
+echo -e "Tests Run:    ${BLUE}${TESTS_RUN}${NC}"
+echo -e "Tests Passed: ${GREEN}${TESTS_PASSED}${NC}"
+echo -e "Tests Failed: ${RED}${TESTS_FAILED}${NC}"
+echo "======================================"
+
+if [ ${TESTS_FAILED} -gt 0 ]; then
+    exit 1
+fi

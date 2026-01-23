@@ -3,6 +3,7 @@ services:
     # image: minio/minio
     build:
       context: ../src/s3
+    restart: always
     ports:
       - "9000:9000"
       - "9001:9001"

@@ -935,19 +935,23 @@ def docker_registry_proxy(path):
             if k.lower() not in excluded:
                 original_v = v
 
-                # Rewrite Location header
+                # Rewrite Location header - a lot of effort for little reward
                 if k.lower() == 'location':
                     if v.startswith('http://') or v.startswith('https://'):
-                        # Parse and rewrite
                         original_host = f"http://{BACKEND_REGISTRY_HOST}"
                         proxy_host = f"http://{request.host}"
                         v = v.replace(original_host, proxy_host)
-                        logger.info(f"Rewrote Location header:")
-                        logger.info(f"  From: {original_v}")
-                        logger.info(f"  To:   {v}")
+                        # Remove internal ACCOUNT_ID prefix if present
+                        account_prefix = f"/v2/{ACCOUNT_ID}/"
+                        if account_prefix in v:
+                            v = v.replace(account_prefix, "/v2/")
                     elif v.startswith('/'):
+                        # Absolute internal path → rewrite host and strip prefix
+                        account_prefix = f"/v2/{ACCOUNT_ID}/"
                         v = f"http://{request.host}{v}"
-                        logger.info(f"Converted relative Location to absolute: {v}")
+                        if account_prefix in v:
+                            v = v.replace(account_prefix, "/v2/")
+                        logger.info(f"Rewrote Location to client path: {v}")
 
                 response_headers.append((k, v))
 
