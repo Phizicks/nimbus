@@ -20,7 +20,7 @@ A **complete, free AWS services emulator** for local development. Nimbus provide
 | **SQS** | Queues, messages, dead-letter queues, FIFO | ✅ Full |
 | **Event Source Mapping** | SQS → Lambda triggers, batch processing | ✅ Full |
 | **S3** | Basic operations (via MinIO) | ✅ Full |
-| **DDB** | Most - No streams yet (via Scylla) | ✅ Full |
+| **DDB** | Most - no TxWriteItems/Provisioned Throughput, No streams [yet] (via Scylla) | ✅ Full |
 | **SSM Parameter Store** | Parameters, versions, encryption | ✅ Full |
 | **CloudWatch Logs** | Log groups/streams, filtering | ✅ Full |
 
@@ -311,6 +311,7 @@ Nimbus uses a microservices architecture with dedicated containers for each AWS 
 - **ECR** (`ecr`) - Docker registry (port 5000)
 - **SQS** (`sqs`) - Message queuing
 - **Event Source Mapping** (`esm`) - Trigger management
+- **Dynamo DB** (`ddb`) - No SQL tables
 - **S3** (`s3`) - Object storage (MinIO)
 
 All services communicate via Docker networking and expose a unified API on `localhost:4566`.

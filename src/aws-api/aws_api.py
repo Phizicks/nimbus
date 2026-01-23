@@ -5,7 +5,7 @@ Provides a local endpoint that handles the AWS API calls
 import re
 from typing import Dict
 import boto3
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify, Response, send_file
 import requests
 import json
 import base64
@@ -360,9 +360,46 @@ def get_request_data():
 
     return {}
 
-
 # ECR API Functions (keeping existing implementation)
 # ============================================================================
+
+# list of (pain in the ass) resource segments that follow a repository name
+_RESOURCE_SEP_RE = re.compile(r'/(?:blobs|manifests|uploads|_uploads|tags|_layers|_catalog|_manifests)(?:/|$)', re.IGNORECASE)
+
+def ecr_repository_exists(repository_name):
+    if not repository_name:
+        raise ValueError("repositoryName is required")
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT * FROM repositories WHERE repository_name = ?', (repository_name,))
+    if cursor.fetchone():
+        conn.close()
+        return True
+        # raise ValueError(f"Repository {repository_name} already exists")
+    return False
+
+def extract_repository_from_path(path: str) -> str | None:
+    """
+    Given path after /v2/ (e.g. "foo/bar/blobs/uploads/..."), return repository name ("foo/bar"),
+    or None if the path is registry-level or empty.
+    """
+    if not path:
+        return None
+    # strip leading/trailing slashes
+    p = path.strip('/')
+    # if registry-level like "_catalog", return None
+    if p.startswith('_'):
+        return None
+    # split on the first occurrence of a known resource separator
+    parts = _RESOURCE_SEP_RE.split(p, maxsplit=1)
+    repo = parts[0] if parts else p
+    return repo or None
+
+def docker_registry_error(code: str, message: str, status: int = 404):
+    body = {"errors": [{"code": code, "message": message, "detail": {}}]}
+    return Response(json.dumps(body), status=status, mimetype="application/json")
 
 @aws_response('CreateRepository')
 def create_repository():
@@ -378,10 +415,13 @@ def create_repository():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    cursor.execute('SELECT * FROM repositories WHERE repository_name = ?', (repository_name,))
-    if cursor.fetchone():
-        conn.close()
+    if ecr_repository_exists(repository_name):
         raise ValueError(f"Repository {repository_name} already exists")
+
+    # cursor.execute('SELECT * FROM repositories WHERE repository_name = ?', (repository_name,))
+    # if cursor.fetchone():
+    #     conn.close()
+    #     raise ValueError(f"Repository {repository_name} already exists")
 
     registry_host = get_request_server_address() # urlparse(request.base_url).hostname
     repository_uri = f"{registry_host}/{repository_name}"
@@ -413,14 +453,25 @@ def describe_repositories():
 
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+
     if repository_names:
         placeholders = ','.join('?' * len(repository_names))
-        cmd=f'SELECT * FROM repositories WHERE repository_name IN ({placeholders})'
+        cmd = f'SELECT * FROM repositories WHERE repository_name IN ({placeholders})'
         cursor.execute(cmd, repository_names)
+        rows = cursor.fetchall()
+
+        # Check if all requested repositories were found
+        found_repos = {row[0] for row in rows}
+        missing_repos = set(repository_names) - found_repos
+
+        if missing_repos:
+            conn.close()
+            # AWS returns RepositoryNotFoundException for missing repos
+            raise ValueError(f"The repository(s) {', '.join(missing_repos)} does not exist")
     else:
         cursor.execute('SELECT * FROM repositories')
+        rows = cursor.fetchall()
 
-    rows = cursor.fetchall()
     conn.close()
 
     repositories = []
@@ -442,32 +493,75 @@ def delete_repository():
     repository_name = data.get('repositoryName')
     force = data.get('force', False)
 
+    if not ecr_repository_exists(repository_name):
+        raise ValueError(f"Delete failed. Repository {repository_name} does not exist")
+
+    # Check if repository has images by querying the actual registry
+    repo_path = f"{ACCOUNT_ID}/{repository_name}"
+    registry_url = f"http://{BACKEND_REGISTRY_HOST}"
+
+    has_images = False
+    try:
+        tags_url = f"{registry_url}/v2/{repo_path}/tags/list"
+        tags_resp = requests.get(tags_url, timeout=5)
+
+        if tags_resp.status_code == 200:
+            tags = tags_resp.json().get('tags', [])
+            has_images = len(tags) > 0
+        elif tags_resp.status_code != 404:
+            logger.warning(f"Failed to check images: {tags_resp.status_code}")
+    except Exception as e:
+        logger.error(f"Error checking for images: {e}")
+
+    # AWS ECR behavior: cannot delete repository with images unless force=true
+    if has_images and not force:
+        raise ValueError("Repository contains images. Use force=true to delete")
+
+    # Delete from actual registry backend
+    if has_images:
+        try:
+            # Get all tags
+            tags_url = f"{registry_url}/v2/{repo_path}/tags/list"
+            tags_resp = requests.get(tags_url, timeout=5)
+
+            if tags_resp.status_code == 200:
+                tags = tags_resp.json().get('tags', [])
+
+                for tag in tags:
+                    # Get manifest digest
+                    manifest_url = f"{registry_url}/v2/{repo_path}/manifests/{tag}"
+                    manifest_resp = requests.get(
+                        manifest_url,
+                        headers={'Accept': 'application/vnd.docker.distribution.manifest.v2+json'},
+                        timeout=5
+                    )
+
+                    if manifest_resp.status_code == 200:
+                        digest = manifest_resp.headers.get('Docker-Content-Digest')
+                        if digest:
+                            # Delete manifest by digest
+                            delete_url = f"{registry_url}/v2/{repo_path}/manifests/{digest}"
+                            delete_resp = requests.delete(delete_url, timeout=5)
+
+                            if delete_resp.status_code in (202, 204):
+                                logger.info(f"Deleted {repo_path}:{tag} (digest: {digest})")
+                            else:
+                                logger.warning(f"Failed to delete {tag}: status {delete_resp.status_code}")
+                    else:
+                        logger.warning(f"Failed to get manifest for {tag}: {manifest_resp.status_code}")
+
+            elif tags_resp.status_code != 404:
+                logger.error(f"Failed to list tags for {repo_path}: {tags_resp.status_code} - {tags_resp.text}")
+                return jsonify({"error": f"Registry error: {tags_resp.text}"}), 502
+
+        except Exception as e:
+            logger.error(f"Error deleting from registry backend: {e}", exc_info=True)
+            # Continue to database cleanup even if registry deletion fails
+
+    # Delete from database
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    # Check if repository already exists
-    cursor.execute('SELECT * FROM repositories WHERE repository_name = ?', (repository_name,))
-    if not cursor.fetchone():
-        conn.close()
-        raise ValueError(f"Repository {repository_name} not found")
-
-    # Check if repository has images
-    cursor.execute('SELECT COUNT(*) FROM images WHERE repository_name = ?', (repository_name,))
-    image_count = cursor.fetchone()[0]
-
-    if image_count > 0 and not force:
-        conn.close()
-        raise ValueError("Repository contains images. Use force=true to delete")
-
-    # Delete associated Docker images
-    cursor.execute('SELECT docker_image_id FROM images WHERE repository_name = ?', (repository_name,))
-    for row in cursor.fetchall():
-        try:
-            docker_client.images.remove(row[0], force=True)
-        except:
-            pass
-
-    # Delete from database
     cursor.execute('DELETE FROM images WHERE repository_name = ?', (repository_name,))
     cursor.execute('DELETE FROM repositories WHERE repository_name = ?', (repository_name,))
 
@@ -499,59 +593,14 @@ def get_authorization_token():
         }]
     }
 
-@aws_response('PutImage')
-def put_image():
-    """Push an image to the Docker registry backend"""
-    data = get_request_data()
-    repository_name = data.get('repositoryName')
-    image_tag = data.get('imageTag', 'latest')
-    image_manifest = data.get('imageManifest')
-
-    if not repository_name or not image_manifest:
-        raise ValueError("repositoryName and imageManifest are required")
-
-    repo_path = f"{ACCOUNT_ID}/{repository_name}"
-    # registry_repo = f"{registry_host}/{repo_path}:{image_tag}"
-
-    # Try to find local image by tag or digest
-    try:
-        local_image = docker_client.images.get(f"{repository_name}:{image_tag}")
-        local_image.tag(f"{BACKEND_REGISTRY_HOST}/{repo_path}", tag=image_tag)
-        docker_client.images.push(f"{BACKEND_REGISTRY_HOST}/{repo_path}", tag=image_tag)
-    except docker.errors.ImageNotFound:
-        raise ValueError(f"Local image {repository_name}:{image_tag} not found for push")
-
-    manifest_bytes = json.dumps(image_manifest).encode() if isinstance(image_manifest, dict) else image_manifest.encode()
-    image_digest = "sha256:" + hashlib.sha256(manifest_bytes).hexdigest()
-    pushed_at = datetime.now(timezone.utc).isoformat()
-
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        '''
-        INSERT OR REPLACE INTO images
-        (repository_name, image_tag, image_digest, image_size, pushed_at, docker_image_id)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ''',
-        (repository_name, image_tag, image_digest, 0, pushed_at, local_image.id),
-    )
-    conn.commit()
-    conn.close()
-
-    return {
-        'image': {
-            'registryId': ACCOUNT_ID,
-            'repositoryName': repository_name,
-            'imageId': {'imageTag': image_tag, 'imageDigest': image_digest},
-            'imageManifest': image_manifest,
-        }
-    }
-
 @aws_response('ListImages')
 def list_images():
     """List images in a repository - queries actual registry"""
     data = get_request_data()
     repository_name = data.get('repositoryName')
+
+    if not ecr_repository_exists(repository_name):
+        raise ValueError(f"Repository {repository_name} does not exist")
 
     repo_path = f"{ACCOUNT_ID}/{repository_name}"
 
@@ -622,6 +671,9 @@ def batch_get_image():
     repository_name = data.get('repositoryName')
     image_ids = data.get('imageIds', [])
     repo_path = f"{ACCOUNT_ID}/{repository_name}"
+
+    if not ecr_repository_exists(repository_name):
+        raise ValueError(f"Repository {repository_name} does not exist")
 
     images, failures = [], []
 
@@ -751,36 +803,72 @@ def describe_images():
 
 @aws_response('BatchDeleteImage')
 def batch_delete_image():
-    """ Batch delete images """
-    data = request.get_json()
+    """Batch delete images from both registry and database"""
+    data = get_request_data()
     repository_name = data.get('repositoryName')
     image_ids = data.get('imageIds', [])
 
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    if not ecr_repository_exists(repository_name):
+        raise ValueError(f"Repository {repository_name} does not exist")
+
+    repo_path = f"{ACCOUNT_ID}/{repository_name}"
+    registry_url = f"http://{BACKEND_REGISTRY_HOST}"
 
     deleted = []
     failures = []
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
 
     for img_id in image_ids:
         image_tag = img_id.get('imageTag')
         image_digest = img_id.get('imageDigest')
 
         try:
+            # Delete from registry backend first
             if image_tag:
-                cursor.execute('SELECT docker_image_id FROM images WHERE repository_name = ? AND image_tag = ?',
-                             (repository_name, image_tag))
-                row = cursor.fetchone()
-                if row and row[0]:
-                    try:
-                        docker_client.images.remove(row[0], force=True)
-                    except:
-                        pass
+                # Get manifest digest for the tag
+                manifest_url = f"{registry_url}/v2/{repo_path}/manifests/{image_tag}"
+                manifest_resp = requests.get(
+                    manifest_url,
+                    headers={'Accept': 'application/vnd.docker.distribution.manifest.v2+json'},
+                    timeout=5
+                )
 
+                if manifest_resp.status_code == 200:
+                    digest = manifest_resp.headers.get('Docker-Content-Digest')
+                    if digest:
+                        # Delete manifest by digest
+                        delete_url = f"{registry_url}/v2/{repo_path}/manifests/{digest}"
+                        delete_resp = requests.delete(delete_url, timeout=5)
+
+                        if delete_resp.status_code not in (202, 204):
+                            raise Exception(f"Registry deletion failed: {delete_resp.status_code}")
+
+                        logger.info(f"Deleted {repo_path}:{image_tag} from registry")
+                elif manifest_resp.status_code != 404:
+                    raise Exception(f"Failed to get manifest: {manifest_resp.status_code}")
+
+            elif image_digest:
+                # Delete directly by digest
+                delete_url = f"{registry_url}/v2/{repo_path}/manifests/{image_digest}"
+                delete_resp = requests.delete(delete_url, timeout=5)
+
+                if delete_resp.status_code not in (202, 204, 404):
+                    raise Exception(f"Registry deletion failed: {delete_resp.status_code}")
+
+            # Delete from database
+            if image_tag:
                 cursor.execute('DELETE FROM images WHERE repository_name = ? AND image_tag = ?',
                              (repository_name, image_tag))
-                deleted.append(img_id)
+            elif image_digest:
+                cursor.execute('DELETE FROM images WHERE repository_name = ? AND image_digest = ?',
+                             (repository_name, image_digest))
+
+            deleted.append(img_id)
+
         except Exception as e:
+            logger.error(f"Failed to delete image {img_id}: {e}")
             failures.append({
                 'imageId': img_id,
                 'failureCode': 'ImageNotFound',
@@ -816,6 +904,20 @@ def docker_registry_root():
 def docker_registry_proxy(path):
     """Proxy Docker Registry v2 API calls with detailed debug logging"""
     try:
+        repo = extract_repository_from_path(path)
+        logger.debug(f"v2 request: path={path}, repo={repo}")
+        # If it's a registry-level call (no repo) then skip repository existence check
+        if repo is not None:
+            # only enforce existence for APIs that require an existing repo
+            if not ecr_repository_exists(repo):
+                return docker_registry_error(
+                    "NAME_UNKNOWN",
+                    f"repository {repo} does not exist",
+                    status=404
+                )
+        else:
+            logger.critical(f"registry call only, dont think we should reach here")
+
         # Inject account ID namespace for isolation
         if not path.startswith(f"{ACCOUNT_ID}/"):
             path = f"{ACCOUNT_ID}/{path}"
@@ -828,8 +930,8 @@ def docker_registry_proxy(path):
 
         # logger.info(f"=== PROXY REQUEST ===")
         # logger.info(f"Method: {request.method}")
-        # logger.info(f"Path: {path}")
-        # logger.info(f"Full URL: {url}")
+        logger.info(f"Path: {path}")
+        logger.info(f"Full URL: {url}")
         # logger.info(f"Request Headers: {dict(request.headers)}")
 
         # Prepare headers - exclude problematic ones
@@ -866,19 +968,23 @@ def docker_registry_proxy(path):
             if k.lower() not in excluded:
                 original_v = v
 
-                # Rewrite Location header
+                # Rewrite Location header - a lot of effort for little reward
                 if k.lower() == 'location':
                     if v.startswith('http://') or v.startswith('https://'):
-                        # Parse and rewrite
                         original_host = f"http://{BACKEND_REGISTRY_HOST}"
                         proxy_host = f"http://{request.host}"
                         v = v.replace(original_host, proxy_host)
-                        logger.info(f"Rewrote Location header:")
-                        logger.info(f"  From: {original_v}")
-                        logger.info(f"  To:   {v}")
+                        # Remove internal ACCOUNT_ID prefix if present
+                        account_prefix = f"/v2/{ACCOUNT_ID}/"
+                        if account_prefix in v:
+                            v = v.replace(account_prefix, "/v2/")
                     elif v.startswith('/'):
+                        # Absolute internal path → rewrite host and strip prefix
+                        account_prefix = f"/v2/{ACCOUNT_ID}/"
                         v = f"http://{request.host}{v}"
-                        logger.info(f"Converted relative Location to absolute: {v}")
+                        if account_prefix in v:
+                            v = v.replace(account_prefix, "/v2/")
+                        logger.info(f"Rewrote Location to client path: {v}")
 
                 response_headers.append((k, v))
 
@@ -944,6 +1050,9 @@ def upload_layer_part():
     part_last_byte = data.get('partLastByte', 0)
     layer_part_blob = str(data.get('layerPartBlob')) # base64 encoded
 
+    if not ecr_repository_exists(repository_name):
+        raise ValueError(f"Repository {repository_name} does not exist")
+
     # Store part temporarily
     upload_dir = Path(f'{FUNCTIONS_DIR}/uploads/{upload_id}')
     upload_dir.mkdir(parents=True, exist_ok=True)
@@ -965,6 +1074,9 @@ def complete_layer_upload():
     repository_name = data.get('repositoryName')
     upload_id = data.get('uploadId')
     layer_digests = data.get('layerDigests', [])
+
+    if not ecr_repository_exists(repository_name):
+        raise ValueError(f"Repository {repository_name} does not exist")
 
     upload_dir = Path(f'{FUNCTIONS_DIR}/uploads/{upload_id}')
 
@@ -1011,6 +1123,9 @@ def put_image():
 
     if not repository_name or not image_manifest:
         raise ValueError("repositoryName and imageManifest are required")
+
+    if not ecr_repository_exists(repository_name):
+        raise ValueError(f"Repository {repository_name} does not exist")
 
     repo_path = f"{ACCOUNT_ID}/{repository_name}"
 
@@ -1062,53 +1177,54 @@ def put_image():
     }
 
 @aws_response('BatchGetImage')
-def batch_get_image_enhanced():
-    """
-    Enhanced BatchGetImage - returns image data that can be loaded
-    """
+def batch_get_image():
+    """Fetch image manifest from the Docker registry backend"""
     data = get_request_data()
     repository_name = data.get('repositoryName')
     image_ids = data.get('imageIds', [])
-    include_image_data = data.get('includeImageData', False)
-    registry_host = get_request_server_address()
-
     repo_path = f"{ACCOUNT_ID}/{repository_name}"
+    registry_url = f"http://{BACKEND_REGISTRY_HOST}"
+
+    if not ecr_repository_exists(repository_name):
+        raise ValueError(f"Repository {repository_name} does not exist")
+
     images, failures = [], []
 
     for img_id in image_ids:
         image_tag = img_id.get('imageTag', 'latest')
-        full_ref = f"{registry_host}/{repo_path}:{image_tag}"
+        image_digest = img_id.get('imageDigest')
 
         try:
-            # Pull from registry
-            image = docker_client.images.pull(full_ref)
-            inspect = docker_client.api.inspect_image(image.id)
-            digest = inspect['RepoDigests'][0].split('@')[1] if inspect.get('RepoDigests') else 'sha256:unknown'
+            # Query registry API directly instead of Docker pull
+            manifest_ref = image_digest if image_digest else image_tag
+            manifest_url = f"{registry_url}/v2/{repo_path}/manifests/{manifest_ref}"
 
-            result = {
+            manifest_resp = requests.get(
+                manifest_url,
+                headers={'Accept': 'application/vnd.docker.distribution.manifest.v2+json'},
+                timeout=5
+            )
+
+            if manifest_resp.status_code != 200:
+                raise Exception(f"Manifest not found: {manifest_resp.status_code}")
+
+            # Get digest from response headers
+            digest = manifest_resp.headers.get('Docker-Content-Digest', 'sha256:unknown')
+            manifest_data = manifest_resp.json()
+
+            # Build response
+            images.append({
                 "registryId": ACCOUNT_ID,
                 "repositoryName": repository_name,
-                "imageId": {"imageTag": image_tag, "imageDigest": digest},
-                "imageManifest": json.dumps({
-                    "schemaVersion": 2,
-                    "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
-                    "config": {
-                        "mediaType": "application/vnd.docker.container.image.v1+json",
-                        "digest": digest,
-                        "size": inspect.get('Size', 0),
-                    }
-                })
-            }
-
-            # Optionally include full image data
-            if include_image_data:
-                # Export image as tar
-                image_data = image.save()
-                result['imageData'] = base64.b64encode(b''.join(image_data)).decode()
-
-            images.append(result)
+                "imageId": {
+                    "imageTag": image_tag,
+                    "imageDigest": digest
+                },
+                "imageManifest": json.dumps(manifest_data),
+            })
 
         except Exception as e:
+            logger.error(f"Failed to get image {img_id}: {e}")
             failures.append({
                 "imageId": img_id,
                 "failureCode": "ImageNotFound",
@@ -2202,12 +2318,17 @@ def delete_function_logging_config(function_name):
             "message": str(e)
         }), 500
 
+
 # Console
 @app.route('/styles.css', methods=['GET'], strict_slashes=False)
 def console_css():
     with open('console/styles.css', 'r') as f:
         html_content = f.read()
     return html_content, 200, {'Content-Type': 'text/css'}
+
+@app.route('/logo.png', methods=['GET'], strict_slashes=False)
+def console_nimbus():
+    return send_file('console/nimbus-icon-transparent.png', mimetype='image/png')
 
 @app.route('/app.js', methods=['GET'], strict_slashes=False)
 def console_js():
@@ -2301,7 +2422,7 @@ def handle_request():
                 description=str(data.get('Description', '')),
                 kms_key_id=str(data.get('KeyId')),
                 overwrite=bool(data.get('Overwrite', False)),
-                allowed_pattern=str(data.get('AllowedPattern')),
+                allowed_pattern=data.get('AllowedPattern', None),
                 tags=data.get('Tags'),
                 tier=str(data.get('Tier', 'Standard'))
             )
