@@ -101,9 +101,9 @@ class SSMParameterStore:
 
     def _validate_parameter_name(self, name: str) -> bool:
         """Validate parameter name according to AWS rules"""
-        if not name or len(name) > 2048:
+        if not name or len(name) > 1011:
             return False
-        if not name.startswith('/'):
+        if name.endswith('/'):
             return False
         # Check for valid characters
         pattern = r'^[a-zA-Z0-9/_.\-]+$'

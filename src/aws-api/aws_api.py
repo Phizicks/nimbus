@@ -2344,6 +2344,7 @@ def handle_request():
     content_type = request.headers.get('Content-Type', '').lower()
 
     logger.debug(f"Request: method={request.method}, action={action}, operation={operation}, content_type={content_type}")
+    logger.debug(f"Request: data={request.get_data()}")
 
     # If this is an SQS API call (via X-Amz-Target or Action), proxy it to the SQS container
     SQS_ACTIONS = {
@@ -2471,6 +2472,7 @@ def handle_request():
             )
             return jsonify(result)
     except ValueError as e:
+        logger.critical(f"SSM ValueError: {data} Exception:{e}")
         return jsonify({
             '__type': 'ParameterNotFound' if 'not found' in str(e) else 'InvalidParameterException',
             'message': str(e)

@@ -1,13 +1,9 @@
 services:
   ddb:
-    image: scylladb/scylla:2025.3
-    command:
-      - --smp 2
-      - --memory 2G
-      - --alternator-port=4700
-      - --alternator-write-isolation=always
-    # ports:
-    #   - "4700:4700"
+    build:
+      context: ../src/dynamodb
+      dockerfile: Dockerfile
+    image: custom-scylla-cdc:latest
     networks:
       - localcloud
     volumes:
@@ -21,3 +17,7 @@ services:
 
 volumes:
   ddb-data:
+
+networks:
+  localcloud:
+    external: true

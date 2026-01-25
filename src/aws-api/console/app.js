@@ -538,6 +538,21 @@ async function viewTableDetails(tableName) {
             `;
         }
 
+        if (table.StreamSpecification) {
+            html += `
+                <div class="detail-row">
+                    <div class="detail-label">StreamEnabled</div>
+                    <div class="detail-value"><span class="badge ${table.StreamSpecification.StreamEnabled === true ? 'badge-success' : 'badge-info'}">${table.StreamSpecification.StreamEnabled}</span></div>
+                    <div class="detail-label">StreamViewType</div>
+                    <div class="detail-value">${table.StreamSpecification.StreamViewType}</div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">LatestStreamArn</div>
+                    <div class="detail-value">${table.LatestStreamArn}</div>
+                </div>
+            `;
+        }
+
         if (table.GlobalSecondaryIndexes && table.GlobalSecondaryIndexes.length > 0) {
             html += `
                 <div class="detail-row">
@@ -2135,7 +2150,7 @@ async function createParameter(event) {
     const description = document.getElementById('param-description').value;
 
     try {
-        await fetch(API_BASE, {
+        response = await fetch(API_BASE, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-amz-json-1.1',
@@ -2149,13 +2164,13 @@ async function createParameter(event) {
                 Overwrite: false
             })
         });
-
-        closeModal('create-parameter-modal');
-        showNotification(`Parameter ${name} created successfully`, 'success');
-        loadParameters();
+        if ( ! response.ok ) {
+            const errorText = await response.json();
+            throw new Error(errorText.message);
+        }
     } catch (error) {
         console.error('Error creating parameter:', error);
-        showNotification('Error creating parameter', 'error');
+        showNotification(`Error creating parameter: ${error}`, 'error');
     }
 }
 
@@ -4213,9 +4228,6 @@ function sortByProperty(property, order = 'asc') {
       return order === 'desc' ? comparison * -1 : comparison;
     };
 }
-// Eg dynamic column sorting
-// Sort by 'age' in descending order
-// students.sort(sortByProperty('age', 'desc'));
 
 // ============================================================================
 // INITIALIZATION
@@ -4228,14 +4240,6 @@ window.addEventListener('DOMContentLoaded', function() {
 
     // Load data for the active tab
     const activeTab = localStorage.getItem('activeTab') || 'sqs';
-
-    if (activeTab === 'sqs') loadQueues();
-    else if (activeTab === 'dynamodb') loadTables();
-    else if (activeTab === 'lambda') loadFunctions();
-    else if (activeTab === 'ssm') loadParameters();
-    else if (activeTab === 'cloudwatch') loadLogGroups();
-    else if (activeTab === 'ecr') loadRepositories();
-    else if (activeTab === 's3') loadBuckets();
 
     // Display the currently active tab
     switchService(activeTab);
