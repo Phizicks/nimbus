@@ -10,7 +10,7 @@ services:
       - ddb-data:/var/lib/scylla
     restart: always
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4700/"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
       interval: 10s
       timeout: 5s
       retries: 5

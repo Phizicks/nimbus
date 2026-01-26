@@ -58,7 +58,7 @@ BACKEND_REGISTRY_HOST = os.getenv('REGISTRY_HOST', "ecr:5000")
 DB_PATH = os.getenv("STORAGE_PATH", '/data') + '/aws_metadata.db'
 
 # DynamoDB endpoint url
-DYNAMODB_ENDPOINT = os.getenv('DYNAMODB_ENDPOINT_URL', 'http://ddb:4700')
+DYNAMODB_ENDPOINT = os.getenv('DYNAMODB_ENDPOINT_URL', 'http://ddb:8000')
 
 # Endpoint for Event Source Mapping (ESM) service (runs in its own container)
 ESM_ENDPOINT = os.getenv('ESM_ENDPOINT_URL', 'http://esm:4566')
@@ -128,16 +128,16 @@ def esm_request(method: str, path: str, **kwargs):
         return 502, {'message': 'ESM service unavailable'}
 
 
-def esm_find_mapping_by_function(function_name: str):
-    """Find an ESM mapping by function name by querying the ESM service."""
-    status, data = esm_request('GET', '/2015-03-31/event-source-mappings')
-    if status != 200:
-        return None
-    mappings = data.get('EventSourceMappings') if isinstance(data, dict) else []
-    for m in mappings or []:
-        if m.get('FunctionName') == function_name:
-            return m
-    return None
+# def esm_find_mapping_by_function(function_name: str):
+#     """Find an ESM mapping by function name by querying the ESM service."""
+#     status, data = esm_request('GET', '/2015-03-31/event-source-mappings')
+#     if status != 200:
+#         return None
+#     mappings = data.get('EventSourceMappings') if isinstance(data, dict) else []
+#     for m in mappings or []:
+#         if m.get('FunctionName') == function_name:
+#             return m
+#     return None
 
 
 def proxy_to_sqs(operation, records):
@@ -214,7 +214,6 @@ def proxy_to_dynamodb(operation: str, data=None):
             headers[key] = request.headers[key]
 
     status, resp, raw = dynamodb_request('POST', '/', headers=headers, json=(data or {}))
-
     if raw is None:
         return jsonify(resp), status
 
@@ -2405,6 +2404,30 @@ def handle_request():
     }
 
     if operation in DYNAMODB_ACTIONS:
+        # Special handling for DeleteTable to notify ESM should polling be enabled/active
+        if operation == 'DeleteTable':
+            data = get_request_data()
+            table_name = data.get('TableName')
+
+            # Proxy to DynamoDB first
+            response = proxy_to_dynamodb(operation, data)
+            # If deletion successful, notify ESM service
+            status = response.status
+            if status == 200:  # Check status code
+                try:
+                    requests.post(
+                        f'{ESM_ENDPOINT}/internal/esm/table-deleted',
+                        json={'TableName': table_name},
+                        timeout=5
+                    )
+                    logger.info(f"Notified ESM of table deletion: {table_name}")
+                except Exception as e:
+                    logger.warning(f"Failed to notify ESM of table deletion: {e}")
+            else:
+                logger.warning(f"Failed to notify ESM of table deletion: {vars(response)}")
+
+            return response
+
         logger.info(f"Routing to DynamoDB handler: Operation={operation}")
         return proxy_to_dynamodb(operation, data)
 
