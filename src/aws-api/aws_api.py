@@ -2748,12 +2748,8 @@ def proxy_to_s3():
 
     # Keep ALL headers INCLUDING the original Host (critical for signature validation)
     headers = {k: v for k, v in request.headers}
-    request_data =request.get_data()
-
-    logger.debug(f"Proxying to S3: {request.method} {s3_url}")
-    logger.debug(f"Host header: {headers.get('Host')}")
-    logger.debug(f"Data: {request_data}")
-    resp = requests.request(
+    request_data = request.get_data()
+    response = requests.request(
         method=request.method,
         url=s3_url,
         headers=headers,
@@ -2761,14 +2757,14 @@ def proxy_to_s3():
         stream=True
     )
 
-    logger.debug(f"S3 response: {resp.status_code}")
-    logger.debug(f"S3 Content-Type: {resp.headers.get('Content-Type')}")
+    logger.debug(f"S3 response: {response.status_code}")
+    logger.debug(f"S3 Content-Type: {response.headers.get('Content-Type')}")
 
     # Build response with proper headers
     excluded = {'transfer-encoding', 'connection'}
-    response_headers = [(k, v) for k, v in resp.headers.items() if k.lower() not in excluded]
+    response_headers = [(k, v) for k, v in response.headers.items() if k.lower() not in excluded]
     logger.debug(f'{response_headers}')
-    return Response(resp.content, status=resp.status_code, headers=response_headers)
+    return Response(response.content, status=response.status_code, headers=response_headers)
 
 # Handles aws cli s3 commands
 @app.route('/<bucket_name>', methods=['PUT'])
