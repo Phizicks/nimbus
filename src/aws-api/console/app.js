@@ -2419,6 +2419,7 @@ async function viewLogStreams(logGroupName) {
                     <button class="btn btn-danger" id="delete-selected-streams" onclick="deleteSelectedLogStreams('${logGroupName}')" disabled>
                         Delete Selected
                     </button>
+                    <button class="btn btn-secondary" onclick="viewLogStreams('${logGroupName}')">🔄 Refresh</button>
                 </div>
                 <table style="width:100%;">
                     <thead>
@@ -3575,7 +3576,7 @@ async function viewBucketDetails(bucketName) {
                         <tr>
                             <td>
                                 <div><strong>${queueName}</strong></div>
-                                <div style="font-size: 11px; color: #545B64; margin-top: 4px;"><code>${queueArn}</code></div>
+                                <div style="font-size: 11px; color: var(--text-primary); margin-top: 4px;"><code>${queueArn}</code></div>
                             </td>
                             <td style="font-size: 13px;">${events}</td>
                             <td style="font-size: 13px;">${filter}</td>

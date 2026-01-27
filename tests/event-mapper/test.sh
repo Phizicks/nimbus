@@ -17,9 +17,9 @@ cleanup() {
   uuid=$(aws lambda list-event-source-mappings | jq -r '.EventSourceMappings[] | select(.FunctionArn == "arn:aws:lambda:ap-southeast-2:456645664566:function:esm-lambda-test").UUID')
   aws lambda delete-event-source-mapping --uuid $uuid 2>/dev/null || true
   rm response.json 2>/dev/null || true
-  rm -f function.zip
+  rm -f function.zip || true
 }
-# trap cleanup EXIT
+trap cleanup EXIT
 
 # Helper functions
 print_test() {
@@ -73,7 +73,7 @@ result=$(aws lambda create-function \
   --zip-file fileb://function.zip \
   --environment Variables="{RESULT_QUEUE_URL=$result_queue_url,AWS_ENDPOINT_URL_SQS=http://api:4566}") || true
 log_success "Created Lambda function: esm-lambda-test"
-set -x
+
 # Ensure mapping exists
 log_info "Setting up Event Source Mapping from SQS to Lambda..."
 

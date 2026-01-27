@@ -3,7 +3,6 @@ services:
     build:
       context: ../src/dynamodb
       dockerfile: Dockerfile
-    image: custom-scylla-cdc:latest
     networks:
       - localcloud
     volumes:

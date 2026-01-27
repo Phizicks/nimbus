@@ -319,7 +319,7 @@ class SSMParameterStore:
                 # Return encrypted value as-is if decryption not requested
                 value = stored_value
 
-            arn = f"arn:aws:ssm:{self.region}:{self.account_id}:parameter{name}"
+            arn = f"arn:aws:ssm:{self.region}:{self.account_id}:parameter/{name.lstrip('/')}"
 
             return {
                 'Parameter': {
@@ -422,7 +422,7 @@ class SSMParameterStore:
                 if is_encrypted and with_decryption:
                     value = self._decrypt_value({'encrypted': True, 'value': value})
 
-                arn = f"arn:aws:ssm:{self.region}:{self.account_id}:parameter{name}"
+                arn = f"arn:aws:ssm:{self.region}:{self.account_id}:parameter/{name.lstrip('/')}"
 
                 parameters.append({
                     'Name': name,

@@ -3412,10 +3412,13 @@ def upload_s3_object(bucket_name):
         return jsonify({'__type': 'ServiceException', 'message': str(e)}), 500
 
 @app.route('/s3/buckets/<bucket_name>/objects/copy', methods=['POST'])
-def copy_s3_object():
+def copy_s3_object(bucket_name):
     """Copy/rename/move S3 object for web console"""
     try:
         data = request.get_json() or {}
+        logger.critical(f'REQUEST :: {data}')
+        logger.critical(f'REQUEST :: {request.view_args}')
+
         source_key = data.get('sourceKey')
         dest_bucket = data.get('destBucket')
         dest_key = data.get('destKey')

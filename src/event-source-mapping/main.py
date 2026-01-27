@@ -95,7 +95,7 @@ class EMSDatabase:
                 pass
 
             try:
-                cursor.execute("ALTER TABLE event_source_mappings ADD COLUMN source_type TEXT DEFAULT")
+                cursor.execute("ALTER TABLE event_source_mappings ADD COLUMN source_type TEXT")
             except:
                 pass
 
