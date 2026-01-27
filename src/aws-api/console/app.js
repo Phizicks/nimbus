@@ -1233,6 +1233,28 @@ async function viewQueueDetails(queueUrl, queueName) {
     }
 }
 
+function formatMessageBody(body) {
+    // If it's already an object (shouldn't happen but just in case)
+    if (typeof body === 'object') {
+        return JSON.stringify(body, null, 2);
+    }
+
+    // Try to parse as JSON
+    try {
+        const parsed = JSON.parse(body);
+        return JSON.stringify(parsed, null, 2);
+    } catch (e) {
+        // Not JSON, return as-is (plain text, XML, etc.)
+        return body;
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 async function peekMessage(queueUrl, queueName) {
     try {
         const response = await fetch(API_BASE, {
@@ -1268,12 +1290,12 @@ async function peekMessage(queueUrl, queueName) {
                 </div>
                 <div class="detail-row">
                     <div class="detail-label">Body</div>
-                    <div class="detail-value"><pre class="code-block">${JSON.stringify(JSON.parse(msg.Body), null, 2)}</pre></div>
+                    <div class="detail-value"><pre class="code-block">${escapeHtml(formatMessageBody(msg.Body))}</pre></div>
                 </div>
                 ${msg.Attributes ? `
                 <div class="detail-row">
                     <div class="detail-label">Attributes</div>
-                    <div class="detail-value"><pre class="code-block">${JSON.stringify(msg.Attributes, null, 2)}</pre></div>
+                    <div class="detail-value"><pre class="code-block">${escapeHtml(formatMessageBody(msg.Attributes))}</pre></div>
                 </div>
                 ` : ''}
                 <p style="margin-top: 15px; color: #545B64; font-size: 14px;">
@@ -1336,7 +1358,7 @@ async function receiveMessage(queueUrl, queueName) {
                 </div>
                 <div class="detail-row">
                     <div class="detail-label">Body</div>
-                    <div class="detail-value"><pre class="code-block">${JSON.stringify(JSON.parse(msg.Body), null, 2)}</pre></div>
+                    <div class="detail-value"><pre class="code-block">${escapeHtml(formatMessageBody(msg.Body))}</pre></div>
                 </div>
                 <p style="margin-top: 15px; color: var(--success); font-size: 14px;">
                     <strong>✓ Message received and deleted from queue</strong>
@@ -2560,21 +2582,25 @@ async function viewLogEvents(logGroupName, logStreamName) {
         if (events.length === 0) {
             content.innerHTML = '<p>No log events found in this stream.</p>';
         } else {
-            let html = '';
-
+            // Reduce chance of code injection from logs.
             for (const event of events) {
                 const timestamp = new Date(event.timestamp).toLocaleString();
-                html += `
-                    <div style="border-bottom: 1px solid var(--border-color); padding: 3px 0; display: flex; align-items: flex-start;">
-                        <div style="font-size: 12px; color: var(--text-primary); margin-right: 10px; flex-shrink: 0; width: 140px;">
-                        ${timestamp}
-                        </div>
-                        <div class="code-block" style="margin: 0;">${event.message}</div>
-                    </div>
-                `;
-            }
+                const eventDiv = document.createElement('div');
+                eventDiv.style.cssText = 'border-bottom: 1px solid var(--border-color); padding: 3px 0; display: flex; align-items: flex-start;';
 
-            content.innerHTML = html;
+                const timeDiv = document.createElement('div');
+                timeDiv.style.minWidth = '170px';
+                timeDiv.textContent = timestamp;
+
+                const msgDiv = document.createElement('div');
+                msgDiv.className = 'code-block';
+                msgDiv.style.margin = '0';
+                msgDiv.textContent = event.message; // Hopefully this is safer than the original code.
+
+                eventDiv.appendChild(timeDiv);
+                eventDiv.appendChild(msgDiv);
+                content.appendChild(eventDiv);
+            }
         }
 
         showModal('log-events-modal');

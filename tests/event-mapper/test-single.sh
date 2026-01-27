@@ -1,7 +1,7 @@
 #!/bin/bash
 
-QUEUE_URL_SEND="http://localhost:9324/000000000000/ems-basic-queue"
-QUEUE_URL_RESULT="http://localhost:9324/000000000000/ems-result-queue"
+QUEUE_URL_SEND="http://localhost:9324/456645664566/esm-basic-queue"
+QUEUE_URL_RESULT="http://localhost:9324/456645664566/esm-result-queue"
 
 # Send a test message
 aws sqs send-message \
@@ -19,7 +19,7 @@ for i in {1..10}; do
 
     count=$(echo "$msgs" | jq -r '.Messages | length // 0')
 
-    if [ "$count" -gt 0 ]; then
+    if [ $count -gt 0 ]; then
         echo "Received $count messages:"
         echo "$msgs" | jq -r '.Messages[].Body'
 

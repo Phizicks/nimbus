@@ -5,7 +5,7 @@ exports.handler = async (event) => {
   console.log("Environment Variables:");
   console.log("  AWS_REGION:", process.env.AWS_REGION);
   console.log("  AWS_ENDPOINT_URL:", process.env.AWS_ENDPOINT_URL);
-  console.log("  AWS_ENDPOINT_URL_SQS:", process.env.AWS_ENDPOINT_URL_SQS);
+  // console.log("  AWS_ENDPOINT_URL_SQS:", process.env.AWS_ENDPOINT_URL_SQS);
   console.log("  RESULT_QUEUE_URL:", process.env.RESULT_QUEUE_URL);
 
   console.log("\nReceived Event:");
@@ -22,7 +22,6 @@ exports.handler = async (event) => {
   }
 
   const endpoint = process.env.AWS_ENDPOINT_URL;
-  console.log("\nSQS Client Configuration:");
   console.log("  Using endpoint URL:", endpoint);
 
   const sqs = new SQSClient({
@@ -45,12 +44,14 @@ exports.handler = async (event) => {
       if (source === "aws:sqs") {
         messageBody = record.body;
         messageId = record.messageId;
+        console.log(`Event Type: SQS , Message-Id: ${messageId} , MessageBody: ${messageBody}`);
       } else if (source === "aws:dynamodb") {
         // Serialize DDB record safely, converting datetimes
         messageBody = JSON.stringify(record.dynamodb, (_, v) =>
           v instanceof Date ? v.toISOString() : v
         );
         messageId = record.eventID;
+        console.log(`Event Type: DDB , Message-Id: ${messageId} , MessageBody: ${messageBody}`);
       } else {
         console.warn(`Unknown event source: ${source}`);
         continue;
@@ -58,6 +59,7 @@ exports.handler = async (event) => {
 
       console.log(`\nProcessing record ${messageId} from ${source}`);
       console.log(`  Sending to queue: ${resultQueueUrl}`);
+      console.log(`  Sending payload: ${messageBody}`)
 
       const command = new SendMessageCommand({
         QueueUrl: resultQueueUrl,

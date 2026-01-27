@@ -6,6 +6,7 @@ import threading
 from collections import defaultdict
 from typing import Dict, Optional
 from pathlib import Path
+from hashlib import sha256
 import copy
 import logging
 import time
@@ -49,7 +50,7 @@ LOCALCLOUD_NETWORK_NAME = os.getenv("LOCALCLOUD_NETWORK_NAME", 'localcloud')
 STORAGE_PATH = os.getenv("STORAGE_PATH", './data')
 DB_PATH = os.getenv('STORAGE_PATH', '/data') + '/lambda_metadata.db'
 
-# Storage for function codeSTORAGE_PATH
+# Storage for function code
 FUNCTIONS_DIR = Path(f'{STORAGE_PATH}/lambda-functions')
 FUNCTIONS_DIR.mkdir(exist_ok=True)
 
@@ -1424,11 +1425,17 @@ class ContainerLifecycleManager:
             # Build image if code path provided
             if function_path:
                 dockerfile = function_path / 'Dockerfile'
+
+                filename_hash = sha256(zip_file.encode('utf-8')).hexdigest()
+                function_dir = FUNCTIONS_DIR / filename_hash
+                function_dir.mkdir(exist_ok=True)
+
+
                 dockerfile.write_text(self.create_dockerfile_for_runtime(runtime, handler))
                 image_tag = f"lambda-{function_name}:latest"
                 try:
                     logger.info(f"Building image from {function_path}")
-                    _, logs = self.docker_client.images.build(path=str(function_path), tag=image_tag, rm=True)
+                    _, logs = self.docker_client.images.build(path=str(function_path), nocache=True, tag=image_tag, rm=True)
                     for log in logs:
                         if 'stream' in log:
                             logger.info(log['stream'].strip())
@@ -2254,7 +2261,9 @@ def update_function_code(function_name):
 
         elif zip_file:
             zip_data = base64.b64decode(zip_file)
-            function_dir = FUNCTIONS_DIR / function_name
+
+            filename_hash = sha256(zip_file.encode('utf-8')).hexdigest()
+            function_dir = FUNCTIONS_DIR / filename_hash
             function_dir.mkdir(exist_ok=True)
 
             zip_path = function_dir / 'function.zip'
@@ -2423,6 +2432,9 @@ def put_function_concurrency(function_name):
         }), 500
 
 
+# TODO provisioned concurrency - check 2019-09-30 api interface is the same
+# @app.route('/2019-09-30/functions/<function_name>/concurrency', methods=['PUT'])
+# @app.route('/2019-09-30/functions/<function_name>/provisioned-concurrency', methods=['PUT']) # put-provisioned-concurrency-config
 @app.route('/2015-03-31/functions/<function_name>/provisioned-concurrency-configs', methods=['PUT'])
 def put_provisioned_concurrency(function_name):
     """Set provisioned concurrent executions"""
@@ -2675,7 +2687,7 @@ def create_function():
 
         logger.debug(f"Params: {data}")
         logger.debug(f"Environment variables: {list(environment.keys())}")
-        logger.info(f"Creating function [{function_name}] with runtime: {runtime}")
+        logger.info(f"Creating Function: {function_name} with Runtime: {runtime}")
 
         if image_uri:
             # Verify/pull the image
@@ -2695,13 +2707,19 @@ def create_function():
 
             # Decode ZIP file
             zip_data = base64.b64decode(zip_file)
-            function_dir = FUNCTIONS_DIR / function_name
+            filename_hash = sha256(zip_file.encode('utf-8')).hexdigest()
+
+            function_dir = FUNCTIONS_DIR / filename_hash
             function_dir.mkdir(exist_ok=True)
 
             # Extract ZIP
             zip_path = function_dir / 'function.zip'
+            try:
+                os.remove(zip_path)
+            except:
+                pass
             zip_path.write_bytes(zip_data)
-
+            # TODO Feel like this should be a subdir of ./src, the image ends up with the zip, source and dockerfile otherwise.
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(function_dir)
 
@@ -3013,6 +3031,7 @@ def runtime_request_error(request_id):
     except Exception as e:
         logger.error(f"Error processing runtime error: {e}")
         return jsonify({'message': str(e)}), 500
+
 
 @app.route('/health', methods=['GET'])
 def healthcheck():

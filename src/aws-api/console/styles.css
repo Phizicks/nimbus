@@ -428,7 +428,7 @@ tr:hover {
 }
 
 .code-block {
-    background: var(--code-bg);
+    /* background: var(--code-bg); */
     border-radius: 4px;
     font-family: monospace;
     font-size: 13px;

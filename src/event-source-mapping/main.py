@@ -11,6 +11,7 @@ import uuid
 import requests
 from urllib3.util import retry
 import boto3
+import botocore
 import datetime
 from typing import Dict, List, Optional, Set
 from contextlib import contextmanager
@@ -1091,7 +1092,7 @@ class EventSourceMapping:
         """Background worker to load and start existing mappings"""
         try:
             time.sleep(0.5)  # Let other services initialize
-            logger.error(f"StartupWorker has been started")
+            logger.info(f"StartupWorker has been started")
 
             enabled_mappings = self.db.get_enabled_mappings()
             if not enabled_mappings:
@@ -1301,15 +1302,24 @@ class DynamoDBStreamsPoller:
 
         # Initialize boto3 DynamoDB Streams client
         self.dynamodb_endpoint = os.getenv('DYNAMODB_ENDPOINT_URL', 'http://ddb:8000')
-
+        client_config = botocore.config.Config(
+            max_pool_connections=50
+        )
         self.streams_client = boto3.client(
             'dynamodbstreams',
             region_name=region,
             endpoint_url=self.dynamodb_endpoint,
             aws_access_key_id='localcloud',
-            aws_secret_access_key='localcloud'
+            aws_secret_access_key='localcloud',
+            config=client_config,
         )
-
+        self.lambda_client = boto3.client("lambda",
+            region_name=self.region,
+            endpoint_url='http://api:4566',
+            aws_access_key_id='localcloud',
+            aws_secret_access_key='localcloud',
+            config=client_config,
+        )
         # Track active shard pollers per mapping
         self.active_shards: Dict[str, Set[str]] = defaultdict(set)
         self.shard_locks: Dict[str, threading.Lock] = defaultdict(threading.Lock)
@@ -1524,17 +1534,12 @@ class DynamoDBStreamsPoller:
     def _invoke_lambda(self, function_name: str, event: Dict) -> bool:
         """Invoke Lambda function with event via boto3"""
         try:
-            lambda_client = boto3.client("lambda",
-                region_name=self.region,
-                endpoint_url='http://api:4566',
-                aws_access_key_id='localcloud',
-                aws_secret_access_key='localcloud')
             logger.debug(f'Event Type: {type(event)}, Event Data: {event}')
 
             # Bit of a hack, I'm not proud: Convert datetime object values to a string before invoking lambda function
             payload = json.dumps(event, default=lambda o: o.isoformat() if isinstance(o, datetime.datetime) else str(o))
 
-            resp = lambda_client.invoke(
+            resp = self.lambda_client.invoke(
                 FunctionName=function_name,
                 InvocationType='RequestResponse',
                 Payload=payload
@@ -1589,7 +1594,7 @@ class DynamoDBStreamsPoller:
             logger.error(f"[{mapping_uuid}] Could not determine stream ID")
             return
 
-        logger.info(f"[{mapping_uuid}] Polling stream {stream_id} for table {table_name}")
+        logger.debug(f"[{mapping_uuid}] Polling stream {stream_id} for table {table_name}")
 
         while not stop_event.is_set():
             try:
@@ -1761,7 +1766,6 @@ def list_mappings_api():
     function_name = request.args.get('FunctionName', default='', type=str)
     if not esm:
         return jsonify({'message': 'EMS service not available'}), 500
-    logger.critical(f'Function: {function_name}')
     return jsonify(esm.list_event_source_mappings(function_name))
 
 

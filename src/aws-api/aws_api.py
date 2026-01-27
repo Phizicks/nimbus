@@ -2075,7 +2075,8 @@ def put_provisioned_concurrency(function_name):
             '__type': 'ServiceException'
         }), 500
 
-@app.route('/2015-03-31/functions/<function_name>/concurrency', methods=['PUT'])
+@app.route('/2019-09-30/functions/<function_name>/provisioned-concurrency', methods=['PUT'])
+@app.route('/2019-09-30/functions/<function_name>/concurrency', methods=['PUT'])
 def put_function_concurrency(function_name):
     """Set reserved concurrent executions for a function - proxy to lambda endpoint"""
     try:
@@ -2084,7 +2085,7 @@ def put_function_concurrency(function_name):
         data = request.get_json() or {}
 
         # Proxy to lambda service endpoint
-        status, resp, raw = lambda_request('PUT', f'/2015-03-31/functions/{function_name}/concurrency', json=data)
+        status, resp, raw = lambda_request('PUT', f'/2019-09-30/functions/{function_name}/concurrency', json=data)
 
         if status >= 400:
             logger.warning(f"Lambda service returned error: {status} - {resp}")
