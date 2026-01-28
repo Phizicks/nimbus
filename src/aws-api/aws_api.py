@@ -2058,10 +2058,7 @@ def put_provisioned_concurrency(function_name):
         logger.info(f"Setting provisioned concurrency for: {function_name}")
 
         data = request.get_json() or {}
-
-        # Proxy to lambda service endpoint
-        status, resp, raw = lambda_request('PUT', f'/2015-03-31/functions/{function_name}/provisioned-concurrency-configs', json=data)
-
+        status, resp, raw = lambda_request('PUT', request.path, json=data)
         if status >= 400:
             logger.warning(f"Lambda service returned error: {status} - {resp}")
             return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
@@ -2075,18 +2072,38 @@ def put_provisioned_concurrency(function_name):
             '__type': 'ServiceException'
         }), 500
 
-@app.route('/2019-09-30/functions/<function_name>/provisioned-concurrency', methods=['PUT'])
-@app.route('/2019-09-30/functions/<function_name>/concurrency', methods=['PUT'])
-def put_function_concurrency(function_name):
-    """Set reserved concurrent executions for a function - proxy to lambda endpoint"""
+
+@app.route('/2019-09-30/functions/<function_name>/concurrency', methods=['GET']) # aws lambda get-function-concurrency
+@app.route('/2019-09-30/functions/<function_name>/provisioned-concurrency', methods=['GET']) # aws lambda get-provisioned-concurrency-config
+def get_function_concurrency(function_name):
+    """Get reserved concurrent executions for a function - proxy to lambda endpoint"""
     try:
-        logger.info(f"Setting reserved concurrency for: {function_name}")
+        logger.info(f"Getting reserved concurrency for: {function_name}")
+
+        status, resp, raw = lambda_request('GET', request.path)
+        if status >= 400:
+            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
+
+        return jsonify(resp), status
+
+    except Exception as e:
+        logger.error(f"Error setting concurrency for {function_name}: {e}", exc_info=True)
+        error_response = {
+            "__type": "ServiceException:",
+            "message": str(e)
+        }
+        return jsonify(error_response), 500
+
+
+@app.route('/2019-09-30/functions/<function_name>/provisioned-concurrency', methods=['PUT']) # aws lambda put-provisioned-concurrency-config
+def put_provisioned__concurrency(function_name):
+    """Set provisioned concurrent executions for a function"""
+    try:
+        logger.info(f"Setting provisioned concurrency for: {function_name}")
 
         data = request.get_json() or {}
-
-        # Proxy to lambda service endpoint
-        status, resp, raw = lambda_request('PUT', f'/2019-09-30/functions/{function_name}/concurrency', json=data)
-
+        status, resp, raw = lambda_request('PUT', request.path, json=data)
         if status >= 400:
             logger.warning(f"Lambda service returned error: {status} - {resp}")
             return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
@@ -2101,23 +2118,57 @@ def put_function_concurrency(function_name):
         }
         return error_response, 500
 
-# Test endpoint to verify routing
-@app.route('/test/invoke/<function_name>', methods=['POST', 'GET'])
-def test_invoke(function_name):
-    """Test endpoint to verify routing works"""
-    return jsonify({
-        'message': f'Test route working for function: {function_name}',
-        'method': request.method,
-        'path': request.path
-    })
+
+@app.route('/2019-09-30/functions/<function_name>/provisioned-concurrency', methods=['DELETE']) # aws lambda delete-provisioned-concurrency-config
+def delete_provisioned__concurrency(function_name):
+    """Set provisioned concurrent executions for a function"""
+    try:
+        logger.info(f"Deleting provisioned concurrency for: {function_name}")
+
+        status, resp, raw = lambda_request('DELETE', request.path)
+        if status >= 400:
+            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
+
+        return jsonify(resp), status
+
+    except Exception as e:
+        logger.error(f"Error deleting concurrency for {function_name}: {e}", exc_info=True)
+        error_response = {
+            "__type": "ServiceException:",
+            "message": str(e)
+        }
+        return error_response, 500
+
+
+@app.route('/2017-10-31/functions/<function_name>/concurrency', methods=['PUT']) # aws lambda put-function-concurrency
+def put_function_concurrency(function_name):
+    """Set reserved concurrent executions for a function - proxy to lambda endpoint"""
+    try:
+        logger.info(f"Setting reserved concurrency for: {function_name}")
+
+        data = request.get_json() or {}
+        status, resp, raw = lambda_request('PUT', request.path, json=data)
+        if status >= 400:
+            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
+
+        return jsonify(resp), status
+
+    except Exception as e:
+        logger.error(f"Error setting concurrency for {function_name}: {e}", exc_info=True)
+        error_response = {
+            "__type": "ServiceException:",
+            "message": str(e)
+        }
+        return error_response, 500
+
 
 @app.route('/2015-03-31/functions/<function_name>', methods=['GET'], strict_slashes=False)
 def get_function(function_name):
     """Get function configuration - proxy to lambda endpoint"""
     try:
-        # Proxy to lambda service endpoint
-        status, resp, raw = lambda_request('GET', f'/2015-03-31/functions/{function_name}')
-
+        status, resp, raw = lambda_request('GET', request.path)
         if status >= 400:
             logger.warning(f"Lambda service returned error: {status} - {resp}")
             return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
