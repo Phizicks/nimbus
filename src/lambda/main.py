@@ -1408,12 +1408,6 @@ class ContainerLifecycleManager:
             # Build image if code path provided
             if function_path:
                 dockerfile = function_path / 'Dockerfile'
-
-                filename_hash = sha256(zip_file.encode('utf-8')).hexdigest()
-                function_dir = FUNCTIONS_DIR / filename_hash
-                function_dir.mkdir(exist_ok=True)
-
-
                 dockerfile.write_text(self.create_dockerfile_for_runtime(runtime, handler))
                 image_tag = f"lambda-{function_name}:latest"
                 try:
