@@ -369,7 +369,7 @@ class CloudWatchLogsDatabase:
     def put_log_events(self, log_group_name, log_stream_name, events):
         """Put log events to a stream"""
         if not self.log_stream_exists(log_group_name, log_stream_name):
-            raise ValueError(f"Log stream does not exist: {log_group_name}/{log_stream_name}")
+            self.create_log_stream(log_group_name=log_group_name, log_stream_name=log_stream_name)
 
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()

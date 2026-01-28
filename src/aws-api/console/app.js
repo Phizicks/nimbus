@@ -2579,7 +2579,7 @@ async function viewLogEvents(logGroupName, logStreamName) {
 
         document.getElementById('log-stream-name').textContent = logStreamName;
         const content = document.getElementById('log-events-content');
-
+        content.innerHTML = '';
         if (events.length === 0) {
             content.innerHTML = '<p>No log events found in this stream.</p>';
         } else {
@@ -2590,7 +2590,7 @@ async function viewLogEvents(logGroupName, logStreamName) {
                 eventDiv.style.cssText = 'border-bottom: 1px solid var(--border-color); padding: 3px 0; display: flex; align-items: flex-start;';
 
                 const timeDiv = document.createElement('div');
-                timeDiv.style.minWidth = '170px';
+                timeDiv.style.minWidth = '190px';
                 timeDiv.textContent = timestamp;
 
                 const msgDiv = document.createElement('div');
