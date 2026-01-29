@@ -1432,7 +1432,7 @@ class DynamoDBStreamsPoller:
             return response
 
         except Exception as e:
-            logger.error(f"GetRecords failed: {e}", exc_info=True)
+            logger.error(f"GetRecords failed: {e}")
             return None
 
     def poll_shard(self, mapping_uuid: str, mapping: Dict, shard_id: str,

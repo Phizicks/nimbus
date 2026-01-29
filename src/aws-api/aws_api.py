@@ -117,7 +117,7 @@ def get_request_server_address():
 def esm_request(method: str, path: str, **kwargs):
     url = ESM_ENDPOINT.rstrip('/') + path
     try:
-        resp = requests.request(method, url, timeout=5, **kwargs)
+        resp = requests.request(method, url, timeout=30, **kwargs)
         # Try to return JSON when possible, else text
         try:
             return resp.status_code, resp.json()
@@ -2470,7 +2470,7 @@ def handle_request():
         'TagResource', 'UntagResource', 'ListTagsOfResource',
         'CreateBackup', 'DescribeBackup', 'ListBackups', 'DeleteBackup',
         'DescribeContinuousBackups', 'UpdateContinuousBackups',
-        'DescribeStream', 'GetShardIterator', 'GetRecords',
+        'ListStreams', 'DescribeStream', 'GetShardIterator', 'GetRecords',
         'TransactWriteItems', 'TransactGetItems'
     }
 
