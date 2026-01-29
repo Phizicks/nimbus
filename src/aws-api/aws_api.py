@@ -140,50 +140,50 @@ def esm_request(method: str, path: str, **kwargs):
 #     return None
 
 
-def proxy_to_sqs(operation, records):
-    """Proxy S3 event records to SQS using boto3 in LocalStack"""
-    # SQS endpoint for LocalStack
-    SQS_ENDPOINT = os.getenv('SQS_ENDPOINT', 'http://sqs:4566')
-    QUEUE_URL = os.getenv('SQS_QUEUE_URL', 'http://sqs:4566/000000000000/my-queue')  # Adjust account & queue
+# def proxy_to_sqs(operation, records):
+#     """Proxy S3 event records to SQS using boto3 in LocalStack"""
+#     # SQS endpoint for LocalStack
+#     SQS_ENDPOINT = os.getenv('SQS_ENDPOINT', 'http://sqs:4566')
+#     QUEUE_URL = os.getenv('SQS_QUEUE_URL', 'http://sqs:4566/000000000000/my-queue')  # Adjust account & queue
 
-    # Create boto3 SQS client pointing to LocalStack
-    sqs_client = boto3.client(
-        'sqs',
-        endpoint_url=SQS_ENDPOINT,
-        region_name='us-east-1',
-        aws_access_key_id='test',      # Required even in LocalStack
-        aws_secret_access_key='test'
-    )
+#     # Create boto3 SQS client pointing to LocalStack
+#     sqs_client = boto3.client(
+#         'sqs',
+#         endpoint_url=SQS_ENDPOINT,
+#         region_name='us-east-1',
+#         aws_access_key_id='test',      # Required even in LocalStack
+#         aws_secret_access_key='test'
+#     )
 
-    try:
-        # Send each record as a message (or send all together)
-        # Option: send batch if multiple records
-        entries = []
-        for i, record in enumerate(records):
-            entries.append({
-                'Id': str(i),
-                'MessageBody': json.dumps(record)
-            })
+#     try:
+#         # Send each record as a message (or send all together)
+#         # Option: send batch if multiple records
+#         entries = []
+#         for i, record in enumerate(records):
+#             entries.append({
+#                 'Id': str(i),
+#                 'MessageBody': json.dumps(record)
+#             })
 
-        if len(entries) == 1:
-            # Single message
-            response = sqs_client.send_message(
-                QueueUrl=QUEUE_URL,
-                MessageBody=json.dumps(records[0])
-            )
-        else:
-            # Batch (up to 10)
-            response = sqs_client.send_message_batch(
-                QueueUrl=QUEUE_URL,
-                Entries=entries
-            )
+#         if len(entries) == 1:
+#             # Single message
+#             response = sqs_client.send_message(
+#                 QueueUrl=QUEUE_URL,
+#                 MessageBody=json.dumps(records[0])
+#             )
+#         else:
+#             # Batch (up to 10)
+#             response = sqs_client.send_message_batch(
+#                 QueueUrl=QUEUE_URL,
+#                 Entries=entries
+#             )
 
-        logger.debug(f"Sent to SQS: {response}")
-        return {'status': 'success', 'response': response}
+#         logger.debug(f"Sent to SQS: {response}")
+#         return {'status': 'success', 'response': response}
 
-    except Exception as e:
-        logger.error(f"Failed to send to SQS: {e}")
-        return {'status': 'error', 'error': str(e)}
+#     except Exception as e:
+#         logger.error(f"Failed to send to SQS: {e}")
+#         return {'status': 'error', 'error': str(e)}
 
 
 def dynamodb_request(method: str, path: str, **kwargs):
@@ -2386,10 +2386,10 @@ def console_js():
         html_content = f.read()
     return html_content, 200, {'Content-Type': 'application/javascript'}
 
-@app.route('/', methods=['POST', 'GET', 'PUT', 'DELETE', 'PATCH'], strict_slashes=False)
+@app.route('/', methods=['POST', 'GET', 'PUT', 'DELETE', 'PATCH', 'HEAD'], strict_slashes=False)
 def handle_request():
     """Main handler for all API requests - routes to appropriate service"""
-
+    logger.debug(f'root path handler')
     # Get the action/operation from the request
     action = get_action_from_request()
     operation = get_aws_operation()
@@ -2594,6 +2594,7 @@ def handle_request():
     s3_handlers = {
         'Ls': proxy_to_s3,
         'Cp': proxy_to_s3,
+        'Mv': proxy_to_s3,
         'ListBuckets': proxy_to_s3,
         # 'CreateBucket': create_bucket,
         # 'DeleteBucket': delete_bucket,
@@ -2667,52 +2668,6 @@ def handle_request():
     with open('console/index.html', 'r') as f:
         html_content = f.read()
     return html_content, 200, {'Content-Type': 'text/html'}
-
-# SQS handler
-@app.route('/<account_id>/<queue_name>', methods=['POST', 'GET', 'DELETE'])
-def sqs_queue_operations(account_id, queue_name):
-    """Proxy SQS HTTP API to the Lambda container service at LAMBDA_CONTAINER_ENDPOINT.
-    Forward the incoming request (path, query string, headers, body) to the Lambda container
-    and return its response to the client. This keeps behavior consistent with runtime_next_invocation().
-    """
-    AWS_ENDPOINT_URL_SQS = os.getenv('AWS_ENDPOINT_URL_SQS', 'http://sqs:4566')
-
-    # Build proxied URL including query string
-    path = request.path
-    qs = request.query_string.decode() if request.query_string else ''
-    url = f"{AWS_ENDPOINT_URL_SQS}{path}"
-    if qs:
-        url = f"{url}?{qs}"
-
-    # Prepare headers to forward (exclude hop-by-hop headers)
-    skip = {"host", "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers", "transfer-encoding", "upgrade"}
-    forward_headers = {k: v for k, v in request.headers.items() if k.lower() not in skip}
-    forward_headers['X-Forwarded-For'] = request.remote_addr
-
-    # Prepare body if present
-    body = None
-    if request.method in ('POST', 'PUT', 'PATCH'):
-        body = request.get_data()
-
-    try:
-        resp = requests.request(request.method, url, headers=forward_headers, data=body, timeout=300)
-    except requests.exceptions.ConnectionError as e:
-        logger.error(f"Failed to connect to Lambda container at {AWS_ENDPOINT_URL_SQS}: {e}")
-        return jsonify({'__type': 'ServiceException', 'message': 'Lambda container unavailable'}), 503
-    except Exception as e:
-        logger.error(f"Error proxying SQS request to Lambda container: {e}", exc_info=True)
-        return jsonify({'__type': 'ServiceException', 'message': str(e)}), 500
-
-    # Build Flask response from proxied response
-    response_headers = {}
-    excluded = {'content-encoding', 'content-length', 'transfer-encoding', 'connection'}
-    for k, v in resp.headers.items():
-        if k.lower() in excluded:
-            continue
-        response_headers[k] = v
-
-    return Response(resp.content, status=resp.status_code, headers=response_headers)
-
 
 def to_camel_case(s):
     # Convert "list-buckets" -> "ListBuckets"
@@ -2995,36 +2950,6 @@ def handle_bucket_get_operations(bucket_name):
 
     # Otherwise, proxy to S3 normally
     return proxy_to_s3()
-
-# TODO
-# def handle_get_bucket_notification(bucket_name):
-#     """Intercept and transform GET notification configuration responses"""
-#     try:
-#         # Use boto3 to get from MinIO (clean!)
-#         s3_client = get_s3_client()
-#         response = s3_client.get_bucket_notification_configuration(Bucket=bucket_name)
-
-#         # Transform MinIO webhook ARNs back to user queue ARNs
-#         if 'QueueConfigurations' in response:
-#             for config in response['QueueConfigurations']:
-#                 minio_arn = config.get('QueueArn')
-#                 notification_id = config.get('Id')
-
-#                 # Actually, not sure we need this at all now
-#                 # if minio_arn and minio_arn.startswith('arn:minio:'):
-#                     # Look up the original user queue ARN
-#                     # mapping = db.get_s3_notification_mapping(bucket_name, minio_arn)
-#                     # if mapping and mapping['notification_id'] == notification_id:
-#                     #     config['QueueArn'] = mapping['user_queue_arn']
-#                     #     logger.info(f"Restored ARN: {minio_arn} -> {mapping['user_queue_arn']}")
-
-
-#     except Exception as e:
-#         logger.error(f"Error getting notification configuration: {e}", exc_info=True)
-
-#         # Return empty configuration XML (valid response when no notifications configured)
-#         empty_config = '<?xml version="1.0" encoding="UTF-8"?>\n<NotificationConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"/>'
-#         return Response(empty_config, status=200, mimetype='application/xml')
 
 @app.route('/s3/buckets/<bucket_name>/notification', methods=['GET'])
 def get_bucket_notifications(bucket_name):
@@ -3504,11 +3429,6 @@ def catch_all(path):
     # Then in handle_request():
     service, operation = get_service_from_user_agent()
     if service and service.lower() in ('s3', 's3api'):
-        # if operation == 'PutBucketNotificationConfiguration':
-        #     return handle_put_bucket_notification(path)
-        # elif operation == 'GetBucketNotificationConfiguration':
-        #     return handle_get_bucket_notification(path)
-
         logger.info(f"Routing to S3: service={service}, operation={operation}")
         return proxy_to_s3()
 
@@ -3527,81 +3447,6 @@ def catch_all(path):
         'errorType': 'RouteNotFoundException',
         'availableRoutes': [str(rule) for rule in app.url_map.iter_rules()]
     }), 404
-
-def get_function_by_container_ip(container_ip):
-    """Look up function name by container IP address"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-
-    cursor.execute('''
-        SELECT function_name FROM container_mappings
-        WHERE container_ip = ?
-    ''', (container_ip,))
-
-    row = cursor.fetchone()
-    conn.close()
-
-    if row:
-        logger.info(f"Found function {row[0]} for IP {container_ip}")
-        return row[0]
-
-    logger.warning(f"No function found for IP {container_ip}")
-    return None
-
-def get_function_by_container_id(container_id):
-    """Look up function name by container ID"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-
-    cursor.execute('''
-        SELECT function_name FROM container_mappings
-        WHERE container_id = ?
-    ''', (container_id,))
-
-    row = cursor.fetchone()
-    conn.close()
-
-    return row[0] if row else None
-
-def delete_container_mapping(function_name):
-    """Delete container mapping for a function"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-
-    cursor.execute('DELETE FROM container_mappings WHERE function_name = ?',
-                   (function_name,))
-
-    conn.commit()
-    conn.close()
-    logger.info(f"Deleted container mapping for {function_name}")
-
-def list_container_mappings():
-    """List all container mappings"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-
-    cursor.execute('SELECT * FROM container_mappings')
-    rows = cursor.fetchall()
-    conn.close()
-
-    mappings = []
-    for row in rows:
-        mappings.append({
-            'function_name': row[0],
-            'container_id': row[1],
-            'container_ip': row[2],
-            'created_at': row[3]
-        })
-
-    return mappings
-
-def get_container_for_function(function_name):
-    """Get the Docker container for a function"""
-    try:
-        container_name = f"localcloud-{function_name}"
-        return docker_client.containers.get(container_name)
-    except docker.errors.NotFound:
-        return None
 
 # ESM
 # ============================================================================
