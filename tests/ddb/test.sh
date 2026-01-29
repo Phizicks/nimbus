@@ -23,39 +23,30 @@ NC='\033[0m' # No Color
 TESTS_RUN=0
 TESTS_PASSED=0
 TESTS_FAILED=0
-CURRENT_TEST_FAILED=false  # Track if current test has failed
+CURRENT_TEST_NAME=""
+CURRENT_TEST_HAS_CHECKS=false
 
 cleanup() {
     local exit_code=$?
 
-    # Complete the final test if any tests were run
-    if [ ${TESTS_RUN} -gt 0 ]; then
-        if [ "${CURRENT_TEST_FAILED}" = false ]; then
-            TESTS_PASSED=$((TESTS_PASSED + 1))
-        else
-            TESTS_FAILED=$((TESTS_FAILED + 1))
-        fi
-    fi
-
     echo ""
-    log_info "Cleaning up... (exit code: $exit_code)"
+    log_info "Cleaning up... [ECODE: $exit_code]"
 
     # Clean up test resources
-    uuid=$(aws lambda list-event-source-mappings --function-name $LAMBDA_NAME | \
-        jq -r ".EventSourceMappings[].UUID")
-    [ "$uuid" ] && aws lambda delete-event-source-mapping --uuid $uuid || true
+    uuid=$(aws lambda list-event-source-mappings --function-name $LAMBDA_NAME 2>/dev/null | \
+        jq -r ".EventSourceMappings[].UUID" 2>/dev/null)
+    [ "$uuid" ] && aws lambda delete-event-source-mapping --uuid $uuid 2>/dev/null || true
 
     aws dynamodb delete-table --table-name "${TABLE_NAME}" 2>/dev/null || true
     aws dynamodb delete-table --table-name "${TABLE_NAME}-copy" 2>/dev/null || true
 
-    aws sqs delete-queue --queue-url $QUEUE_URL  2>/dev/null || true
+    aws sqs delete-queue --queue-url $QUEUE_URL 2>/dev/null || true
 
     aws lambda delete-function --function-name $LAMBDA_NAME 2>/dev/null || true
 
     rm -f response.json item.json 2>/dev/null || true
 }
-# trap cleanup EXIT
-
+trap cleanup EXIT
 
 # Function to print colored messages
 log_info() {
@@ -70,38 +61,57 @@ log_warn() {
     echo -e "${YELLOW}[WARN]${NC} $1"
 }
 
-log_test() {
-    # Complete previous test if any
-    if [ ${TESTS_RUN} -gt 0 ]; then
-        if [ "${CURRENT_TEST_FAILED}" = false ]; then
-            TESTS_PASSED=$((TESTS_PASSED + 1))
-        else
-            TESTS_FAILED=$((TESTS_FAILED + 1))
-        fi
-    fi
-
+# Start a new test
+start_test() {
     echo -e "${BLUE}[TEST]${NC} $1"
+    CURRENT_TEST_NAME="$1"
+    CURRENT_TEST_HAS_CHECKS=false
     TESTS_RUN=$((TESTS_RUN + 1))
-    CURRENT_TEST_FAILED=false
 }
 
-# Changed to just log success/failure without incrementing counters
+# Mark current test as passed
+pass_test() {
+    if [ -z "$CURRENT_TEST_NAME" ]; then
+        log_warn "pass_test called without active test"
+        return
+    fi
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    CURRENT_TEST_NAME=""
+    CURRENT_TEST_HAS_CHECKS=false
+}
+
+# Mark current test as failed
+fail_test() {
+    if [ -z "$CURRENT_TEST_NAME" ]; then
+        log_warn "fail_test called without active test"
+        return
+    fi
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    CURRENT_TEST_NAME=""
+    CURRENT_TEST_HAS_CHECKS=false
+}
+
+# Check command success and track for test
 check_success() {
     local description="$1"
+    CURRENT_TEST_HAS_CHECKS=true
+
     if [ $? -eq 0 ]; then
         log_info "✓ ${description}"
         return 0
     else
         log_error "✗ ${description}"
-        CURRENT_TEST_FAILED=true
+        fail_test
         return 1
     fi
 }
 
+# Check if haystack contains needle
 check_contains() {
     local haystack="$1"
     local needle="$2"
     local description="$3"
+    CURRENT_TEST_HAS_CHECKS=true
 
     if echo "${haystack}" | grep -q "${needle}"; then
         log_info "✓ ${description}"
@@ -110,7 +120,26 @@ check_contains() {
         log_error "✗ ${description}"
         log_error "  Expected to find: ${needle}"
         log_error "  In: ${haystack}"
-        CURRENT_TEST_FAILED=true
+        fail_test
+        return 1
+    fi
+}
+
+# Check equality
+check_equals() {
+    local actual="$1"
+    local expected="$2"
+    local description="$3"
+    CURRENT_TEST_HAS_CHECKS=true
+
+    if [ "$actual" = "$expected" ]; then
+        log_info "✓ ${description}"
+        return 0
+    else
+        log_error "✗ ${description}"
+        log_error "  Expected: ${expected}"
+        log_error "  Got: ${actual}"
+        fail_test
         return 1
     fi
 }
@@ -125,16 +154,17 @@ echo "DynamoDB Unit Tests"
 echo "======================================"
 echo ""
 
-# Test 1: Health check
-log_test "Test 1: DynamoDB service health check"
+# Test: Health check
+start_test "Test 1: DynamoDB service health check"
 curl -s http://localhost:4566/debug/dynamodb-status > response.json
 check_success "DynamoDB service is healthy"
 cat response.json | jq '.'
+pass_test
 
 echo ""
 
-# Test 2: Create Table
-log_test "Test 2: Create DynamoDB table"
+# Test: Create Table
+start_test "Test 2: Create DynamoDB table"
 aws dynamodb create-table \
     --table-name "${TABLE_NAME}" \
     --attribute-definitions \
@@ -150,21 +180,23 @@ aws dynamodb create-table \
 check_success "Table created successfully"
 echo "Table details:"
 jq '.Table | {TableName, TableStatus, KeySchema, AttributeDefinitions}' < response.json
+pass_test
 
 echo ""
 
-# Test 3: List Tables
-log_test "Test 3: List DynamoDB tables"
+# Test: List Tables
+start_test "Test 3: List DynamoDB tables"
 aws dynamodb list-tables > response.json
 check_success "List tables succeeded"
 
 TABLE_LIST=$(jq -r '.TableNames[]' < response.json)
 check_contains "${TABLE_LIST}" "${TABLE_NAME}" "Created table appears in list"
+pass_test
 
 echo ""
 
-# Test 4: Describe Table
-log_test "Test 4: Describe DynamoDB table"
+# Test: Describe Table
+start_test "Test 4: Describe DynamoDB table"
 aws dynamodb describe-table \
     --table-name "${TABLE_NAME}" \
     > response.json
@@ -172,11 +204,12 @@ aws dynamodb describe-table \
 check_success "Describe table succeeded"
 echo "Table description:"
 jq '.Table | {TableName, TableStatus, ItemCount, TableSizeBytes}' < response.json
+pass_test
 
 echo ""
 
-# Test 5: Put Item
-log_test "Test 5: Put item into table"
+# Test: Put Item
+start_test "Test 5: Put item into table"
 aws dynamodb put-item \
     --table-name "${TABLE_NAME}" \
     --item '{
@@ -193,11 +226,12 @@ aws dynamodb put-item \
     > response.json 2>&1
 
 check_success "Put item succeeded"
+pass_test
 
 echo ""
 
-# Test 6: Get Item
-log_test "Test 6: Get item from table"
+# Test: Get Item
+start_test "Test 6: Get item from table"
 aws dynamodb get-item \
     --table-name "${TABLE_NAME}" \
     --key '{
@@ -213,11 +247,12 @@ check_contains "${ITEM_NAME}" "Test Item" "Item has correct data"
 
 echo "Retrieved item:"
 jq '.Item' < response.json
+pass_test
 
 echo ""
 
-# Test 7: Update Item
-log_test "Test 7: Update item"
+# Test: Update Item
+start_test "Test 7: Update item"
 aws dynamodb update-item \
     --table-name "${TABLE_NAME}" \
     --key '{
@@ -240,11 +275,12 @@ check_success "Update item succeeded"
 
 UPDATED_VALUE=$(jq -r '.Attributes.value.N' < response.json)
 check_contains "${UPDATED_VALUE}" "100" "Item was updated correctly"
+pass_test
 
 echo ""
 
-# Test 8: Batch Write Items
-log_test "Test 8: Batch write items"
+# Test: Batch Write Items
+start_test "Test 8: Batch write items"
 aws dynamodb batch-write-item \
     --request-items "{
         \"${TABLE_NAME}\": [
@@ -280,11 +316,12 @@ aws dynamodb batch-write-item \
     > response.json 2>&1
 
 check_success "Batch write succeeded"
+pass_test
 
 echo ""
 
-# Test 9: Batch Get Items
-log_test "Test 9: Batch get items"
+# Test: Batch Get Items
+start_test "Test 9: Batch get items"
 aws dynamodb batch-get-item \
     --request-items "{
         \"${TABLE_NAME}\": {
@@ -305,12 +342,13 @@ aws dynamodb batch-get-item \
 check_success "Batch get succeeded"
 
 ITEM_COUNT=$(jq ".Responses.\"${TABLE_NAME}\" | length" < response.json)
-check_contains "${ITEM_COUNT}" "2" "Retrieved correct number of items"
+check_equals "${ITEM_COUNT}" "2" "Retrieved correct number of items"
+pass_test
 
 echo ""
 
-# Test 10: Query
-log_test "Test 10: Query items"
+# Test: Query
+start_test "Test 10: Query items"
 aws dynamodb query \
     --table-name "${TABLE_NAME}" \
     --key-condition-expression "id = :id" \
@@ -323,11 +361,12 @@ check_success "Query succeeded"
 
 QUERY_COUNT=$(jq '.Count' < response.json)
 check_contains "${QUERY_COUNT}" "1" "Query returned expected items"
+pass_test
 
 echo ""
 
-# Test 11: Scan
-log_test "Test 11: Scan table"
+# Test: Scan
+start_test "Test 11: Scan table"
 aws dynamodb scan \
     --table-name "${TABLE_NAME}" \
     --filter-expression "begins_with(id, :prefix)" \
@@ -340,11 +379,12 @@ check_success "Scan succeeded"
 
 SCAN_COUNT=$(jq '.Count' < response.json)
 log_info "Scan found ${SCAN_COUNT} items with prefix 'batch'"
+pass_test
 
 echo ""
 
-# Test 12: Conditional Update (should succeed)
-log_test "Test 12: Conditional update (positive case)"
+# Test: Conditional Update (should succeed)
+start_test "Test 12: Conditional update (positive case)"
 aws dynamodb update-item \
     --table-name "${TABLE_NAME}" \
     --key '{
@@ -363,12 +403,13 @@ aws dynamodb update-item \
     > response.json 2>&1
 
 check_success "Conditional update succeeded"
+pass_test
 
 echo ""
 
-# Test 13: Conditional Update (should fail)
-log_test "Test 13: Conditional update (negative case - should fail)"
-aws dynamodb update-item \
+# Test: Conditional Update (should fail)
+start_test "Test 13: Conditional update (negative case - should fail)"
+if aws dynamodb update-item \
     --table-name "${TABLE_NAME}" \
     --key '{
         "id": {"S": "test-id-001"},
@@ -383,20 +424,18 @@ aws dynamodb update-item \
         ":newval": {"N": "300"},
         ":oldval": {"N": "999"}
     }' \
-    > response.json 2>&1 && exit_code=$? || exit_code=$?
-
-# For negative test, failure is success
-if [ $exit_code -ne 0 ]; then
-    log_info "✓ Conditional update correctly failed"
-else
+    > response.json 2>&1; then
     log_error "✗ Conditional update should have failed"
-    CURRENT_TEST_FAILED=true
+    fail_test
+else
+    log_info "✓ Conditional update correctly failed"
+    pass_test
 fi
 
 echo ""
 
-# Test 14: Delete Item
-log_test "Test 14: Delete item"
+# Test: Delete Item
+start_test "Test 14: Delete item"
 aws dynamodb delete-item \
     --table-name "${TABLE_NAME}" \
     --key '{
@@ -410,11 +449,12 @@ check_success "Delete item succeeded"
 
 DELETED_ITEM=$(jq -r '.Attributes.name.S' < response.json)
 check_contains "${DELETED_ITEM}" "Batch Item 3" "Correct item was deleted"
+pass_test
 
 echo ""
 
-# Test 15: Batch Delete Items
-log_test "Test 15: Batch delete items"
+# Test: Batch Delete Items
+start_test "Test 15: Batch delete items"
 aws dynamodb batch-write-item \
     --request-items "{
         \"${TABLE_NAME}\": [
@@ -439,11 +479,12 @@ aws dynamodb batch-write-item \
     > response.json 2>&1
 
 check_success "Batch delete succeeded"
+pass_test
 
 echo ""
 
-# Test 18: List Tags
-log_test "Test 16: List table tags"
+# Test: List Tags
+start_test "Test 16: List table tags"
 TABLE_ARN=$(aws dynamodb describe-table --table-name "${TABLE_NAME}" | jq -r '.Table.TableArn')
 aws dynamodb list-tags-of-resource \
     --resource-arn "${TABLE_ARN}" \
@@ -453,22 +494,24 @@ check_success "List tags succeeded"
 
 TAG_COUNT=$(jq '.Tags | length' < response.json)
 log_info "Found ${TAG_COUNT} tags on table"
+pass_test
 
 echo ""
 
-# Test 19: Update Table (add tags)
-log_test "Test 17: Tag resource"
+# Test: Update Table (add tags)
+start_test "Test 17: Tag resource"
 aws dynamodb tag-resource \
     --resource-arn "${TABLE_ARN}" \
     --tags Key=NewTag,Value=NewValue \
     > response.json 2>&1
 
 check_success "Tag resource succeeded"
+pass_test
 
 echo ""
 
-# Test 21: Delete Table
-log_test "Test 18: Delete DynamoDB table"
+# Test: Delete Table
+start_test "Test 18: Delete DynamoDB table"
 aws dynamodb delete-table \
     --table-name "${TABLE_NAME}" \
     > response.json
@@ -477,26 +520,28 @@ check_success "Delete table succeeded"
 
 echo "Deleted table:"
 jq '.TableDescription | {TableName, TableStatus}' < response.json
+pass_test
 
 echo ""
 
-# Test 22: Verify table deleted
-log_test "Test 19: Verify table is deleted"
+# Test: Verify table deleted
+start_test "Test 19: Verify table is deleted"
 sleep 2  # Give it a moment to delete
 aws dynamodb list-tables > response.json
 
 TABLE_LIST=$(jq -r '.TableNames[]' < response.json)
 if echo "${TABLE_LIST}" | grep -q "${TABLE_NAME}"; then
     log_error "✗ Table still appears in list after deletion"
-    CURRENT_TEST_FAILED=true
+    fail_test
 else
     log_info "✓ Table successfully removed from list"
+    pass_test
 fi
 
-# SQS results for ddb streams events destination
 echo ""
 
-log_test "Test 20: DDB Streaming test"
+# Test: DDB Streaming test
+start_test "Test 20: DDB Streaming test"
 
 QUEUE_URL=$(aws sqs create-queue \
   --queue-name "$QUEUE_NAME" \
@@ -504,7 +549,8 @@ QUEUE_URL=$(aws sqs create-queue \
 
 zip -j /tmp/lambda.zip "$HANDLER_FILE" >/dev/null
 
-# Creating Steaming lambda function tester
+# Creating Streaming lambda function tester
+log_info "Creating test function $LAMBDA_NAME"
 aws lambda create-function \
     --function-name "$LAMBDA_NAME" \
     --runtime nodejs22.x \
@@ -513,6 +559,7 @@ aws lambda create-function \
     --role arn:aws:iam::456645664566:role/lambda-ex \
     --environment Variables="{RESULT_QUEUE_URL=$QUEUE_URL}" >/dev/null
 
+log_info "Creating DDB table $TABLE_NAME"
 aws dynamodb create-table \
     --table-name "${TABLE_NAME}" \
     --attribute-definitions \
@@ -531,13 +578,14 @@ STREAM_ARN=$(aws dynamodb describe-table \
   --query 'Table.LatestStreamArn' \
   --output text)
 
+log_info "Creating ESM mapping for Lambda function ${LAMBDA_NAME}"
 aws lambda create-event-source-mapping \
   --function-name "$LAMBDA_NAME" \
   --event-source-arn "$STREAM_ARN" \
   --starting-position LATEST \
   --batch-size 1 >/dev/null || echo "(Mapping may already exist.)"
 
-echo "Triggering DynamoDB change"
+log_info "Triggering DynamoDB change"
 aws dynamodb put-item \
     --table-name $TABLE_NAME \
     --item "{
@@ -553,25 +601,24 @@ aws dynamodb put-item \
         \"data\": {\"S\": \"event-test-2\"}
     }"
 
-echo "Waiting for Lambda to post to SQS..."
+log_info "Waiting for SQS to receive message..."
 for i in {1..12}; do
   MSGS=$(aws sqs receive-message --queue-url "$QUEUE_URL" \
     --max-number-of-messages 1 --wait-time-seconds 1 \
     --query 'Messages[0].Body' --output text || true)
   if [[ "$MSGS" != "None" && -n "$MSGS" ]]; then
-    # echo "[✓] Received message from Lambda:"
-    # echo "$MSGS" | jq .
-    check_success "Delete table succeeded: $MSGS"
+    log_info "✓ Received message from Lambda:"
+    echo "$MSGS" | jq .
+    pass_test
     break
   fi
   sleep 5
 done
 
 if [[ "$MSGS" == "None" || -z "$MSGS" ]]; then
-  log_error "No message received after 30s"
-  exit 1
+  log_error "✗ No message received after 60s"
+  fail_test
 fi
-
 
 # Print test summary
 echo ""
