@@ -1275,26 +1275,6 @@ class ContainerLifecycleManager:
                         if log_group and log_stream:
                             self.log_manager.write_end_line(request_id, log_group, log_stream)
 
-                if log_group and log_stream:
-                    billed_duration = max(100, int((duration_ms + 99) / 100) * 100)
-                    report_parts = [
-                        f"REPORT RequestId: {request_id}",
-                        f"\tDuration: {duration_ms:.2f} ms",
-                        f"\tBilled Duration: {billed_duration} ms",
-                        f"\tMemory Size: 128 MB",
-                        f"\tMax Memory Used: 128 MB"
-                    ]
-                    if is_cold_start and init_duration_ms:
-                        report_parts.insert(1, f"\tInit Duration: {init_duration_ms:.2f} ms")
-
-                    report_line = '\t'.join(report_parts)
-
-                    # put_log_events expects a list of event dicts
-                    self.log_manager.logs_db.put_log_events(log_group, log_stream, [{
-                        'timestamp': int(time.time() * 1000),
-                        'message': report_line
-                    }])
-
                 # Write REPORT line to CloudWatch
                 self.log_manager.container_logs(
                     request_id,

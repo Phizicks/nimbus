@@ -2570,7 +2570,7 @@ async function viewLogEvents(logGroupName, logStreamName) {
             body: JSON.stringify({
                 logGroupName: logGroupName,
                 logStreamName: logStreamName,
-                startFromHead: false
+                startFromHead: true
             })
         });
 

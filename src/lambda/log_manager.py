@@ -934,19 +934,21 @@ class LogManager:
         billed_duration = max(100, int((duration_ms + 99) / 100) * 100)
 
         # Build REPORT line (AWS Lambda format)
-        report_parts = [
-            f"REPORT RequestId: {request_id}",
-            f"\tDuration: {duration_ms:.2f} ms",
-            f"\tBilled Duration: {billed_duration} ms",
-            f"\tMemory Size: 128 MB",
-            f"\tMax Memory Used: 128 MB"  # TODO: Get actual memory usage
-        ]
+        report_parts = [f"REPORT RequestId: {request_id}"]
 
-        # Add Init Duration only for cold starts
+        # Add Init Duration FIRST, only for cold starts
         if init_duration_ms is not None:
-            report_parts.insert(1, f"\tInit Duration: {init_duration_ms:.2f} ms")
+            report_parts.append(f"Init Duration: {init_duration_ms:.2f} ms")
 
-        report_line = '\t'.join(report_parts)
+        # Add remaining metrics
+        report_parts.extend([
+            f"Duration: {duration_ms:.2f} ms",
+            f"Billed Duration: {billed_duration} ms",
+            f"Memory Size: 128 MB",
+            f"Max Memory Used: 128 MB"  # TODO: Get actual memory usage
+        ])
+
+        report_line = "\t".join(report_parts)
 
         # Write REPORT line to CloudWatch
         try:

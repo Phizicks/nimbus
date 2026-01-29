@@ -2372,8 +2372,12 @@ def console_css():
         html_content = f.read()
     return html_content, 200, {'Content-Type': 'text/css'}
 
+@app.route('/favicon.ico', methods=['GET'], strict_slashes=False)
+def console_favicon():
+    return send_file('console/favicon.ico', mimetype='image/ico')
+
 @app.route('/logo.png', methods=['GET'], strict_slashes=False)
-def console_nimbus():
+def console_logo():
     return send_file('console/nimbus-icon-transparent.png', mimetype='image/png')
 
 @app.route('/app.js', methods=['GET'], strict_slashes=False)
@@ -3519,7 +3523,7 @@ def catch_all(path):
     except Exception as e:
         pass
     return jsonify({
-        'errorMessage': f'Route not found: {request.method} /{path}',
+        'errorMessage': f'Not Implemented Route: {request.method} /{path}',
         'errorType': 'RouteNotFoundException',
         'availableRoutes': [str(rule) for rule in app.url_map.iter_rules()]
     }), 404
