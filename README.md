@@ -20,7 +20,7 @@ A **complete, free AWS services emulator** for local development. Nimbus provide
 | **SQS** | Queues, messages, dead-letter queues, FIFO | ✅ Full |
 | **Event Source Mapping** | SQS → Lambda triggers, batch processing | ✅ Full |
 | **S3** | Basic operations (via MinIO) | ✅ Full |
-| **DDB** | Most - no TxWriteItems/Provisioned Throughput, No streams [yet] (via Scylla) | ✅ Full |
+| **DDB** | Most - no TxWriteItems/Provisioned Throughput (via Scylla) | ✅ Full |
 | **SSM Parameter Store** | Parameters, versions, encryption | ✅ Full |
 | **CloudWatch Logs** | Log groups/streams, filtering | ✅ Full |
 
@@ -33,6 +33,7 @@ A **complete, free AWS services emulator** for local development. Nimbus provide
 | Real Lambda runtime | ✅ | ❌ | ✅ |
 | SQS + Lambda triggers | ✅ | ⚠️ Limited | ✅ |
 | S3 (basic operations) | ✅ | ✅ | ✅ |
+| DDB (most operations) | ✅ | ✅ | ✅ |
 | ECR | ✅ | ❌ | ✅ |
 | SSM Parameter Store | ✅ | ⚠️ Basic | ✅ |
 | CloudWatch Logs | ✅ | ⚠️ Basic | ✅ |
