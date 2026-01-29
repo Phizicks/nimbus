@@ -11,8 +11,8 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 function cleanup {
-    aws ssm delete-parameter --name /my/parameter 2>/dev/null || true
-    aws ssm delete-parameter --name /secure/parameter >/dev/null || true
+    aws ssm delete-parameter --name /my/parameter >/dev/null 2>&1 || true
+    aws ssm delete-parameter --name /secure/parameter >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -89,12 +89,12 @@ fi
 
 # List tags for a parameter
 log_info "Testing describe-parameters-with-tags"
-aws ssm describe-parameters --parameter-filters "Key=Type,Values=SecureString"
+aws ssm describe-parameters --parameter-filters "Key=Type,Values=SecureString" | cat
 
 # # Update a parameter's version
 # echo "Testing update-parameter-version"
 # value="new-value-3"
-aws ssm put-parameter --name /my/parameter --value $value 2>/dev/null || \
+aws ssm put-parameter --name /my/parameter --value $value 2>/dev/null |cat || \
     log_success " Expected failure when not using --overwrite"
 
 # List all parameters in TEXT
@@ -103,7 +103,7 @@ aws ssm describe-parameters --output text
 
 # List all parameters in JSON
 log_info "Testing list-parameters in JSON"
-aws ssm describe-parameters --output json
+aws ssm describe-parameters --output json | cat
 
 # Update a parameter's secure string value
 log_info "Testing put-parameter-secure-string-overwrite with type change"
