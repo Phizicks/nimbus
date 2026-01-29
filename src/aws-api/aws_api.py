@@ -58,7 +58,7 @@ BACKEND_REGISTRY_HOST = os.getenv('REGISTRY_HOST', "ecr:5000")
 DB_PATH = os.getenv("STORAGE_PATH", '/data') + '/aws_metadata.db'
 
 # DynamoDB endpoint url
-DYNAMODB_ENDPOINT = os.getenv('DYNAMODB_ENDPOINT_URL', 'http://ddb:4700')
+DYNAMODB_ENDPOINT = os.getenv('DYNAMODB_ENDPOINT_URL', 'http://ddb:8000')
 
 # Endpoint for Event Source Mapping (ESM) service (runs in its own container)
 ESM_ENDPOINT = os.getenv('ESM_ENDPOINT_URL', 'http://esm:4566')
@@ -128,16 +128,16 @@ def esm_request(method: str, path: str, **kwargs):
         return 502, {'message': 'ESM service unavailable'}
 
 
-def esm_find_mapping_by_function(function_name: str):
-    """Find an ESM mapping by function name by querying the ESM service."""
-    status, data = esm_request('GET', '/2015-03-31/event-source-mappings')
-    if status != 200:
-        return None
-    mappings = data.get('EventSourceMappings') if isinstance(data, dict) else []
-    for m in mappings or []:
-        if m.get('FunctionName') == function_name:
-            return m
-    return None
+# def esm_find_mapping_by_function(function_name: str):
+#     """Find an ESM mapping by function name by querying the ESM service."""
+#     status, data = esm_request('GET', '/2015-03-31/event-source-mappings')
+#     if status != 200:
+#         return None
+#     mappings = data.get('EventSourceMappings') if isinstance(data, dict) else []
+#     for m in mappings or []:
+#         if m.get('FunctionName') == function_name:
+#             return m
+#     return None
 
 
 def proxy_to_sqs(operation, records):
@@ -214,7 +214,6 @@ def proxy_to_dynamodb(operation: str, data=None):
             headers[key] = request.headers[key]
 
     status, resp, raw = dynamodb_request('POST', '/', headers=headers, json=(data or {}))
-
     if raw is None:
         return jsonify(resp), status
 
@@ -2059,10 +2058,7 @@ def put_provisioned_concurrency(function_name):
         logger.info(f"Setting provisioned concurrency for: {function_name}")
 
         data = request.get_json() or {}
-
-        # Proxy to lambda service endpoint
-        status, resp, raw = lambda_request('PUT', f'/2015-03-31/functions/{function_name}/provisioned-concurrency-configs', json=data)
-
+        status, resp, raw = lambda_request('PUT', request.path, json=data)
         if status >= 400:
             logger.warning(f"Lambda service returned error: {status} - {resp}")
             return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
@@ -2076,17 +2072,38 @@ def put_provisioned_concurrency(function_name):
             '__type': 'ServiceException'
         }), 500
 
-@app.route('/2015-03-31/functions/<function_name>/concurrency', methods=['PUT'])
-def put_function_concurrency(function_name):
-    """Set reserved concurrent executions for a function - proxy to lambda endpoint"""
+
+@app.route('/2019-09-30/functions/<function_name>/concurrency', methods=['GET']) # aws lambda get-function-concurrency
+@app.route('/2019-09-30/functions/<function_name>/provisioned-concurrency', methods=['GET']) # aws lambda get-provisioned-concurrency-config
+def get_function_concurrency(function_name):
+    """Get reserved concurrent executions for a function - proxy to lambda endpoint"""
     try:
-        logger.info(f"Setting reserved concurrency for: {function_name}")
+        logger.info(f"Getting reserved concurrency for: {function_name}")
+
+        status, resp, raw = lambda_request('GET', request.path)
+        if status >= 400:
+            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
+
+        return jsonify(resp), status
+
+    except Exception as e:
+        logger.error(f"Error setting concurrency for {function_name}: {e}", exc_info=True)
+        error_response = {
+            "__type": "ServiceException:",
+            "message": str(e)
+        }
+        return jsonify(error_response), 500
+
+
+@app.route('/2019-09-30/functions/<function_name>/provisioned-concurrency', methods=['PUT']) # aws lambda put-provisioned-concurrency-config
+def put_provisioned__concurrency(function_name):
+    """Set provisioned concurrent executions for a function"""
+    try:
+        logger.info(f"Setting provisioned concurrency for: {function_name}")
 
         data = request.get_json() or {}
-
-        # Proxy to lambda service endpoint
-        status, resp, raw = lambda_request('PUT', f'/2015-03-31/functions/{function_name}/concurrency', json=data)
-
+        status, resp, raw = lambda_request('PUT', request.path, json=data)
         if status >= 400:
             logger.warning(f"Lambda service returned error: {status} - {resp}")
             return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
@@ -2101,23 +2118,57 @@ def put_function_concurrency(function_name):
         }
         return error_response, 500
 
-# Test endpoint to verify routing
-@app.route('/test/invoke/<function_name>', methods=['POST', 'GET'])
-def test_invoke(function_name):
-    """Test endpoint to verify routing works"""
-    return jsonify({
-        'message': f'Test route working for function: {function_name}',
-        'method': request.method,
-        'path': request.path
-    })
+
+@app.route('/2019-09-30/functions/<function_name>/provisioned-concurrency', methods=['DELETE']) # aws lambda delete-provisioned-concurrency-config
+def delete_provisioned__concurrency(function_name):
+    """Set provisioned concurrent executions for a function"""
+    try:
+        logger.info(f"Deleting provisioned concurrency for: {function_name}")
+
+        status, resp, raw = lambda_request('DELETE', request.path)
+        if status >= 400:
+            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
+
+        return jsonify(resp), status
+
+    except Exception as e:
+        logger.error(f"Error deleting concurrency for {function_name}: {e}", exc_info=True)
+        error_response = {
+            "__type": "ServiceException:",
+            "message": str(e)
+        }
+        return error_response, 500
+
+
+@app.route('/2017-10-31/functions/<function_name>/concurrency', methods=['PUT']) # aws lambda put-function-concurrency
+def put_function_concurrency(function_name):
+    """Set reserved concurrent executions for a function - proxy to lambda endpoint"""
+    try:
+        logger.info(f"Setting reserved concurrency for: {function_name}")
+
+        data = request.get_json() or {}
+        status, resp, raw = lambda_request('PUT', request.path, json=data)
+        if status >= 400:
+            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
+
+        return jsonify(resp), status
+
+    except Exception as e:
+        logger.error(f"Error setting concurrency for {function_name}: {e}", exc_info=True)
+        error_response = {
+            "__type": "ServiceException:",
+            "message": str(e)
+        }
+        return error_response, 500
+
 
 @app.route('/2015-03-31/functions/<function_name>', methods=['GET'], strict_slashes=False)
 def get_function(function_name):
     """Get function configuration - proxy to lambda endpoint"""
     try:
-        # Proxy to lambda service endpoint
-        status, resp, raw = lambda_request('GET', f'/2015-03-31/functions/{function_name}')
-
+        status, resp, raw = lambda_request('GET', request.path)
         if status >= 400:
             logger.warning(f"Lambda service returned error: {status} - {resp}")
             return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
@@ -2321,8 +2372,12 @@ def console_css():
         html_content = f.read()
     return html_content, 200, {'Content-Type': 'text/css'}
 
+@app.route('/favicon.ico', methods=['GET'], strict_slashes=False)
+def console_favicon():
+    return send_file('console/favicon.ico', mimetype='image/ico')
+
 @app.route('/logo.png', methods=['GET'], strict_slashes=False)
-def console_nimbus():
+def console_logo():
     return send_file('console/nimbus-icon-transparent.png', mimetype='image/png')
 
 @app.route('/app.js', methods=['GET'], strict_slashes=False)
@@ -2405,6 +2460,30 @@ def handle_request():
     }
 
     if operation in DYNAMODB_ACTIONS:
+        # Special handling for DeleteTable to notify ESM should polling be enabled/active
+        if operation == 'DeleteTable':
+            data = get_request_data()
+            table_name = data.get('TableName')
+
+            # Proxy to DynamoDB first
+            response = proxy_to_dynamodb(operation, data)
+            # If deletion successful, notify ESM service
+            status = response.status
+            if status == 200:  # Check status code
+                try:
+                    requests.post(
+                        f'{ESM_ENDPOINT}/internal/esm/table-deleted',
+                        json={'TableName': table_name},
+                        timeout=5
+                    )
+                    logger.info(f"Notified ESM of table deletion: {table_name}")
+                except Exception as e:
+                    logger.warning(f"Failed to notify ESM of table deletion: {e}")
+            else:
+                logger.warning(f"Failed to notify ESM of table deletion: {vars(response)}")
+
+            return response
+
         logger.info(f"Routing to DynamoDB handler: Operation={operation}")
         return proxy_to_dynamodb(operation, data)
 
@@ -2725,12 +2804,8 @@ def proxy_to_s3():
 
     # Keep ALL headers INCLUDING the original Host (critical for signature validation)
     headers = {k: v for k, v in request.headers}
-    request_data =request.get_data()
-
-    logger.debug(f"Proxying to S3: {request.method} {s3_url}")
-    logger.debug(f"Host header: {headers.get('Host')}")
-    logger.debug(f"Data: {request_data}")
-    resp = requests.request(
+    request_data = request.get_data()
+    response = requests.request(
         method=request.method,
         url=s3_url,
         headers=headers,
@@ -2738,14 +2813,14 @@ def proxy_to_s3():
         stream=True
     )
 
-    logger.debug(f"S3 response: {resp.status_code}")
-    logger.debug(f"S3 Content-Type: {resp.headers.get('Content-Type')}")
+    logger.debug(f"S3 response: {response.status_code}")
+    logger.debug(f"S3 Content-Type: {response.headers.get('Content-Type')}")
 
     # Build response with proper headers
     excluded = {'transfer-encoding', 'connection'}
-    response_headers = [(k, v) for k, v in resp.headers.items() if k.lower() not in excluded]
+    response_headers = [(k, v) for k, v in response.headers.items() if k.lower() not in excluded]
     logger.debug(f'{response_headers}')
-    return Response(resp.content, status=resp.status_code, headers=response_headers)
+    return Response(response.content, status=response.status_code, headers=response_headers)
 
 # Handles aws cli s3 commands
 @app.route('/<bucket_name>', methods=['PUT'])
@@ -3392,10 +3467,13 @@ def upload_s3_object(bucket_name):
         return jsonify({'__type': 'ServiceException', 'message': str(e)}), 500
 
 @app.route('/s3/buckets/<bucket_name>/objects/copy', methods=['POST'])
-def copy_s3_object():
+def copy_s3_object(bucket_name):
     """Copy/rename/move S3 object for web console"""
     try:
         data = request.get_json() or {}
+        logger.critical(f'REQUEST :: {data}')
+        logger.critical(f'REQUEST :: {request.view_args}')
+
         source_key = data.get('sourceKey')
         dest_bucket = data.get('destBucket')
         dest_key = data.get('destKey')
@@ -3445,7 +3523,7 @@ def catch_all(path):
     except Exception as e:
         pass
     return jsonify({
-        'errorMessage': f'Route not found: {request.method} /{path}',
+        'errorMessage': f'Not Implemented Route: {request.method} /{path}',
         'errorType': 'RouteNotFoundException',
         'availableRoutes': [str(rule) for rule in app.url_map.iter_rules()]
     }), 404

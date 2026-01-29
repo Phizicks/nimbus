@@ -31,6 +31,9 @@ root_logger.handlers = [handler]
 
 # shutup werkzeug
 logging.getLogger("werkzeug").setLevel(logging.WARNING)
+logging.getLogger("botocore").setLevel(logging.WARNING)
+logging.getLogger("boto3").setLevel(logging.WARNING)
+logging.getLogger("s3transfer").setLevel(logging.WARNING)
 logging.getLogger('urllib3.connectionpool').setLevel(logging.WARNING)
 logging.getLogger('urllib3.poolmanager').setLevel(logging.WARNING)
 logging.getLogger('urllib3.util.retry').setLevel(logging.WARNING)

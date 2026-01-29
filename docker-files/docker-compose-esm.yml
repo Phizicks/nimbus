@@ -10,6 +10,12 @@ services:
       LOG_LEVEL: DEBUG
     networks:
       - localcloud
+    depends_on:
+      sqs:
+        condition: service_healthy
+      ddb:
+        condition: service_healthy
+
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:4566/health"]
       interval: 10s

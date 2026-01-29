@@ -6,6 +6,7 @@ import threading
 from collections import defaultdict
 from typing import Dict, Optional
 from pathlib import Path
+from hashlib import sha256
 import copy
 import logging
 import time
@@ -49,7 +50,7 @@ LOCALCLOUD_NETWORK_NAME = os.getenv("LOCALCLOUD_NETWORK_NAME", 'localcloud')
 STORAGE_PATH = os.getenv("STORAGE_PATH", './data')
 DB_PATH = os.getenv('STORAGE_PATH', '/data') + '/lambda_metadata.db'
 
-# Storage for function codeSTORAGE_PATH
+# Storage for function code
 FUNCTIONS_DIR = Path(f'{STORAGE_PATH}/lambda-functions')
 FUNCTIONS_DIR.mkdir(exist_ok=True)
 
@@ -211,57 +212,63 @@ class Database:
     def get_function_from_db(self, function_name):
         """Retrieve a function from the database"""
         conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row  # Enable access by column name
         cursor = conn.cursor()
 
         cursor.execute('SELECT * FROM lambda_functions WHERE function_name = ?', (function_name,))
         row = cursor.fetchone()
         conn.close()
+
         if not row:
             return None
 
         # Deserialize environment JSON
         environment = {}
-        if row[14]:  # environment column
+        if row['environment']:
             try:
-                environment = json.loads(row[14])
+                environment = json.loads(row['environment'])
             except (json.JSONDecodeError, TypeError):
                 logger.warning(f"Failed to parse environment for {function_name}")
                 environment = {}
 
-        # Deserialize logging_config JSON (new column at index 19)
         logging_config = None
-        if len(row) > 19 and row[19]:  # logging_config column
+        if 'logging_config' in row.keys() and row['logging_config']:
             try:
-                logging_config = json.loads(row[19])
+                logging_config = json.loads(row['logging_config'])
             except (json.JSONDecodeError, TypeError):
                 logger.warning(f"Failed to parse logging_config for {function_name}")
                 logging_config = None
 
         result = {
-            'FunctionName': row[0],
-            'FunctionArn': row[1],
-            'Runtime': row[2],
-            'Handler': row[3],
-            'Role': row[4],
-            'CodeSize': row[5],
-            'State': row[6],
-            'LastUpdateStatus': row[7],
-            'PackageType': row[8],
-            'ImageUri': row[9],
-            'CodeSha256': row[10],
-            'Endpoint': row[11],
-            'ContainerName': row[12],
-            'HostPort': row[13],
+            'FunctionName': row['function_name'],
+            'FunctionArn': row['function_arn'],
+            'Runtime': row['runtime'],
+            'Handler': row['handler'],
+            'Role': row['role'],
+            'CodeSize': row['code_size'],
+            'State': row['state'],
+            'LastUpdateStatus': row['last_update_status'],
+            'PackageType': row['package_type'],
+            'ImageUri': row['image_uri'],
+            'CodeSha256': row['code_sha256'],
+            'Endpoint': row['endpoint'],
+            'ContainerName': row['container_name'],
+            'HostPort': row['host_port'],
             'Environment': environment,
-            'CreatedAt': row[15],
-            'LastModified': row[16]
+            'CreatedAt': row['created_at'],
+            'LastModified': row['last_modified'],
+            'ProvisionedConcurrency': row['provisioned_concurrency'],
+            'ReservedConcurrency': row['reserved_concurrency'],
+            'LoggingConfig': row['logging_config'],
         }
 
-        # Add LoggingConfig if it exists
         if logging_config:
             result['LoggingConfig'] = logging_config
+        if row['image_config']:
+            result['ImageConfig'] = row['image_config']
 
         return result
+
 
     def save_function_to_db(self, function_config):
         """Save or update a function in the database"""
@@ -353,57 +360,58 @@ class Database:
         conn.close()
 
     def list_functions_from_db(self):
-        """List all functions from the database"""
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
+            """List all functions from the database"""
+            conn = sqlite3.connect(DB_PATH)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
 
-        cursor.execute('SELECT * FROM lambda_functions')
-        rows = cursor.fetchall()
-        conn.close()
+            cursor.execute('SELECT * FROM lambda_functions')
+            rows = cursor.fetchall()
+            conn.close()
 
-        functions = []
-        for row in rows:
-            # Deserialize environment JSON
-            environment = {}
-            if row[14]:  # environment column
-                try:
-                    environment = json.loads(row[14])
-                except (json.JSONDecodeError, TypeError):
-                    logger.warning(f"Failed to parse environment for {row[0]}")
-                    environment = {}
+            functions = []
+            for row in rows:
+                environment = {}
+                if row['environment']:
+                    try:
+                        environment = json.loads(row['environment'])
+                    except (json.JSONDecodeError, TypeError):
+                        logger.warning(f"Failed to parse environment for {row['function_name']}")
+                        environment = {}
 
-            # Deserialize logging_config JSON
-            logging_config = None
-            if len(row) > 19 and row[19]:  # logging_config column
-                try:
-                    logging_config = json.loads(row[19])
-                except (json.JSONDecodeError, TypeError):
-                    logger.warning(f"Failed to parse logging_config for {row[0]}")
-                    logging_config = None
+                logging_config = None
+                if 'logging_config' in row.keys() and row['logging_config']:
+                    try:
+                        logging_config = json.loads(row['logging_config'])
+                    except (json.JSONDecodeError, TypeError):
+                        logger.warning(f"Failed to parse logging_config for {row['function_name']}")
+                        logging_config = None
 
-            function_data = {
-                'FunctionName': row[0],
-                'FunctionArn': row[1],
-                'Runtime': row[2],
-                'Handler': row[3],
-                'Role': row[4],
-                'CodeSize': row[5],
-                'State': row[6],
-                'LastUpdateStatus': row[7],
-                'PackageType': row[8],
-                'ImageUri': row[9],
-                'CodeSha256': row[10],
-                'Environment': environment,
-                'LastModified': row[16]
-            }
+                function_data = {
+                    'FunctionName': row['function_name'],
+                    'FunctionArn': row['function_arn'],
+                    'Runtime': row['runtime'],
+                    'Handler': row['handler'],
+                    'Role': row['role'],
+                    'CodeSize': row['code_size'],
+                    'State': row['state'],
+                    'LastUpdateStatus': row['last_update_status'],
+                    'PackageType': row['package_type'],
+                    'ImageUri': row['image_uri'],
+                    'CodeSha256': row['code_sha256'],
+                    'Environment': environment,
+                    'LastModified': row['last_modified'],
+                    'ProvisionedConcurrency': row['provisioned_concurrency'],
+                    'ReservedConcurrency': row['reserved_concurrency']
+                }
 
-            # Add LoggingConfig if it exists
-            if logging_config:
-                function_data['LoggingConfig'] = logging_config
+                # Add LoggingConfig if it exists
+                if logging_config:
+                    function_data['LoggingConfig'] = logging_config
 
-            functions.append(function_data)
+                functions.append(function_data)
 
-        return functions
+            return functions
 
     def __init__(self):
         self.init_db()
@@ -487,6 +495,27 @@ class ContainerLifecycleManager:
             self.container_activity = {}
 
             logger.info(f"ContainerLifecycleManager initialized with instance ID: {id(self)}")
+
+    def _refresh_function_configs(self):
+        """Refresh function configurations from database to pick up external changes"""
+        functions = self.db.list_functions_from_db()
+
+        for func in functions:
+            function_name = func['FunctionName']
+            provisioned = func.get('ProvisionedConcurrency', 0)
+            reserved = func.get('ReservedConcurrency', 100)
+
+            # Update config if values changed
+            current_config = self.function_configs[function_name]
+            if (current_config['provisioned'] != provisioned or
+                current_config['reserved'] != reserved):
+
+                logger.info(f"Config change detected for {function_name}: "
+                        f"provisioned {current_config['provisioned']}->{provisioned}, "
+                        f"reserved {current_config['reserved']}->{reserved}")
+
+                self.function_configs[function_name]['provisioned'] = provisioned
+                self.function_configs[function_name]['reserved'] = reserved
 
     @property
     def invocation_responses(self):
@@ -722,30 +751,6 @@ class ContainerLifecycleManager:
                     logger.debug(f"Client IP Lookup matched : {container_ip} -> {container_meta}")
                     return container_meta
 
-            # If no match found, check for containers with empty IP in STARTING state
-            # This handles race condition where container calls runtime_next() before IP is updated
-            # for container_id, container_meta in list(self.container_metadata.items()):  # Use list() here too
-            #     if not container_meta.ip_address and container_meta.state == ContainerState.STARTING:
-            #         try:
-            #             # Query Docker to get the actual IP for this container
-            #             docker_container = self.docker_client.containers.get(container_id)
-            #             docker_container.reload()
-            #             try:
-            #                 actual_ip = docker_container.attrs['NetworkSettings']['Networks'][LOCALCLOUD_NETWORK_NAME]['IPAddress']
-            #                 if actual_ip == container_ip:
-            #                     # Found it! Update the IP and return
-            #                     logger.info(f"Found container {C.MAGENTA}{container_id}{C.RESET} by IP lookup fallback, updating IP: {actual_ip}")
-            #                     self.update_container_ip(container_id, actual_ip)
-            #                     return container_meta
-            #             except (KeyError, TypeError):
-            #                 pass
-            #         except docker.errors.NotFound:
-            #             # Container was removed, skip it
-            #             logger.debug(f"Container {C.MAGENTA}{container_id}{C.RESET} not found in Docker during IP lookup fallback (may have been removed)")
-            #             continue
-            #         except Exception as e:
-            #             logger.debug(f"Could not query Docker for container {C.MAGENTA}{container_id}{C.RESET}: {e}")
-
             return None
 
     def get_status(self):
@@ -789,6 +794,9 @@ class ContainerLifecycleManager:
 
     def _check_all_functions(self):
         """Check all functions and scale as needed"""
+        # Refresh configs from database first to pick up external changes - maybe we push the changes on update later
+        self._refresh_function_configs()
+
         # Clean up zombie invocations FIRST
         self._cleanup_zombie_invocations()
 
@@ -945,33 +953,44 @@ class ContainerLifecycleManager:
         """Manage scaling for a specific function"""
         config = self.function_configs[function_name]
 
-        # Get current running containers
+        # Get current running containers (only count READY and LEASED, not STARTING/DRAINING)
         containers = self._get_function_containers(function_name, status='running')
-        current_count = len(containers)
+
+        # Filter to only count containers in usable states
+        ready_count = 0
+        for container in containers:
+            cid = getattr(container, 'id', None)
+            container_metadata = self.container_metadata.get(cid)
+            if container_metadata and container_metadata.state in [ContainerState.READY, ContainerState.LEASED, ContainerState.RUNNING]:
+                ready_count += 1
+
+        current_count = ready_count
 
         # Get queue depth
         queue_depth = self._get_queue_depth(function_name)
 
-        # Check if we need to scale up
+        # Maintain provisioned capacity - minimum instances
+        if current_count < config['provisioned']:
+            needed = config['provisioned'] - current_count
+            logger.info(f"Provisioned capacity for {function_name}: scaling {current_count} -> {config['provisioned']} (+{needed} instances)")
+            for _ in range(needed):
+                self._start_container_instance(function_name)
+            # Update current count after provisioning
+            current_count = config['provisioned']
+
+        # Only scale if queue demands it AND we haven't hit reserved limit
         if queue_depth > config['scale_up_threshold'] and current_count < config['reserved']:
             needed = min(
-                queue_depth - current_count,
-                config['reserved'] - current_count
+                queue_depth - current_count,  # Scale based on queue
+                config['reserved'] - current_count  # But don't exceed reserved limit
             )
-            logger.info(f"Scaling up '{function_name}': Current:{current_count} -> Need:+{needed} (queue: {queue_depth})")
+            logger.info(f"Queue-based scaling for {function_name}: Current:{current_count} -> +{needed} (queue:{queue_depth}, threshold:{config['scale_up_threshold']})")
             for _ in range(needed):
                 self._start_container_instance(function_name)
 
-        # Check if we need to maintain provisioned capacity
-        elif current_count < config['provisioned']:
-            needed = config['provisioned'] - current_count
-            logger.info(f"Maintaining provisioned capacity for {function_name}: {current_count} -> {config['provisioned']}")
-            for _ in range(needed):
-                self._start_container_instance(function_name)
-
-        # Check if we can scale down idle containers
+        # Only consider scale-down if we're above provisioned capacity
         elif current_count > config['provisioned']:
-            # logger.debug(f"Checking for idle containers to drain for {function_name}")
+            logger.debug(f"Checking idle containers for {function_name} (current:{current_count} > provisioned:{config['provisioned']})")
             self._scale_down_idle_containers(function_name, config)
 
     def _scale_down_idle_containers(self, function_name, config):
@@ -1059,61 +1078,6 @@ class ContainerLifecycleManager:
         # Container already verified by _start_container_instance
         logger.info(f"Container {C.YELLOW}{container_name}{C.RESET} started and verified")
         return container_name
-
-    # def start_container_with_verification(self, function_name, max_attempts=3):
-    #     """
-    #     Start a container and verify it's actually running and healthy.
-    #     Returns container_name on success, None on failure.
-    #     """
-    #     logger.info(f"Starting container for {function_name}")
-
-    #     # Try to start the container
-    #     container_name = self._start_container_instance(function_name)
-
-    #     if container_name is None:
-    #         return None
-
-    #     # Wait briefly for container to initialize
-    #     time.sleep(0.2)
-
-    #     # Verify container is still running
-    #     containers = self._get_function_containers(function_name, status='running')
-    #     logger.debug(f'Checking running containers: {[container.name for container in containers]}')
-
-    #     running = any(container_name == c.name for c in containers)
-
-    #     if not running:
-    #         logger.error(f"Container {C.YELLOW}{container_name}{C.RESET} exited immediately after startup")
-    #         # Get logs from failed container
-    #         failed_containers = self._get_function_containers(function_name, status='exited')
-    #         for fc in failed_containers:
-    #             if container_name == fc.name:
-    #                 logs = fc.logs(tail=100).decode(errors='ignore').replace('\r', '\n')
-    #                 logger.error(f"Failed container logs:\n{logs}")
-    #                 break
-    #         return None
-
-    #     # Give container time to initialize Runtime API client
-    #     logger.debug(f"Waiting for {C.YELLOW}{container_name}{C.RESET} to initialize Runtime API client...")
-    #     time.sleep(0.2)
-
-    #     # Final verification
-    #     containers = self._get_function_containers(function_name, status='running')
-    #     if not any(container_name == c.name for c in containers):
-    #         logger.error(f"Container {C.YELLOW}{container_name}{C.RESET} exited during final verification")
-    #         return None
-
-    #     # Container verified healthy - transition to READY state
-    #     for container in containers:
-    #         if container.name == container_name:
-    #             cid = container.id
-    #             meta = self.container_metadata.get(cid)
-    #             if meta:
-    #                 meta.state = ContainerState.READY
-    #                 logger.info(f"Container {C.YELLOW}{container_name}{C.RESET} verified healthy and transitioned to READY state")
-    #             break
-
-    #     return container_name
 
     def _start_container_instance(self, function_name):
         """Start a new container instance for a function"""
@@ -1428,7 +1392,7 @@ class ContainerLifecycleManager:
                 image_tag = f"lambda-{function_name}:latest"
                 try:
                     logger.info(f"Building image from {function_path}")
-                    _, logs = self.docker_client.images.build(path=str(function_path), tag=image_tag, rm=True)
+                    _, logs = self.docker_client.images.build(path=str(function_path), nocache=True, tag=image_tag, rm=True)
                     for log in logs:
                         if 'stream' in log:
                             logger.info(log['stream'].strip())
@@ -1443,8 +1407,6 @@ class ContainerLifecycleManager:
             # Setup CloudWatch logging BEFORE starting container
             try:
                 self.log_manager.create_log_group(log_group_name)
-                self.log_manager.create_log_stream(log_group_name, log_stream_name)
-                logger.info(f"Preparing log collector for {log_group_name}/{log_stream_name}")
             except Exception as e:
                 logger.error(f"CRITICAL: Failed to setup CloudWatch logging: {e}", exc_info=True)
                 if verify_ready:
@@ -2254,7 +2216,9 @@ def update_function_code(function_name):
 
         elif zip_file:
             zip_data = base64.b64decode(zip_file)
-            function_dir = FUNCTIONS_DIR / function_name
+
+            filename_hash = sha256(zip_file.encode('utf-8')).hexdigest()
+            function_dir = FUNCTIONS_DIR / filename_hash
             function_dir.mkdir(exist_ok=True)
 
             zip_path = function_dir / 'function.zip'
@@ -2392,12 +2356,11 @@ def delete_function_logging_config(function_name):
         }), 500
 
 
-@app.route('/2015-03-31/functions/<function_name>/concurrency', methods=['PUT'])
-def put_function_concurrency(function_name):
-    """Set reserved concurrent executions"""
+@app.route('/2019-09-30/functions/<function_name>/concurrency', methods=['GET']) # aws lambda get-function-concurrency
+def get_function_concurrency(function_name):
+    """Get provisioned concurrent settings"""
     try:
-        logger.info(f"Setting concurrency for: {function_name}")
-
+        logger.info(f"Getting function concurrency for: {function_name}")
         function_config = lifecycle_manager.db.get_function_from_db(function_name)
         if not function_config:
             return jsonify({
@@ -2405,11 +2368,72 @@ def put_function_concurrency(function_name):
                 "message": f"Function not found: {function_name}"
             }), 404
 
-        data = request.get_json() or {}
-        reserved = data.get('ReservedConcurrentExecutions', 0)
+        provisioned = function_config.get('ReservedConcurrentExecutions', 0)
+        return jsonify({
+            'ReservedConcurrentExecutions': provisioned,
+        }), 200
+        # return jsonify(function_config), 200
 
+    except Exception as e:
+        logger.error(f"Error setting concurrency: {e}", exc_info=True)
+        return jsonify({
+            "__type": "ServiceException:",
+            "message": str(e)
+        }), 500
+
+
+@app.route('/2019-09-30/functions/<function_name>/provisioned-concurrency', methods=['GET']) # aws lambda get-provisioned-concurrency-config
+def get_provisioned_concurrency(function_name):
+    """Get provisioned concurrent settings"""
+    try:
+        logger.info(f"Getting provisioned concurrency for: {function_name}")
+        function_config = lifecycle_manager.db.get_function_from_db(function_name)
+        if not function_config:
+            return jsonify({
+                "__type": "ResourceNotFoundException:",
+                "message": f"Function not found: {function_name}"
+            }), 404
+        logger.critical(f'function_config: {function_config}')
+        # data = request.get_json() or {}
+        provisioned = function_config.get('ProvisionedConcurrentExecutions', 0)
+
+        # TODO erm, kind of fake but whatever
+        return jsonify({
+            'RequestedProvisionedConcurrentExecutions': provisioned,
+            'AvailableProvisionedConcurrentExecutions': provisioned,
+            'AllocatedProvisionedConcurrentExecutions': provisioned,
+            'Status': 'READY',
+            'LastModified': datetime.now(timezone.utc).isoformat()
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error setting concurrency: {e}", exc_info=True)
+        return jsonify({
+            "__type": "ServiceException:",
+            "message": str(e)
+        }), 500
+
+
+@app.route('/2017-10-31/functions/<function_name>/concurrency', methods=['PUT']) # aws lambda put-function-concurrency
+def put_function_concurrency(function_name):
+    """Set reserved concurrent executions"""
+    try:
+        data = request.get_json() or {}
+        function_config = lifecycle_manager.db.get_function_from_db(function_name)
+        if not function_config:
+            return jsonify({
+                "__type": "ResourceNotFoundException:",
+                "message": f"Function not found: {function_name}"
+            }), 404
+
+        reserved = data.get('ReservedConcurrentExecutions', 0)
         function_config['ReservedConcurrency'] = reserved
+
+        logger.info(f"Setting concurrency for Function:{function_name} Concurrency:{data} NewValue:{reserved}")
         lifecycle_manager.db.save_function_to_db(function_config)
+
+        # lifecycle_manager.function_configs[function_name]['provisioned'] = provisioned_concurrent_executions
+        # lifecycle_manager.function_configs[function_name]['reserved'] = data.get('ReservedConcurrentExecutions', 0)
 
         return jsonify({
             'ReservedConcurrentExecutions': reserved
@@ -2423,7 +2447,7 @@ def put_function_concurrency(function_name):
         }), 500
 
 
-@app.route('/2015-03-31/functions/<function_name>/provisioned-concurrency-configs', methods=['PUT'])
+@app.route('/2019-09-30/functions/<function_name>/provisioned-concurrency', methods=['PUT']) # aws lambda put-provisioned-concurrency-config
 def put_provisioned_concurrency(function_name):
     """Set provisioned concurrent executions"""
     try:
@@ -2456,6 +2480,33 @@ def put_provisioned_concurrency(function_name):
             "__type": "ServiceException:",
             "message": str(e)
         }), 500
+
+
+@app.route('/2019-09-30/functions/<function_name>/provisioned-concurrency', methods=['DELETE']) # aws lambda delete-provisioned-concurrency-config
+def delete_provisioned_concurrency(function_name):
+    """Set provisioned concurrent executions"""
+    try:
+        logger.info(f"Deleting provisioned concurrency for: {function_name}")
+
+        function_config = lifecycle_manager.db.get_function_from_db(function_name)
+        if not function_config:
+            return jsonify({
+                "__type": "ResourceNotFoundException:",
+                "message": f"Function not found: {function_name}"
+            }), 404
+
+        function_config['ProvisionedConcurrency'] = 0
+        lifecycle_manager.db.save_function_to_db(function_config)
+
+        return jsonify({}), 200
+
+    except Exception as e:
+        logger.error(f"Error setting provisioned concurrency: {e}", exc_info=True)
+        return jsonify({
+            "__type": "ServiceException:",
+            "message": str(e)
+        }), 500
+
 
 
 @app.route('/2019-09-25/functions/<function_name>/event-invoke-config', methods=['GET'], strict_slashes=False)
@@ -2675,7 +2726,7 @@ def create_function():
 
         logger.debug(f"Params: {data}")
         logger.debug(f"Environment variables: {list(environment.keys())}")
-        logger.info(f"Creating function [{function_name}] with runtime: {runtime}")
+        logger.info(f"Creating Function: {function_name} with Runtime: {runtime}")
 
         if image_uri:
             # Verify/pull the image
@@ -2695,13 +2746,19 @@ def create_function():
 
             # Decode ZIP file
             zip_data = base64.b64decode(zip_file)
-            function_dir = FUNCTIONS_DIR / function_name
+            filename_hash = sha256(zip_file.encode('utf-8')).hexdigest()
+
+            function_dir = FUNCTIONS_DIR / filename_hash
             function_dir.mkdir(exist_ok=True)
 
             # Extract ZIP
             zip_path = function_dir / 'function.zip'
+            try:
+                os.remove(zip_path)
+            except:
+                pass
             zip_path.write_bytes(zip_data)
-
+            # TODO Feel like this should be a subdir of ./src, the image ends up with the zip, source and dockerfile otherwise.
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(function_dir)
 
@@ -3013,6 +3070,7 @@ def runtime_request_error(request_id):
     except Exception as e:
         logger.error(f"Error processing runtime error: {e}")
         return jsonify({'message': str(e)}), 500
+
 
 @app.route('/health', methods=['GET'])
 def healthcheck():

@@ -11,14 +11,15 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 cleanup() {
-    aws sqs delete-queue --queue-url http://localhost:4566/456645664566/esm-basic-queue 2>/dev/null || true
-    aws sqs delete-queue --queue-url http://localhost:4566/456645664566/esm-result-queue 2>/dev/null || true
-    aws lambda delete-function --function-name esm-lambda-test 2>/dev/null || true
-    uuid=$(aws lambda list-event-source-mappings | jq -r '.EventSourceMappings[] | select(.FunctionArn == "arn:aws:lambda:ap-southeast-2:456645664566:function:esm-lambda-test").UUID')
-    aws lambda delete-event-source-mapping --uuid $uuid 2>/dev/null || true
-    rm response.json 2>/dev/null || true
+  aws sqs delete-queue --queue-url http://localhost:9324/456645664566/esm-basic-queue 2>/dev/null || true
+  aws sqs delete-queue --queue-url http://localhost:9324/456645664566/esm-result-queue 2>/dev/null || true
+  aws lambda delete-function --function-name esm-lambda-test 2>/dev/null || true
+  uuid=$(aws lambda list-event-source-mappings | jq -r '.EventSourceMappings[] | select(.FunctionArn == "arn:aws:lambda:ap-southeast-2:456645664566:function:esm-lambda-test").UUID')
+  aws lambda delete-event-source-mapping --uuid $uuid 2>/dev/null || true
+  rm response.json 2>/dev/null || true
+  rm -f function.zip || true
 }
-#trap cleanup EXIT
+trap cleanup EXIT
 
 # Helper functions
 print_test() {
@@ -37,15 +38,13 @@ log_info() {
     echo -e "${BLUE} $1${NC}"
 }
 
-
-cd ../lambda/nodejs/
-
-rm -f function.zip
-mkdir -p src
 cleanup
 
+cd ../lambda/nodejs/
+mkdir -p src
+
 # Simple forwarding Lambda
-(cd src && zip ../function.zip sqs.js)
+(cd src && zip ../function.zip events.js)
 
 print_test "Setting up SQS queues"
 # Create queues
@@ -69,7 +68,7 @@ aws lambda delete-function --function-name esm-lambda-test 2>/dev/null || true
 result=$(aws lambda create-function \
   --function-name esm-lambda-test \
   --runtime nodejs22.x \
-  --handler sqs.handler \
+  --handler events.handler \
   --role arn:aws:iam::456645664566:role/nodejs-role \
   --zip-file fileb://function.zip \
   --environment Variables="{RESULT_QUEUE_URL=$result_queue_url,AWS_ENDPOINT_URL_SQS=http://api:4566}") || true
@@ -79,26 +78,17 @@ log_success "Created Lambda function: esm-lambda-test"
 log_info "Setting up Event Source Mapping from SQS to Lambda..."
 
 esm_uuid=$(aws lambda list-event-source-mappings --function-name esm-lambda-test | jq -r ".EventSourceMappings[]? | select(.EventSourceArn==\"$queue_arn\") | .UUID")
-[ -n "$esm_uuid" ] && aws lambda delete-event-source-mapping --uid $esm_uuid || true
+[ -n "$esm_uuid" ] && aws lambda delete-event-source-mapping --uuid $esm_uuid || true
 
-if [ -z "$esm_uuid" ]; then
-  # Create new
-  aws lambda create-event-source-mapping \
-    --event-source-arn "$queue_arn" \
-    --function-name esm-lambda-test \
-    --batch-size 1 \
-    --enabled
-  log_success "Created new ESM (enabled)"
-else
-  # Update existing to enabled
-  aws lambda update-event-source-mapping \
-    --uuid "$esm_uuid" \
-    --enabled
-  log_success "Re-enabled existing ESM: $esm_uuid"
-fi
-log_success "Event Source Mapping set up."
+# Create new
+esm_uuid=$(aws lambda create-event-source-mapping \
+  --event-source-arn "$queue_arn" \
+  --function-name esm-lambda-test \
+  --batch-size 1 \
+  --enabled | jq -r '.UUID')
+log_success "Created new ESM (enabled)"
 
-sleep 10
+sleep 5
 echo "--------------------------------------------------------"
 
 # Send test message
@@ -122,6 +112,7 @@ for i in {1..10}; do
     # Successful exit
     echo ""
     echo "Cleaning up..."
+    aws lambda update-event-source-mapping --uuid $esm_uuid --no-enabled
     exit 0
   fi
   sleep 1
