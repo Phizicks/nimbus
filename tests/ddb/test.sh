@@ -54,7 +54,7 @@ cleanup() {
 
     rm -f response.json item.json 2>/dev/null || true
 }
-trap cleanup EXIT
+# trap cleanup EXIT
 
 
 # Function to print colored messages
@@ -443,7 +443,7 @@ check_success "Batch delete succeeded"
 echo ""
 
 # Test 18: List Tags
-log_test "Test 18: List table tags"
+log_test "Test 16: List table tags"
 TABLE_ARN=$(aws dynamodb describe-table --table-name "${TABLE_NAME}" | jq -r '.Table.TableArn')
 aws dynamodb list-tags-of-resource \
     --resource-arn "${TABLE_ARN}" \
@@ -457,7 +457,7 @@ log_info "Found ${TAG_COUNT} tags on table"
 echo ""
 
 # Test 19: Update Table (add tags)
-log_test "Test 19: Tag resource"
+log_test "Test 17: Tag resource"
 aws dynamodb tag-resource \
     --resource-arn "${TABLE_ARN}" \
     --tags Key=NewTag,Value=NewValue \
@@ -468,7 +468,7 @@ check_success "Tag resource succeeded"
 echo ""
 
 # Test 21: Delete Table
-log_test "Test 21: Delete DynamoDB table"
+log_test "Test 18: Delete DynamoDB table"
 aws dynamodb delete-table \
     --table-name "${TABLE_NAME}" \
     > response.json
@@ -481,7 +481,7 @@ jq '.TableDescription | {TableName, TableStatus}' < response.json
 echo ""
 
 # Test 22: Verify table deleted
-log_test "Test 22: Verify table is deleted"
+log_test "Test 19: Verify table is deleted"
 sleep 2  # Give it a moment to delete
 aws dynamodb list-tables > response.json
 
@@ -496,7 +496,7 @@ fi
 # SQS results for ddb streams events destination
 echo ""
 
-log_test "Test 23: DDB Streaming test"
+log_test "Test 20: DDB Streaming test"
 
 QUEUE_URL=$(aws sqs create-queue \
   --queue-name "$QUEUE_NAME" \
@@ -545,16 +545,16 @@ aws dynamodb put-item \
         \"timestamp\": {\"N\": \"$(date +%s)\"},
         \"data\": {\"S\": \"event-test\"}
     }"
-
-
-
-exit
-
-
-
+aws dynamodb put-item \
+    --table-name $TABLE_NAME \
+    --item "{
+        \"id\": {\"S\": \"stream-test-2\"},
+        \"timestamp\": {\"N\": \"$(date +%s)\"},
+        \"data\": {\"S\": \"event-test-2\"}
+    }"
 
 echo "Waiting for Lambda to post to SQS..."
-for i in {1..30}; do
+for i in {1..12}; do
   MSGS=$(aws sqs receive-message --queue-url "$QUEUE_URL" \
     --max-number-of-messages 1 --wait-time-seconds 1 \
     --query 'Messages[0].Body' --output text || true)
@@ -564,7 +564,7 @@ for i in {1..30}; do
     check_success "Delete table succeeded: $MSGS"
     break
   fi
-  sleep 1
+  sleep 5
 done
 
 if [[ "$MSGS" == "None" || -z "$MSGS" ]]; then

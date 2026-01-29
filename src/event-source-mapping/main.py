@@ -1303,7 +1303,7 @@ class DynamoDBStreamsPoller:
         # Initialize boto3 DynamoDB Streams client
         self.dynamodb_endpoint = os.getenv('DYNAMODB_ENDPOINT_URL', 'http://ddb:8000')
         client_config = botocore.config.Config(
-            max_pool_connections=50
+            max_pool_connections=1000
         )
         self.streams_client = boto3.client(
             'dynamodbstreams',
@@ -1357,7 +1357,7 @@ class DynamoDBStreamsPoller:
         logger.error(f"DynamoDB Streams request error: Failed to query streams, most likely connection issue")
         return None, 503
 
-    def describe_stream(self, stream_arn: str) -> Optional[Dict]:
+    def describe_stream(self, stream_arn: str, exclusive_start_shard_id: Optional[str] = None) -> Optional[Dict]:
         """Get stream description including shards"""
         # Extract just the stream ID if full ARN provided
         if '/stream/' in stream_arn:
@@ -1365,9 +1365,14 @@ class DynamoDBStreamsPoller:
         else:
             stream_id = stream_arn
 
-        data, status = self._dynamodb_streams_request('DescribeStream', {
-            'StreamArn': stream_id
-        })
+        # Build request payload
+        payload = {'StreamArn': stream_id}
+
+        # Add pagination parameter if provided
+        if exclusive_start_shard_id:
+            payload['ExclusiveStartShardId'] = exclusive_start_shard_id
+
+        data, status = self._dynamodb_streams_request('DescribeStream', payload)
 
         if status == 200 and data:
             stream_desc = data.get('StreamDescription', {})
@@ -1395,7 +1400,7 @@ class DynamoDBStreamsPoller:
         return None
 
     def get_shard_iterator(self, stream_arn_or_id: str, shard_id: str,
-                          sequence_number: Optional[str] = None) -> Optional[str]:
+                        sequence_number: Optional[str] = None) -> Optional[str]:
         """Get iterator for a shard"""
         try:
             # Extract stream ID for ScyllaDB API
@@ -1415,8 +1420,14 @@ class DynamoDBStreamsPoller:
                 params['ShardIteratorType'] = 'AFTER_SEQUENCE_NUMBER'
                 params['SequenceNumber'] = sequence_number
 
+            logger.debug(f"GetShardIterator: stream={stream_id}, shard={shard_id}, type={params['ShardIteratorType']}")
+
             response = self.streams_client.get_shard_iterator(**params)
-            return response.get('ShardIterator')
+            iterator = response.get('ShardIterator')
+
+            logger.debug(f"Got iterator: {iterator[:60] if iterator else 'None'}...")
+
+            return iterator
 
         except Exception as e:
             logger.error(f"GetShardIterator failed for shard {shard_id}: {e}", exc_info=True)
@@ -1429,10 +1440,16 @@ class DynamoDBStreamsPoller:
                 ShardIterator=shard_iterator,
                 Limit=limit
             )
+
+            num_records = len(response.get('Records', []))
+            has_next = bool(response.get('NextShardIterator'))
+            if num_records:
+                logger.info(f"GetRecords returned: {num_records} records, has_next={has_next}")
+
             return response
 
         except Exception as e:
-            logger.error(f"GetRecords failed: {e}")
+            logger.error(f"GetRecords failed: {e}", exc_info=True)
             return None
 
     def poll_shard(self, mapping_uuid: str, mapping: Dict, shard_id: str,
@@ -1598,27 +1615,44 @@ class DynamoDBStreamsPoller:
 
         while not stop_event.is_set():
             try:
-                # Describe stream to get shards (use stream ID for ScyllaDB)
-                stream_desc = self.describe_stream(stream_id)
+                # Get ALL shards by paginating
+                all_shards = []
+                next_shard_id = None
+                page_num = 1
 
-                if not stream_desc:
-                    logger.error(f"[{mapping_uuid}] Stream not found, stopping polling")
-                    return
+                while True:
+                    # logger.debug(f"[{mapping_uuid}] Fetching shard page {page_num}...")
 
-                if stream_desc.get('StreamStatus') != 'ENABLED':
-                    logger.warning(f"[{mapping_uuid}] Stream not enabled: {stream_desc.get('StreamStatus')}")
-                    time.sleep(30)
-                    continue
+                    stream_desc = self.describe_stream(stream_id, exclusive_start_shard_id=next_shard_id)
 
-                shards = stream_desc.get('Shards', [])
+                    if not stream_desc:
+                        logger.error(f"[{mapping_uuid}] Stream not found, stopping polling")
+                        return
 
-                if not shards:
+                    if stream_desc.get('StreamStatus') != 'ENABLED':
+                        logger.warning(f"[{mapping_uuid}] Stream not enabled: {stream_desc.get('StreamStatus')}")
+                        break  # Exit pagination loop, will retry in 30s
+
+                    shards = stream_desc.get('Shards', [])
+                    all_shards.extend(shards)
+
+                    # logger.info(f"[{mapping_uuid}] Page {page_num}: Got {len(shards)} shards (total: {len(all_shards)})")
+
+                    # Check for more pages
+                    next_shard_id = stream_desc.get('LastEvaluatedShardId')
+                    if not next_shard_id:
+                        logger.info(f"[{mapping_uuid}] Shard discovery complete: {len(all_shards)} total shards")
+                        break  # No more pages
+
+                    page_num += 1
+
+                if not all_shards:
                     logger.warning(f"[{mapping_uuid}] No shards found")
                     time.sleep(10)
                     continue
 
                 # Start polling new shards
-                for shard in shards:
+                for shard in all_shards:
                     shard_id = shard['ShardId']
 
                     if shard_id in self.active_shards[mapping_uuid]:
@@ -1629,7 +1663,7 @@ class DynamoDBStreamsPoller:
                         logger.debug(f"[{mapping_uuid}] Waiting for parent shard {parent_shard_id}")
                         continue
 
-                    logger.info(f"[{mapping_uuid}] Starting shard poller for {shard_id}")
+                    logger.debug(f"[{mapping_uuid}] Starting shard poller for {shard_id}")
 
                     shard_thread = threading.Thread(
                         target=self.poll_shard,
