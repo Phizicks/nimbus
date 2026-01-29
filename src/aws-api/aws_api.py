@@ -1728,6 +1728,21 @@ def webhook_s3():
         logger.error(f"Webhook error: {e}", exc_info=True)
         return '', 500
 
+# Hack for ScyllaDB to disable tablets on Alternator keyspace
+def ensure_initial_tablets_tag(data):
+    # Dynamo CreateTable payload uses "Tags": [{"Key": "...", "Value": "..."}]
+    tags = data.get("Tags") or []
+
+    # If the tag already exists and is non-empty, do nothing
+    for t in tags:
+        if t.get("Key") == "system:initial_tablets":
+            return data
+
+    # Append the required tag to force vnode (no-tablets) creation
+    tags.append({"Key": "system:initial_tablets", "Value": "none"})
+    data["Tags"] = tags
+    return data
+
 def event_matches_config(event_name, object_key, config):
     """Check if S3 event matches notification configuration"""
     # Parse event patterns from config
@@ -2460,6 +2475,16 @@ def handle_request():
     }
 
     if operation in DYNAMODB_ACTIONS:
+        # Special-case CreateTable to enforce vnode-based table
+        if operation == "CreateTable":
+            data = get_request_data()
+            data = ensure_initial_tablets_tag(data)
+            logger.info("Added system:initial_tablets=none tag to CreateTable payload")
+
+            # forward the modified payload
+            response = proxy_to_dynamodb(operation, data)
+            return response
+
         # Special handling for DeleteTable to notify ESM should polling be enabled/active
         if operation == 'DeleteTable':
             data = get_request_data()

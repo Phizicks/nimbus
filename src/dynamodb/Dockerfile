@@ -1,8 +1,6 @@
 FROM scylladb/scylla:latest
 
-# USER root
-
-# # Properly append (>>) to avoid overwriting between echo commands
+# Enable CDC and Alternator Streams via config files
 RUN mkdir -p /etc/scylla/conf.d && \
     echo "enable_cdc: true" > /etc/scylla/conf.d/cdc.yaml && \
     echo "cdc_space: system_distributed" >> /etc/scylla/conf.d/cdc.yaml && \
@@ -15,5 +13,9 @@ USER scylla
 
 EXPOSE 8000
 
-CMD [ "--experimental-features=alternator-streams", "--alternator-write-isolation=always", "--alternator-address=0.0.0.0", "--alternator-port=8000" ]
-
+# Enable experimental Alternator Streams feature
+CMD [ "--experimental-features=alternator-streams", \
+        "--alternator-write-isolation=always", \
+        "--alternator-address=0.0.0.0", \
+        "--alternator-port=8000" \
+    ]
