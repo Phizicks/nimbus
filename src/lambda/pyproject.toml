@@ -1,7 +1,7 @@
 [project]
-name = "aws-api"
+name = "Nimbus - LocalCloud"
 version = "0.1.0"
-description = "Add your description here"
+description = "A free and open source cloud computing platform for local development"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

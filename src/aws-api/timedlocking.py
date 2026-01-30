@@ -2,8 +2,10 @@ import time
 import threading
 import logging
 
+
 class TimedLock:
     _logging = True
+
     def __init__(self, warn_threshold=1.0):
         self._lock = threading.Lock()
         self.warn_threshold = warn_threshold

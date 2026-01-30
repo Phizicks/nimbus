@@ -3,6 +3,7 @@ Complete SQS Implementation using ElasticMQ Backend
 Supports FIFO, DLQ, visibility timeout, and standard queue operations
 ElasticMQ natively supports all SQS features out of the box.
 """
+
 import boto3
 import json
 import time
@@ -20,9 +21,9 @@ logger = logging.getLogger(__name__)
 # reduce log level for boto3
 logging.getLogger("boto3").setLevel(logging.INFO)
 logging.getLogger("botocore").setLevel(logging.INFO)
-logging.getLogger('urllib3.connectionpool').setLevel(logging.WARNING)
-logging.getLogger('urllib3.poolmanager').setLevel(logging.WARNING)
-logging.getLogger('urllib3.util.retry').setLevel(logging.WARNING)
+logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
+logging.getLogger("urllib3.poolmanager").setLevel(logging.WARNING)
+logging.getLogger("urllib3.util.retry").setLevel(logging.WARNING)
 
 ACCOUNT_ID = "456645664566"
 REGION = "ap-southeast-2"
@@ -34,7 +35,7 @@ QUEUE_TYPE_STANDARD = "standard"
 QUEUE_TYPE_VISIBILITY = "visibility"
 QUEUE_TYPE_DELAY = "delay"
 
-DB_PATH = os.getenv('STORAGE_PATH', '/data') + '/sqs_metadata.db'
+DB_PATH = os.getenv("STORAGE_PATH", "/data") + "/sqs_metadata.db"
 
 
 class SQSDatabase:
@@ -53,7 +54,8 @@ class SQSDatabase:
             cursor = conn.cursor()
 
             # Queue metadata table
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS queue_metadata (
                     internal_name TEXT PRIMARY KEY,
                     queue_name TEXT NOT NULL,
@@ -66,18 +68,23 @@ class SQSDatabase:
                     updated_at INTEGER NOT NULL,
                     UNIQUE(account_id, queue_name)
                 )
-            """)
+            """
+            )
 
             # Index for faster lookups
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_account_queue
                 ON queue_metadata(account_id, queue_name)
-            """)
+            """
+            )
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_account_prefix
                 ON queue_metadata(account_id, queue_name)
-            """)
+            """
+            )
 
             conn.commit()
             logger.info("Database tables initialized")
@@ -92,9 +99,16 @@ class SQSDatabase:
         finally:
             conn.close()
 
-    def create_queue(self, internal_name: str, queue_name: str, queue_url: str,
-                     account_id: str, region: str, queue_type: str,
-                     attributes: Dict) -> bool:
+    def create_queue(
+        self,
+        internal_name: str,
+        queue_name: str,
+        queue_url: str,
+        account_id: str,
+        region: str,
+        queue_type: str,
+        attributes: Dict,
+    ) -> bool:
         """
         Store queue metadata
 
@@ -116,22 +130,25 @@ class SQSDatabase:
 
                 try:
                     now = int(time.time())
-                    cursor.execute("""
+                    cursor.execute(
+                        """
                         INSERT INTO queue_metadata
                         (internal_name, queue_name, queue_url, account_id, region, queue_type,
                          attributes, created_at, updated_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        internal_name,
-                        queue_name,
-                        queue_url,
-                        account_id,
-                        region,
-                        queue_type,
-                        json.dumps(attributes),
-                        now,
-                        now
-                    ))
+                    """,
+                        (
+                            internal_name,
+                            queue_name,
+                            queue_url,
+                            account_id,
+                            region,
+                            queue_type,
+                            json.dumps(attributes),
+                            now,
+                            now,
+                        ),
+                    )
                     conn.commit()
                     logger.info(f"Created queue metadata: {internal_name}")
                     return True
@@ -143,9 +160,12 @@ class SQSDatabase:
         """Get queue metadata by internal name"""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT * FROM queue_metadata WHERE internal_name = ?
-            """, (internal_name,))
+            """,
+                (internal_name,),
+            )
 
             row = cursor.fetchone()
             if row:
@@ -158,7 +178,7 @@ class SQSDatabase:
                     "queue_type": row["queue_type"],
                     "attributes": json.loads(row["attributes"]),
                     "created_at": row["created_at"],
-                    "updated_at": row["updated_at"]
+                    "updated_at": row["updated_at"],
                 }
             return None
 
@@ -166,10 +186,13 @@ class SQSDatabase:
         """Get queue metadata by account and queue name"""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT * FROM queue_metadata
                 WHERE account_id = ? AND queue_name = ? AND queue_type = 'standard'
-            """, (account_id, queue_name))
+            """,
+                (account_id, queue_name),
+            )
 
             row = cursor.fetchone()
             if row:
@@ -182,7 +205,7 @@ class SQSDatabase:
                     "queue_type": row["queue_type"],
                     "attributes": json.loads(row["attributes"]),
                     "created_at": row["created_at"],
-                    "updated_at": row["updated_at"]
+                    "updated_at": row["updated_at"],
                 }
             return None
 
@@ -201,18 +224,24 @@ class SQSDatabase:
             cursor = conn.cursor()
 
             if prefix:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT * FROM queue_metadata
                     WHERE account_id = ? AND queue_type = 'standard'
                     AND queue_name LIKE ?
                     ORDER BY queue_name
-                """, (account_id, f"{prefix}%"))
+                """,
+                    (account_id, f"{prefix}%"),
+                )
             else:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT * FROM queue_metadata
                     WHERE account_id = ? AND queue_type = 'standard'
                     ORDER BY queue_name
-                """, (account_id,))
+                """,
+                    (account_id,),
+                )
 
             rows = cursor.fetchall()
             return [
@@ -225,7 +254,7 @@ class SQSDatabase:
                     "queue_type": row["queue_type"],
                     "attributes": json.loads(row["attributes"]),
                     "created_at": row["created_at"],
-                    "updated_at": row["updated_at"]
+                    "updated_at": row["updated_at"],
                 }
                 for row in rows
             ]
@@ -245,11 +274,14 @@ class SQSDatabase:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
 
-                cursor.execute("""
+                cursor.execute(
+                    """
                     UPDATE queue_metadata
                     SET attributes = ?, updated_at = ?
                     WHERE internal_name = ?
-                """, (json.dumps(attributes), int(time.time()), internal_name))
+                """,
+                    (json.dumps(attributes), int(time.time()), internal_name),
+                )
 
                 conn.commit()
 
@@ -274,9 +306,12 @@ class SQSDatabase:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
 
-                cursor.execute("""
+                cursor.execute(
+                    """
                     DELETE FROM queue_metadata WHERE internal_name = ?
-                """, (internal_name,))
+                """,
+                    (internal_name,),
+                )
 
                 conn.commit()
 
@@ -295,10 +330,13 @@ class SQSDatabase:
         """Get total number of queues for an account"""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT COUNT(*) as count FROM queue_metadata
                 WHERE account_id = ? AND queue_type = 'standard'
-            """, (account_id,))
+            """,
+                (account_id,),
+            )
             row = cursor.fetchone()
             return row["count"] if row else 0
 
@@ -310,8 +348,13 @@ class SQSDatabase:
 class QueueManager:
     """Manages SQS-like queues using ElasticMQ as backend"""
 
-    def __init__(self, account_id: str, region: str,
-                 elasticmq_host: str = "sqs-backend", elasticmq_port: int = 9324):
+    def __init__(
+        self,
+        account_id: str,
+        region: str,
+        elasticmq_host: str = "sqs-backend",
+        elasticmq_port: int = 9324,
+    ):
         self.account_id = account_id
         self.region = region
         self.elasticmq_host = elasticmq_host
@@ -331,18 +374,20 @@ class QueueManager:
         # Queue URL cache
         self.queue_url_cache = {}
 
-        logger.info(f"QueueManager initialized for account {account_id}, region {region}")
+        logger.info(
+            f"QueueManager initialized for account {account_id}, region {region}"
+        )
         logger.info(f"ElasticMQ endpoint: {self.elasticmq_url}")
 
     def _init_sqs_client(self):
         """Initialize boto3 SQS client pointing to ElasticMQ"""
         try:
             self.sqs_client = boto3.client(
-                'sqs',
+                "sqs",
                 region_name=self.region,
                 endpoint_url=self.elasticmq_url,
-                aws_access_key_id='localcloud',
-                aws_secret_access_key='localcloud'
+                aws_access_key_id="localcloud",
+                aws_secret_access_key="localcloud",
             )
             logger.info("SQS client initialized successfully")
         except Exception as e:
@@ -373,7 +418,9 @@ class QueueManager:
                 "number_of_queues": self.db.get_queue_count(self.account_id),
             }
 
-    def _internal_name(self, queue_name: str, queue_type: str = QUEUE_TYPE_STANDARD) -> str:
+    def _internal_name(
+        self, queue_name: str, queue_type: str = QUEUE_TYPE_STANDARD
+    ) -> str:
         """Generate internal queue name for ElasticMQ"""
         return f"{queue_name}"
 
@@ -381,8 +428,12 @@ class QueueManager:
         """Generate DLQ name for a queue"""
         return f"{queue_name}-dlq"
 
-    def create_queue(self, queue_name: str, queue_type: str = QUEUE_TYPE_STANDARD,
-                    attributes: Optional[Dict] = None) -> Dict[str, Any]:
+    def create_queue(
+        self,
+        queue_name: str,
+        queue_type: str = QUEUE_TYPE_STANDARD,
+        attributes: Optional[Dict] = None,
+    ) -> Dict[str, Any]:
         """
         Create a new SQS queue in ElasticMQ
 
@@ -407,56 +458,63 @@ class QueueManager:
         try:
             # Create DLQ if specified
             dlq_url = None
-            if attributes.get('RedrivePolicy'):
+            if attributes.get("RedrivePolicy"):
                 dlq_name = self._get_dlq_name(queue_name)
                 dlq_internal_name = self._internal_name(dlq_name, queue_type)
 
                 dlq_response = self.sqs_client.create_queue(
                     QueueName=dlq_internal_name,
                     Attributes={
-                        'MessageRetentionPeriod': str(attributes.get('MessageRetentionPeriod', 345600))
-                    }
+                        "MessageRetentionPeriod": str(
+                            attributes.get("MessageRetentionPeriod", 345600)
+                        )
+                    },
                 )
-                dlq_url = dlq_response['QueueUrl']
+                dlq_url = dlq_response["QueueUrl"]
                 logger.info(f"Created DLQ: {dlq_name}")
 
             # Prepare queue attributes
             queue_attrs = {
-                'VisibilityTimeout': str(attributes.get('VisibilityTimeout', 30)),
-                'MessageRetentionPeriod': str(attributes.get('MessageRetentionPeriod', 345600)),
-                'DelaySeconds': str(attributes.get('DelaySeconds', 0)),
-                'ReceiveMessageWaitTimeSeconds': str(attributes.get('ReceiveMessageWaitTimeSeconds', 0)),
+                "VisibilityTimeout": str(attributes.get("VisibilityTimeout", 30)),
+                "MessageRetentionPeriod": str(
+                    attributes.get("MessageRetentionPeriod", 345600)
+                ),
+                "DelaySeconds": str(attributes.get("DelaySeconds", 0)),
+                "ReceiveMessageWaitTimeSeconds": str(
+                    attributes.get("ReceiveMessageWaitTimeSeconds", 0)
+                ),
             }
 
             # Add redrive policy if DLQ exists
             if dlq_url:
                 redrive_policy = {
-                    'deadLetterTargetArn': f'arn:aws:sqs:{self.region}:{self.account_id}:{self._get_dlq_name(queue_name)}',
-                    'maxReceiveCount': str(attributes.get('maxReceiveCount', 3))
+                    "deadLetterTargetArn": f"arn:aws:sqs:{self.region}:{self.account_id}:{self._get_dlq_name(queue_name)}",
+                    "maxReceiveCount": str(attributes.get("maxReceiveCount", 3)),
                 }
-                queue_attrs['RedrivePolicy'] = json.dumps(redrive_policy)
+                queue_attrs["RedrivePolicy"] = json.dumps(redrive_policy)
 
             # Create main queue
             response = self.sqs_client.create_queue(
-                QueueName=internal_name,
-                Attributes=queue_attrs
+                QueueName=internal_name, Attributes=queue_attrs
             )
 
-            queue_url = response['QueueUrl']
+            queue_url = response["QueueUrl"]
             logger.info(f"Created queue: {queue_name} -> {queue_url}")
 
             # Store metadata in SQLite
             metadata = {
-                "VisibilityTimeout": int(queue_attrs['VisibilityTimeout']),
-                "MessageRetentionPeriod": int(queue_attrs['MessageRetentionPeriod']),
-                "DelaySeconds": int(queue_attrs['DelaySeconds']),
-                "ReceiveMessageWaitTimeSeconds": int(queue_attrs['ReceiveMessageWaitTimeSeconds']),
+                "VisibilityTimeout": int(queue_attrs["VisibilityTimeout"]),
+                "MessageRetentionPeriod": int(queue_attrs["MessageRetentionPeriod"]),
+                "DelaySeconds": int(queue_attrs["DelaySeconds"]),
+                "ReceiveMessageWaitTimeSeconds": int(
+                    queue_attrs["ReceiveMessageWaitTimeSeconds"]
+                ),
             }
 
             if dlq_url:
-                metadata['RedrivePolicy'] = {
-                    'deadLetterTargetArn': redrive_policy['deadLetterTargetArn'],
-                    'maxReceiveCount': int(redrive_policy['maxReceiveCount'])
+                metadata["RedrivePolicy"] = {
+                    "deadLetterTargetArn": redrive_policy["deadLetterTargetArn"],
+                    "maxReceiveCount": int(redrive_policy["maxReceiveCount"]),
                 }
 
             self.db.create_queue(
@@ -466,15 +524,15 @@ class QueueManager:
                 account_id=self.account_id,
                 region=self.region,
                 queue_type=queue_type,
-                attributes=metadata
+                attributes=metadata,
             )
 
             self.queue_url_cache[internal_name] = queue_url
 
             return {
-                'QueueUrl': queue_url,
-                'QueueName': queue_name,
-                'Attributes': metadata
+                "QueueUrl": queue_url,
+                "QueueName": queue_name,
+                "Attributes": metadata,
             }
 
         except Exception as e:
@@ -500,17 +558,16 @@ class QueueManager:
         # Check database
         queue_meta = self.db.get_queue_by_name(self.account_id, queue_name)
         if queue_meta:
-            url = queue_meta['queue_url']
+            url = queue_meta["queue_url"]
             self.queue_url_cache[internal_name] = url
             return url
 
         # Try to get from ElasticMQ
         try:
             response = self.sqs_client.get_queue_url(
-                QueueName=internal_name,
-                QueueOwnerAWSAccountId=self.account_id
+                QueueName=internal_name, QueueOwnerAWSAccountId=self.account_id
             )
-            url = response['QueueUrl']
+            url = response["QueueUrl"]
             self.queue_url_cache[internal_name] = url
             return url
         except Exception as e:
@@ -529,7 +586,7 @@ class QueueManager:
         """
         try:
             response = self.sqs_client.list_queues()
-            queue_urls = response.get('QueueUrls', [])
+            queue_urls = response.get("QueueUrls", [])
 
             # Filter by prefix if provided
             if prefix:
@@ -572,9 +629,13 @@ class QueueManager:
             logger.error(f"Error deleting queue {queue_name}: {e}")
             return False
 
-    def send_message(self, queue_name: str, message_body: str,
-                    message_attributes: Optional[Dict] = None,
-                    delay_seconds: Optional[int] = None) -> Optional[Dict]:
+    def send_message(
+        self,
+        queue_name: str,
+        message_body: str,
+        message_attributes: Optional[Dict] = None,
+        delay_seconds: Optional[int] = None,
+    ) -> Optional[Dict]:
         """
         Send a message to a queue
 
@@ -593,16 +654,13 @@ class QueueManager:
                 logger.info(f"Queue not found: {queue_name}")
                 return None
 
-            kwargs = {
-                'QueueUrl': queue_url,
-                'MessageBody': message_body
-            }
+            kwargs = {"QueueUrl": queue_url, "MessageBody": message_body}
 
             if message_attributes:
-                kwargs['MessageAttributes'] = message_attributes
+                kwargs["MessageAttributes"] = message_attributes
 
             if delay_seconds is not None:
-                kwargs['DelaySeconds'] = delay_seconds
+                kwargs["DelaySeconds"] = delay_seconds
 
             response = self.sqs_client.send_message(**kwargs)
             logger.info(f"Sent message to {queue_name}: {response.get('MessageId')}")
@@ -612,7 +670,9 @@ class QueueManager:
             logger.error(f"Error sending message to {queue_name}: {e}")
             return None
 
-    def send_message_batch(self, queue_name: str, messages: List[Dict]) -> Optional[Dict]:
+    def send_message_batch(
+        self, queue_name: str, messages: List[Dict]
+    ) -> Optional[Dict]:
         """
         Send batch of messages to a queue
 
@@ -630,8 +690,7 @@ class QueueManager:
                 return None
 
             response = self.sqs_client.send_message_batch(
-                QueueUrl=queue_url,
-                Entries=messages
+                QueueUrl=queue_url, Entries=messages
             )
             logger.info(f"Sent {len(messages)} messages to {queue_name}")
             return response
@@ -640,9 +699,13 @@ class QueueManager:
             logger.error(f"Error sending batch to {queue_name}: {e}")
             return None
 
-    def receive_message(self, queue_name: str, max_messages: int = 1,
-                       visibility_timeout: Optional[int] = None,
-                       wait_time_seconds: int = 0) -> Optional[Dict]:
+    def receive_message(
+        self,
+        queue_name: str,
+        max_messages: int = 1,
+        visibility_timeout: Optional[int] = None,
+        wait_time_seconds: int = 0,
+    ) -> Optional[Dict]:
         """
         Receive messages from a queue
 
@@ -662,14 +725,14 @@ class QueueManager:
                 return None
 
             kwargs = {
-                'QueueUrl': queue_url,
-                'MaxNumberOfMessages': max(1, min(10, max_messages)),
-                'MessageAttributeNames': ['All'],
-                'WaitTimeSeconds': wait_time_seconds
+                "QueueUrl": queue_url,
+                "MaxNumberOfMessages": max(1, min(10, max_messages)),
+                "MessageAttributeNames": ["All"],
+                "WaitTimeSeconds": wait_time_seconds,
             }
 
             if visibility_timeout is not None:
-                kwargs['VisibilityTimeout'] = visibility_timeout
+                kwargs["VisibilityTimeout"] = visibility_timeout
 
             response = self.sqs_client.receive_message(**kwargs)
             return response
@@ -696,8 +759,7 @@ class QueueManager:
                 return False
 
             self.sqs_client.delete_message(
-                QueueUrl=queue_url,
-                ReceiptHandle=receipt_handle
+                QueueUrl=queue_url, ReceiptHandle=receipt_handle
             )
             return True
 
@@ -705,7 +767,9 @@ class QueueManager:
             logger.error(f"Error deleting message: {e}")
             return False
 
-    def delete_message_batch(self, queue_name: str, entries: List[Dict]) -> Optional[Dict]:
+    def delete_message_batch(
+        self, queue_name: str, entries: List[Dict]
+    ) -> Optional[Dict]:
         """
         Delete batch of messages from a queue
 
@@ -723,8 +787,7 @@ class QueueManager:
                 return None
 
             response = self.sqs_client.delete_message_batch(
-                QueueUrl=queue_url,
-                Entries=entries
+                QueueUrl=queue_url, Entries=entries
             )
             return response
 
@@ -732,8 +795,9 @@ class QueueManager:
             logger.error(f"Error deleting batch: {e}")
             return None
 
-    def change_message_visibility(self, queue_name: str, receipt_handle: str,
-                                 visibility_timeout: int) -> bool:
+    def change_message_visibility(
+        self, queue_name: str, receipt_handle: str, visibility_timeout: int
+    ) -> bool:
         """
         Change visibility timeout for a message
 
@@ -754,7 +818,7 @@ class QueueManager:
             self.sqs_client.change_message_visibility(
                 QueueUrl=queue_url,
                 ReceiptHandle=receipt_handle,
-                VisibilityTimeout=visibility_timeout
+                VisibilityTimeout=visibility_timeout,
             )
             return True
 
@@ -762,8 +826,9 @@ class QueueManager:
             logger.error(f"Error changing message visibility: {e}")
             return False
 
-    def change_message_visibility_batch(self, queue_name: str,
-                                       entries: List[Dict]) -> Optional[Dict]:
+    def change_message_visibility_batch(
+        self, queue_name: str, entries: List[Dict]
+    ) -> Optional[Dict]:
         """
         Change visibility timeout for batch of messages
 
@@ -781,8 +846,7 @@ class QueueManager:
                 return None
 
             response = self.sqs_client.change_message_visibility_batch(
-                QueueUrl=queue_url,
-                Entries=entries
+                QueueUrl=queue_url, Entries=entries
             )
             return response
 
@@ -790,8 +854,9 @@ class QueueManager:
             logger.error(f"Error changing visibility batch: {e}")
             return None
 
-    def get_queue_attributes(self, queue_name: str,
-                            attribute_names: Optional[List[str]] = None) -> Optional[Dict]:
+    def get_queue_attributes(
+        self, queue_name: str, attribute_names: Optional[List[str]] = None
+    ) -> Optional[Dict]:
         """
         Get queue attributes
 
@@ -809,13 +874,12 @@ class QueueManager:
                 return None
 
             if not attribute_names:
-                attribute_names = ['All']
+                attribute_names = ["All"]
 
             response = self.sqs_client.get_queue_attributes(
-                QueueUrl=queue_url,
-                AttributeNames=attribute_names
+                QueueUrl=queue_url, AttributeNames=attribute_names
             )
-            return response.get('Attributes', {})
+            return response.get("Attributes", {})
 
         except Exception as e:
             logger.error(f"Error getting queue attributes: {e}")
@@ -839,8 +903,7 @@ class QueueManager:
                 return False
 
             self.sqs_client.set_queue_attributes(
-                QueueUrl=queue_url,
-                Attributes=attributes
+                QueueUrl=queue_url, Attributes=attributes
             )
             return True
 
@@ -860,80 +923,86 @@ def logging_request():
     if queue_manager is None:
         queue_manager = QueueManager(ACCOUNT_ID, REGION)
         queue_manager.start()
-    if request.path != '/healthcheck':
-        logger.debug(f"Request: {request.method} {request.path} from {request.remote_addr}, Headers: {dict(request.headers)}")
+    if request.path != "/healthcheck":
+        logger.debug(
+            f"Request: {request.method} {request.path} from {request.remote_addr}, Headers: {dict(request.headers)}"
+        )
 
 
-@app.route('/health', methods=['GET'])
+@app.route("/health", methods=["GET"])
 def health():
     """Health check endpoint"""
-    return jsonify({'status': 'ok'}), 200
+    return jsonify({"status": "ok"}), 200
 
 
-@app.route('/healthcheck', methods=['GET'])
+@app.route("/healthcheck", methods=["GET"])
 def healthcheck():
     """Get queue manager status"""
     if queue_manager:
-        return jsonify({ "is_ready": queue_manager.sqs_client is not None }), 200
-    return jsonify({'error': 'Not initialized'}), 503
+        return jsonify({"is_ready": queue_manager.sqs_client is not None}), 200
+    return jsonify({"error": "Not initialized"}), 503
 
-@app.route('/status', methods=['GET'])
+
+@app.route("/status", methods=["GET"])
 def status():
     """Get queue manager status"""
     if queue_manager:
         return jsonify(queue_manager.get_status()), 200
-    return jsonify({'error': 'Not initialized'}), 503
+    return jsonify({"error": "Not initialized"}), 503
 
 
-@app.route('/', methods=['POST'], strict_slashes=False)
+@app.route("/", methods=["POST"], strict_slashes=False)
 def handle_sqs_request():
     """Main SQS request handler - routes to appropriate action"""
     try:
         # Extract action from X-Amz-Target header or Action parameter
         action = None
-        target = request.headers.get('X-Amz-Target', '')
+        target = request.headers.get("X-Amz-Target", "")
 
-        if target and '.' in target:
-            action = target.split('.')[-1]  # "AmazonSQS.CreateQueue" → "CreateQueue"
+        if target and "." in target:
+            action = target.split(".")[-1]  # "AmazonSQS.CreateQueue" → "CreateQueue"
         else:
             # Try form data or JSON body
             if request.form:
-                action = request.form.get('Action')
+                action = request.form.get("Action")
             elif request.is_json:
-                action = request.json.get('Action')
+                action = request.json.get("Action")
 
         if not action:
-            return error_response('MissingAction', 'Missing Action parameter'), 400
+            return error_response("MissingAction", "Missing Action parameter"), 400
 
         logger.info(f"Handling action: {action} - Data: {request.form}")
 
         # Route to appropriate handler
         action_handlers = {
-            'CreateQueue': handle_create_queue,
-            'GetQueueUrl': handle_get_queue_url,
-            'ListQueues': handle_list_queues,
-            'DeleteQueue': handle_delete_queue,
-            'SendMessage': handle_send_message,
-            'SendMessageBatch': handle_send_message_batch,
-            'ReceiveMessage': handle_receive_message,
-            'DeleteMessage': handle_delete_message,
-            'DeleteMessageBatch': handle_delete_message_batch,
-            'ChangeMessageVisibility': handle_change_message_visibility,
-            'ChangeMessageVisibilityBatch': handle_change_message_visibility_batch,
-            'GetQueueAttributes': handle_get_queue_attributes,
-            'SetQueueAttributes': handle_set_queue_attributes,
-            'PurgeQueue': handle_purge_queue,
+            "CreateQueue": handle_create_queue,
+            "GetQueueUrl": handle_get_queue_url,
+            "ListQueues": handle_list_queues,
+            "DeleteQueue": handle_delete_queue,
+            "SendMessage": handle_send_message,
+            "SendMessageBatch": handle_send_message_batch,
+            "ReceiveMessage": handle_receive_message,
+            "DeleteMessage": handle_delete_message,
+            "DeleteMessageBatch": handle_delete_message_batch,
+            "ChangeMessageVisibility": handle_change_message_visibility,
+            "ChangeMessageVisibilityBatch": handle_change_message_visibility_batch,
+            "GetQueueAttributes": handle_get_queue_attributes,
+            "SetQueueAttributes": handle_set_queue_attributes,
+            "PurgeQueue": handle_purge_queue,
         }
 
         handler = action_handlers.get(action)
         if not handler:
-            return error_response('InvalidAction', f'Unrecognized action: {action}'), 400
+            return (
+                error_response("InvalidAction", f"Unrecognized action: {action}"),
+                400,
+            )
 
         return handler()
 
     except Exception as e:
         logger.error(f"Error handling request: {e}", exc_info=True)
-        return error_response('InternalError', str(e)), 500
+        return error_response("InternalError", str(e)), 500
 
 
 def get_request_param(name: str, default=None):
@@ -962,12 +1031,10 @@ def get_request_param(name: str, default=None):
         logger.debug(f"Returning: {default}")
         return default
 
+
 def error_response(error_type: str, message: str) -> Response:
     """Generate AWS SQS-style error response"""
-    return jsonify({
-        "__type": f"{error_type}",
-        "message": message
-    })
+    return jsonify({"__type": f"{error_type}", "message": message})
 
 
 def success_response(data: Dict) -> Response:
@@ -983,107 +1050,111 @@ def handle_create_queue():
         logger.info(f"JSON data: {request.json if request.is_json else 'Not JSON'}")
         logger.info(f"Raw data: {request.data}")
         logger.info(f"Args: {dict(request.args)}")
-        queue_name = get_request_param('QueueName')
+        queue_name = get_request_param("QueueName")
         if not queue_name:
-            return error_response('MissingParameter', 'QueueName is required'), 400
+            return error_response("MissingParameter", "QueueName is required"), 400
 
         # Extract attributes
         attributes = {}
-        for key in ['VisibilityTimeout', 'MessageRetentionPeriod', 'DelaySeconds',
-                   'ReceiveMessageWaitTimeSeconds', 'maxReceiveCount']:
-            value = get_request_param(f'Attribute.Name.{key}') or get_request_param(key)
+        for key in [
+            "VisibilityTimeout",
+            "MessageRetentionPeriod",
+            "DelaySeconds",
+            "ReceiveMessageWaitTimeSeconds",
+            "maxReceiveCount",
+        ]:
+            value = get_request_param(f"Attribute.Name.{key}") or get_request_param(key)
             if value:
                 attributes[key] = int(value) if value.isdigit() else value
 
         # Check for RedrivePolicy
-        redrive_policy = get_request_param('RedrivePolicy')
+        redrive_policy = get_request_param("RedrivePolicy")
         if redrive_policy:
-            attributes['RedrivePolicy'] = redrive_policy
+            attributes["RedrivePolicy"] = redrive_policy
 
         result = queue_manager.create_queue(queue_name, attributes=attributes)
 
-        return success_response({
-            'QueueUrl': result['QueueUrl']
-        }), 200
+        return success_response({"QueueUrl": result["QueueUrl"]}), 200
 
     except Exception as e:
         logger.error(f"Error in CreateQueue: {e}")
-        return error_response('InternalError', str(e)), 500
+        return error_response("InternalError", str(e)), 500
 
 
 def handle_get_queue_url():
     """Handle GetQueueUrl action"""
     try:
-        queue_name = get_request_param('QueueName')
+        queue_name = get_request_param("QueueName")
         if not queue_name:
-            return error_response('MissingParameter', 'QueueName is required'), 400
+            return error_response("MissingParameter", "QueueName is required"), 400
 
         queue_url = queue_manager.get_queue_url(queue_name)
         if not queue_url:
-            return error_response('QueueDoesNotExist', f'Queue {queue_name} does not exist'), 404
+            return (
+                error_response(
+                    "QueueDoesNotExist", f"Queue {queue_name} does not exist"
+                ),
+                404,
+            )
 
-        return success_response({
-            'QueueUrl': queue_url
-        }), 200
+        return success_response({"QueueUrl": queue_url}), 200
 
     except Exception as e:
         logger.error(f"Error in GetQueueUrl: {e}")
-        return error_response('InternalError', str(e)), 500
+        return error_response("InternalError", str(e)), 500
 
 
 def handle_list_queues():
     """Handle ListQueues action"""
     try:
-        prefix = get_request_param('QueueNamePrefix')
+        prefix = get_request_param("QueueNamePrefix")
         queue_urls = queue_manager.list_queues(prefix=prefix)
 
-        return success_response({
-            'QueueUrls': queue_urls
-        }), 200
+        return success_response({"QueueUrls": queue_urls}), 200
 
     except Exception as e:
         logger.error(f"Error in ListQueues: {e}")
-        return error_response('InternalError', str(e)), 500
+        return error_response("InternalError", str(e)), 500
 
 
 def handle_delete_queue():
     """Handle DeleteQueue action"""
     try:
-        queue_url = get_request_param('QueueUrl')
+        queue_url = get_request_param("QueueUrl")
         if not queue_url:
-            return error_response('MissingParameter', 'QueueUrl is required'), 400
+            return error_response("MissingParameter", "QueueUrl is required"), 400
 
         # Extract queue name from URL
-        queue_name = queue_url.split('/')[-1]
+        queue_name = queue_url.split("/")[-1]
 
         success = queue_manager.delete_queue(queue_name)
         if not success:
-            return error_response('QueueDoesNotExist', f'Queue does not exist'), 404
+            return error_response("QueueDoesNotExist", f"Queue does not exist"), 404
 
         return success_response({}), 200
 
     except Exception as e:
         logger.error(f"Error in DeleteQueue: {e}")
-        return error_response('InternalError', str(e)), 500
+        return error_response("InternalError", str(e)), 500
 
 
 def handle_send_message():
     """Handle SendMessage action"""
     try:
-        queue_url = get_request_param('QueueUrl')
-        message_body = get_request_param('MessageBody')
+        queue_url = get_request_param("QueueUrl")
+        message_body = get_request_param("MessageBody")
 
         if not queue_url:
-            return error_response('MissingParameter', 'QueueUrl is required'), 400
+            return error_response("MissingParameter", "QueueUrl is required"), 400
         if not message_body:
-            return error_response('MissingParameter', 'MessageBody is required'), 400
+            return error_response("MissingParameter", "MessageBody is required"), 400
 
         # Extract queue name from URL
-        queue_name = queue_url.split('/')[-1]
+        queue_name = queue_url.split("/")[-1]
 
         # Extract message attributes
         message_attributes = {}
-        delay_seconds = get_request_param('DelaySeconds')
+        delay_seconds = get_request_param("DelaySeconds")
         if delay_seconds:
             delay_seconds = int(delay_seconds)
 
@@ -1091,297 +1162,322 @@ def handle_send_message():
             queue_name=queue_name,
             message_body=message_body,
             message_attributes=message_attributes,
-            delay_seconds=delay_seconds
+            delay_seconds=delay_seconds,
         )
 
         if not result:
-            return error_response('QueueDoesNotExist', 'Queue does not exist'), 404
+            return error_response("QueueDoesNotExist", "Queue does not exist"), 404
 
-        return success_response({
-            'MessageId': result.get('MessageId'),
-            'MD5OfMessageBody': result.get('MD5OfMessageBody')
-        }), 200
+        return (
+            success_response(
+                {
+                    "MessageId": result.get("MessageId"),
+                    "MD5OfMessageBody": result.get("MD5OfMessageBody"),
+                }
+            ),
+            200,
+        )
 
     except Exception as e:
         logger.error(f"Error in SendMessage: {e}")
-        return error_response('InternalError', str(e)), 500
+        return error_response("InternalError", str(e)), 500
 
 
 def handle_send_message_batch():
     """Handle SendMessageBatch action"""
     try:
-        queue_url = get_request_param('QueueUrl')
+        queue_url = get_request_param("QueueUrl")
         if not queue_url:
-            return error_response('MissingParameter', 'QueueUrl is required'), 400
+            return error_response("MissingParameter", "QueueUrl is required"), 400
 
         # Extract queue name from URL
-        queue_name = queue_url.split('/')[-1]
+        queue_name = queue_url.split("/")[-1]
 
         try:
             data = json.loads(request.data)
-            if 'Entries' not in data:
-                raise Exception('Entries missing in request')
+            if "Entries" not in data:
+                raise Exception("Entries missing in request")
         except Exception as e:
             raise Exception("Missing request payload")
 
         # Extract batch entries
         messages = []
-        entries = data.get('Entries', [])
+        entries = data.get("Entries", [])
         for entry in entries:
-            messages.append({
-                'Id': entry.get('Id'),
-                'MessageBody': entry.get('MessageBody'),
-                'DelaySeconds': entry.get('DelaySeconds', 0)
-            })
+            messages.append(
+                {
+                    "Id": entry.get("Id"),
+                    "MessageBody": entry.get("MessageBody"),
+                    "DelaySeconds": entry.get("DelaySeconds", 0),
+                }
+            )
 
         result = queue_manager.send_message_batch(queue_name, messages)
 
         if not result:
-            return error_response('QueueDoesNotExist', 'Queue does not exist'), 404
+            return error_response("QueueDoesNotExist", "Queue does not exist"), 404
 
-        return success_response({
-            'Successful': result.get('Successful', []),
-            'Failed': result.get('Failed', [])
-        }), 200
+        return (
+            success_response(
+                {
+                    "Successful": result.get("Successful", []),
+                    "Failed": result.get("Failed", []),
+                }
+            ),
+            200,
+        )
 
     except Exception as e:
         logger.error(f"Error in SendMessageBatch: {e}")
-        return error_response('InternalError', str(e)), 500
+        return error_response("InternalError", str(e)), 500
 
 
 def handle_receive_message():
     """Handle ReceiveMessage action"""
     try:
-        queue_url = get_request_param('QueueUrl')
+        queue_url = get_request_param("QueueUrl")
         if not queue_url:
-            return error_response('MissingParameter', 'QueueUrl is required'), 400
+            return error_response("MissingParameter", "QueueUrl is required"), 400
 
         # Extract queue name from URL
-        queue_name = queue_url.split('/')[-1]
+        queue_name = queue_url.split("/")[-1]
 
-        max_messages = int(get_request_param('MaxNumberOfMessages', 1))
-        visibility_timeout = get_request_param('VisibilityTimeout')
+        max_messages = int(get_request_param("MaxNumberOfMessages", 1))
+        visibility_timeout = get_request_param("VisibilityTimeout")
         if visibility_timeout:
             visibility_timeout = int(visibility_timeout)
-        wait_time_seconds = int(get_request_param('WaitTimeSeconds', 0))
+        wait_time_seconds = int(get_request_param("WaitTimeSeconds", 0))
 
         result = queue_manager.receive_message(
             queue_name=queue_name,
             max_messages=max_messages,
             visibility_timeout=visibility_timeout,
-            wait_time_seconds=wait_time_seconds
+            wait_time_seconds=wait_time_seconds,
         )
 
         if result is None:
-            return error_response('QueueDoesNotExist', 'Queue does not exist'), 404
+            return error_response("QueueDoesNotExist", "Queue does not exist"), 404
 
-        return success_response({
-            'Messages': result.get('Messages', [])
-        }), 200
+        return success_response({"Messages": result.get("Messages", [])}), 200
 
     except Exception as e:
         logger.error(f"Error in ReceiveMessage: {e}")
-        return error_response('InternalError', str(e)), 500
+        return error_response("InternalError", str(e)), 500
 
 
 def handle_delete_message():
     """Handle DeleteMessage action"""
     try:
-        queue_url = get_request_param('QueueUrl')
-        receipt_handle = get_request_param('ReceiptHandle')
+        queue_url = get_request_param("QueueUrl")
+        receipt_handle = get_request_param("ReceiptHandle")
 
         if not queue_url:
-            return error_response('MissingParameter', 'QueueUrl is required'), 400
+            return error_response("MissingParameter", "QueueUrl is required"), 400
         if not receipt_handle:
-            return error_response('MissingParameter', 'ReceiptHandle is required'), 400
+            return error_response("MissingParameter", "ReceiptHandle is required"), 400
 
         # Extract queue name from URL
-        queue_name = queue_url.split('/')[-1]
+        queue_name = queue_url.split("/")[-1]
 
         success = queue_manager.delete_message(queue_name, receipt_handle)
 
         if not success:
-            return error_response('ReceiptHandleIsInvalid', 'Invalid receipt handle'), 400
+            return (
+                error_response("ReceiptHandleIsInvalid", "Invalid receipt handle"),
+                400,
+            )
 
         return success_response({}), 200
 
     except Exception as e:
         logger.error(f"Error in DeleteMessage: {e}")
-        return error_response('InternalError', str(e)), 500
+        return error_response("InternalError", str(e)), 500
 
 
 def handle_delete_message_batch():
     """Handle DeleteMessageBatch action"""
     try:
-        queue_url = get_request_param('QueueUrl')
+        queue_url = get_request_param("QueueUrl")
         if not queue_url:
-            return error_response('MissingParameter', 'QueueUrl is required'), 400
+            return error_response("MissingParameter", "QueueUrl is required"), 400
 
         # Extract queue name from URL
-        queue_name = queue_url.split('/')[-1]
+        queue_name = queue_url.split("/")[-1]
 
         # Extract batch entries
         entries = []
         if request.is_json:
-            entries = request.json.get('Entries', [])
+            entries = request.json.get("Entries", [])
 
         result = queue_manager.delete_message_batch(queue_name, entries)
 
         if not result:
-            return error_response('QueueDoesNotExist', 'Queue does not exist'), 404
+            return error_response("QueueDoesNotExist", "Queue does not exist"), 404
 
-        return success_response({
-            'Successful': result.get('Successful', []),
-            'Failed': result.get('Failed', [])
-        }), 200
+        return (
+            success_response(
+                {
+                    "Successful": result.get("Successful", []),
+                    "Failed": result.get("Failed", []),
+                }
+            ),
+            200,
+        )
 
     except Exception as e:
         logger.error(f"Error in DeleteMessageBatch: {e}")
-        return error_response('InternalError', str(e)), 500
+        return error_response("InternalError", str(e)), 500
 
 
 def handle_change_message_visibility():
     """Handle ChangeMessageVisibility action"""
     try:
-        queue_url = get_request_param('QueueUrl')
-        receipt_handle = get_request_param('ReceiptHandle')
-        visibility_timeout = get_request_param('VisibilityTimeout')
+        queue_url = get_request_param("QueueUrl")
+        receipt_handle = get_request_param("ReceiptHandle")
+        visibility_timeout = get_request_param("VisibilityTimeout")
 
         if not queue_url:
-            return error_response('MissingParameter', 'QueueUrl is required'), 400
+            return error_response("MissingParameter", "QueueUrl is required"), 400
         if not receipt_handle:
-            return error_response('MissingParameter', 'ReceiptHandle is required'), 400
+            return error_response("MissingParameter", "ReceiptHandle is required"), 400
         if visibility_timeout is None:
-            return error_response('MissingParameter', 'VisibilityTimeout is required'), 400
+            return (
+                error_response("MissingParameter", "VisibilityTimeout is required"),
+                400,
+            )
 
         # Extract queue name from URL
-        queue_name = queue_url.split('/')[-1]
+        queue_name = queue_url.split("/")[-1]
 
         success = queue_manager.change_message_visibility(
             queue_name, receipt_handle, int(visibility_timeout)
         )
 
         if not success:
-            return error_response('MessageNotInflight', 'Message not in flight'), 400
+            return error_response("MessageNotInflight", "Message not in flight"), 400
 
         return success_response({}), 200
 
     except Exception as e:
         logger.error(f"Error in ChangeMessageVisibility: {e}")
-        return error_response('InternalError', str(e)), 500
+        return error_response("InternalError", str(e)), 500
 
 
 def handle_change_message_visibility_batch():
     """Handle ChangeMessageVisibilityBatch action"""
     try:
-        queue_url = get_request_param('QueueUrl')
+        queue_url = get_request_param("QueueUrl")
         if not queue_url:
-            return error_response('MissingParameter', 'QueueUrl is required'), 400
+            return error_response("MissingParameter", "QueueUrl is required"), 400
 
         # Extract queue name from URL
-        queue_name = queue_url.split('/')[-1]
+        queue_name = queue_url.split("/")[-1]
 
         # Extract batch entries
         entries = []
         if request.is_json:
-            entries = request.json.get('Entries', [])
+            entries = request.json.get("Entries", [])
 
         result = queue_manager.change_message_visibility_batch(queue_name, entries)
 
         if not result:
-            return error_response('QueueDoesNotExist', 'Queue does not exist'), 404
+            return error_response("QueueDoesNotExist", "Queue does not exist"), 404
 
-        return success_response({
-            'Successful': result.get('Successful', []),
-            'Failed': result.get('Failed', [])
-        }), 200
+        return (
+            success_response(
+                {
+                    "Successful": result.get("Successful", []),
+                    "Failed": result.get("Failed", []),
+                }
+            ),
+            200,
+        )
 
     except Exception as e:
         logger.error(f"Error in ChangeMessageVisibilityBatch: {e}")
-        return error_response('InternalError', str(e)), 500
+        return error_response("InternalError", str(e)), 500
 
 
 def handle_get_queue_attributes():
     """Handle GetQueueAttributes action"""
     try:
-        queue_url = get_request_param('QueueUrl')
+        queue_url = get_request_param("QueueUrl")
         if not queue_url:
-            return error_response('MissingParameter', 'QueueUrl is required'), 400
+            return error_response("MissingParameter", "QueueUrl is required"), 400
 
         # Extract queue name from URL
-        queue_name = queue_url.split('/')[-1]
+        queue_name = queue_url.split("/")[-1]
 
         # Extract attribute names
-        attribute_names = get_request_param('AttributeNames') or ['All']
+        attribute_names = get_request_param("AttributeNames") or ["All"]
         if isinstance(attribute_names, str):
             attribute_names = [attribute_names]
 
         attributes = queue_manager.get_queue_attributes(queue_name, attribute_names)
 
         if attributes is None:
-            return error_response('QueueDoesNotExist', 'Queue does not exist'), 404
+            return error_response("QueueDoesNotExist", "Queue does not exist"), 404
 
-        return success_response({
-            'Attributes': attributes
-        }), 200
+        return success_response({"Attributes": attributes}), 200
 
     except Exception as e:
         logger.error(f"Error in GetQueueAttributes: {e}")
-        return error_response('InternalError', str(e)), 500
+        return error_response("InternalError", str(e)), 500
 
 
 def handle_set_queue_attributes():
     """Handle SetQueueAttributes action"""
     try:
-        queue_url = get_request_param('QueueUrl')
+        queue_url = get_request_param("QueueUrl")
         if not queue_url:
-            return error_response('MissingParameter', 'QueueUrl is required'), 400
+            return error_response("MissingParameter", "QueueUrl is required"), 400
 
         # Extract queue name from URL
-        queue_name = queue_url.split('/')[-1]
+        queue_name = queue_url.split("/")[-1]
 
         # Extract attributes
         attributes = {}
         if request.is_json:
-            attributes = request.json.get('Attributes', {})
+            attributes = request.json.get("Attributes", {})
 
         success = queue_manager.set_queue_attributes(queue_name, attributes)
 
         if not success:
-            return error_response('QueueDoesNotExist', 'Queue does not exist'), 404
+            return error_response("QueueDoesNotExist", "Queue does not exist"), 404
 
         return success_response({}), 200
 
     except Exception as e:
         logger.error(f"Error in SetQueueAttributes: {e}")
-        return error_response('InternalError', str(e)), 500
+        return error_response("InternalError", str(e)), 500
 
 
 def handle_purge_queue():
     """Handle PurgeQueue action"""
     try:
-        queue_url = get_request_param('QueueUrl')
+        queue_url = get_request_param("QueueUrl")
         if not queue_url:
-            return error_response('MissingParameter', 'QueueUrl is required'), 400
+            return error_response("MissingParameter", "QueueUrl is required"), 400
 
         # Extract queue name from URL
-        queue_name = queue_url.split('/')[-1]
+        queue_name = queue_url.split("/")[-1]
 
         # Purge queue by calling SQS client directly
         try:
             url = queue_manager.get_queue_url(queue_name)
             if not url:
-                return error_response('QueueDoesNotExist', 'Queue does not exist'), 404
+                return error_response("QueueDoesNotExist", "Queue does not exist"), 404
 
             queue_manager.sqs_client.purge_queue(QueueUrl=url)
             return success_response({}), 200
         except Exception as e:
             logger.error(f"Error purging queue: {e}")
-            return error_response('InternalError', str(e)), 500
+            return error_response("InternalError", str(e)), 500
 
     except Exception as e:
         logger.error(f"Error in PurgeQueue: {e}")
-        return error_response('InternalError', str(e)), 500
+        return error_response("InternalError", str(e)), 500
+
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=4566, debug=False)
+    app.run(host="0.0.0.0", port=4566, debug=False)

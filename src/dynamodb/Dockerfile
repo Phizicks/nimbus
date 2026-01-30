@@ -17,5 +17,6 @@ EXPOSE 8000
 CMD [ "--experimental-features=alternator-streams", \
         "--alternator-write-isolation=always", \
         "--alternator-address=0.0.0.0", \
+        "--num-tokens 8", \
         "--alternator-port=8000" \
     ]

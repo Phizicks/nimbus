@@ -5,9 +5,10 @@ import os
 import json
 
 # Database path for storing metadata about functions and their states.
-DB_PATH = os.getenv("STORAGE_PATH", '/data') + '/aws_metadata.db'
+DB_PATH = os.getenv("STORAGE_PATH", "/data") + "/aws_metadata.db"
 
 logger = logging.getLogger(__name__)
+
 
 class Database:
     def init_db(self):
@@ -16,17 +17,20 @@ class Database:
         cursor = conn.cursor()
 
         # ECR repositories table
-        cursor.execute('''
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS repositories (
                 repository_name TEXT PRIMARY KEY,
                 repository_uri TEXT,
                 registry_id TEXT,
                 created_at TEXT
             )
-        ''')
+        """
+        )
 
         # ECR images table
-        cursor.execute('''
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS images (
                 repository_name TEXT,
                 image_tag TEXT,
@@ -37,10 +41,12 @@ class Database:
                 PRIMARY KEY (repository_name, image_tag),
                 FOREIGN KEY (repository_name) REFERENCES repositories(repository_name)
             )
-        ''')
+        """
+        )
 
         # Lambda functions table
-        cursor.execute('''
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS lambda_functions (
                 function_name TEXT PRIMARY KEY,
                 function_arn TEXT NOT NULL,
@@ -63,20 +69,24 @@ class Database:
                 reserved_concurrency INTEGER DEFAULT 100,
                 logging_config TEXT
             )
-        ''')
+        """
+        )
 
         # Lambda function container mapping table
-        cursor.execute('''
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS container_mappings (
                 function_name TEXT PRIMARY KEY,
                 container_id TEXT NOT NULL,
                 container_ip TEXT NOT NULL,
                 created_at TEXT NOT NULL
             )
-        ''')
+        """
+        )
 
         # SSM Parameters table
-        cursor.execute('''
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS ssm_parameters (
                 account_id TEXT NOT NULL,
                 region TEXT NOT NULL,
@@ -90,10 +100,12 @@ class Database:
                 last_modified_user TEXT,
                 PRIMARY KEY (account_id, region, parameter_name)
             )
-        ''')
+        """
+        )
 
         # SSM Parameter Versions table
-        cursor.execute('''
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS ssm_parameter_versions (
                 account_id TEXT NOT NULL,
                 region TEXT NOT NULL,
@@ -109,10 +121,12 @@ class Database:
                     REFERENCES ssm_parameters(account_id, region, parameter_name)
                     ON DELETE CASCADE
             )
-        ''')
+        """
+        )
 
         # SSM Parameter Tags table
-        cursor.execute('''
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS ssm_parameter_tags (
                 account_id TEXT NOT NULL,
                 region TEXT NOT NULL,
@@ -124,20 +138,26 @@ class Database:
                     REFERENCES ssm_parameters(account_id, region, parameter_name)
                     ON DELETE CASCADE
             )
-        ''')
+        """
+        )
 
         # Create indexes for common queries
-        cursor.execute('''
+        cursor.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_ssm_params_name
             ON ssm_parameters(account_id, region, parameter_name)
-        ''')
+        """
+        )
 
-        cursor.execute('''
+        cursor.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_ssm_params_hierarchy
             ON ssm_parameters(account_id, region, parameter_name)
-        ''')
+        """
+        )
 
-        cursor.execute('''
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS s3_notification_configs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 bucket_name TEXT NOT NULL,
@@ -149,7 +169,8 @@ class Database:
                 created_at TEXT NOT NULL,
                 UNIQUE(bucket_name, notification_id)
             )
-        ''')
+        """
+        )
 
         conn.commit()
         conn.close()
@@ -160,7 +181,9 @@ class Database:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
 
-        cursor.execute('SELECT * FROM lambda_functions WHERE function_name = ?', (function_name,))
+        cursor.execute(
+            "SELECT * FROM lambda_functions WHERE function_name = ?", (function_name,)
+        )
         row = cursor.fetchone()
         conn.close()
 
@@ -186,28 +209,28 @@ class Database:
                 logging_config = None
 
         result = {
-            'FunctionName': row[0],
-            'FunctionArn': row[1],
-            'Runtime': row[2],
-            'Handler': row[3],
-            'Role': row[4],
-            'CodeSize': row[5],
-            'State': row[6],
-            'LastUpdateStatus': row[7],
-            'PackageType': row[8],
-            'ImageUri': row[9],
-            'CodeSha256': row[10],
-            'Endpoint': row[11],
-            'ContainerName': row[12],
-            'HostPort': row[13],
-            'Environment': environment,
-            'CreatedAt': row[15],
-            'LastModified': row[16]
+            "FunctionName": row[0],
+            "FunctionArn": row[1],
+            "Runtime": row[2],
+            "Handler": row[3],
+            "Role": row[4],
+            "CodeSize": row[5],
+            "State": row[6],
+            "LastUpdateStatus": row[7],
+            "PackageType": row[8],
+            "ImageUri": row[9],
+            "CodeSha256": row[10],
+            "Endpoint": row[11],
+            "ContainerName": row[12],
+            "HostPort": row[13],
+            "Environment": environment,
+            "CreatedAt": row[15],
+            "LastModified": row[16],
         }
 
         # Add LoggingConfig if it exists
         if logging_config:
-            result['LoggingConfig'] = logging_config
+            result["LoggingConfig"] = logging_config
 
         return result
 
@@ -219,14 +242,15 @@ class Database:
         now = datetime.now(timezone.utc).isoformat()
 
         # Serialize environment variables to JSON
-        environment = function_config.get('Environment', {})
-        environment_json = json.dumps(environment) if environment else '{}'
+        environment = function_config.get("Environment", {})
+        environment_json = json.dumps(environment) if environment else "{}"
 
         # Serialize logging config to JSON
-        logging_config = function_config.get('LoggingConfig')
+        logging_config = function_config.get("LoggingConfig")
         logging_config_json = json.dumps(logging_config) if logging_config else None
 
-        cursor.execute('''
+        cursor.execute(
+            """
             INSERT OR REPLACE INTO lambda_functions (
                 function_name,
                 function_arn,
@@ -258,29 +282,31 @@ class Database:
                 ?,  -- reserved_concurrency
                 ?   -- logging_config
             )
-        ''', (
-            function_config.get('FunctionName', ''),
-            function_config.get('FunctionArn', ''),
-            function_config.get('Runtime', ''),
-            function_config.get('Handler', ''),
-            function_config.get('Role', ''),
-            function_config.get('CodeSize', 0),
-            function_config.get('State', 'Active'),
-            function_config.get('LastUpdateStatus', 'Successful'),
-            function_config.get('PackageType', ''),
-            function_config.get('ImageUri', ''),
-            function_config.get('CodeSha256', ''),
-            function_config.get('Endpoint', ''),
-            function_config.get('ContainerName', ''),
-            function_config.get('HostPort', 0),
-            environment_json,
-            function_config.get('FunctionName', ''),  # for COALESCE subquery
-            now,                                      # COALESCE fallback value
-            now,                                      # last_modified
-            function_config.get('ProvisionedConcurrency', 0),
-            function_config.get('ReservedConcurrency', 0),
-            logging_config_json
-        ))
+        """,
+            (
+                function_config.get("FunctionName", ""),
+                function_config.get("FunctionArn", ""),
+                function_config.get("Runtime", ""),
+                function_config.get("Handler", ""),
+                function_config.get("Role", ""),
+                function_config.get("CodeSize", 0),
+                function_config.get("State", "Active"),
+                function_config.get("LastUpdateStatus", "Successful"),
+                function_config.get("PackageType", ""),
+                function_config.get("ImageUri", ""),
+                function_config.get("CodeSha256", ""),
+                function_config.get("Endpoint", ""),
+                function_config.get("ContainerName", ""),
+                function_config.get("HostPort", 0),
+                environment_json,
+                function_config.get("FunctionName", ""),  # for COALESCE subquery
+                now,  # COALESCE fallback value
+                now,  # last_modified
+                function_config.get("ProvisionedConcurrency", 0),
+                function_config.get("ReservedConcurrency", 0),
+                logging_config_json,
+            ),
+        )
 
         conn.commit()
         conn.close()
@@ -289,7 +315,9 @@ class Database:
         """Delete a function from the database"""
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        cursor.execute('DELETE FROM lambda_functions WHERE function_name = ?', (function_name,))
+        cursor.execute(
+            "DELETE FROM lambda_functions WHERE function_name = ?", (function_name,)
+        )
         conn.commit()
         conn.close()
 
@@ -298,7 +326,7 @@ class Database:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
 
-        cursor.execute('SELECT * FROM lambda_functions')
+        cursor.execute("SELECT * FROM lambda_functions")
         rows = cursor.fetchall()
         conn.close()
 
@@ -323,24 +351,24 @@ class Database:
                     logging_config = None
 
             function_data = {
-                'FunctionName': row[0],
-                'FunctionArn': row[1],
-                'Runtime': row[2],
-                'Handler': row[3],
-                'Role': row[4],
-                'CodeSize': row[5],
-                'State': row[6],
-                'LastUpdateStatus': row[7],
-                'PackageType': row[8],
-                'ImageUri': row[9],
-                'CodeSha256': row[10],
-                'Environment': environment,
-                'LastModified': row[16]
+                "FunctionName": row[0],
+                "FunctionArn": row[1],
+                "Runtime": row[2],
+                "Handler": row[3],
+                "Role": row[4],
+                "CodeSize": row[5],
+                "State": row[6],
+                "LastUpdateStatus": row[7],
+                "PackageType": row[8],
+                "ImageUri": row[9],
+                "CodeSha256": row[10],
+                "Environment": environment,
+                "LastModified": row[16],
             }
 
             # Add LoggingConfig if it exists
             if logging_config:
-                function_data['LoggingConfig'] = logging_config
+                function_data["LoggingConfig"] = logging_config
 
             functions.append(function_data)
 
@@ -351,28 +379,41 @@ class Database:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
 
-        cursor.execute('''
+        cursor.execute(
+            """
             SELECT notification_id, queue_arn, queue_url, event_patterns, filter_rules
             FROM s3_notification_configs
             WHERE bucket_name = ?
-        ''', (bucket_name,))
+        """,
+            (bucket_name,),
+        )
 
         rows = cursor.fetchall()
         conn.close()
 
         configs = []
         for row in rows:
-            configs.append({
-                'notification_id': row[0],
-                'queue_arn': row[1],
-                'queue_url': row[2],
-                'event_patterns': row[3],
-                'filter_rules': row[4]
-            })
+            configs.append(
+                {
+                    "notification_id": row[0],
+                    "queue_arn": row[1],
+                    "queue_url": row[2],
+                    "event_patterns": row[3],
+                    "filter_rules": row[4],
+                }
+            )
 
         return configs
 
-    def save_notification_config(self, bucket_name, notification_id, queue_arn, queue_url, event_patterns, filter_rules):
+    def save_notification_config(
+        self,
+        bucket_name,
+        notification_id,
+        queue_arn,
+        queue_url,
+        event_patterns,
+        filter_rules,
+    ):
         """Save S3 notification configuration"""
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
@@ -383,43 +424,63 @@ class Database:
         if isinstance(filter_rules, list):
             filter_rules = json.dumps(filter_rules)
 
-        cursor.execute('''
+        cursor.execute(
+            """
             INSERT OR REPLACE INTO s3_notification_configs
             (bucket_name, notification_id, queue_arn, queue_url, event_patterns, filter_rules, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (bucket_name, notification_id, queue_arn, queue_url, event_patterns, filter_rules,
-            datetime.now(timezone.utc).isoformat()))
+        """,
+            (
+                bucket_name,
+                notification_id,
+                queue_arn,
+                queue_url,
+                event_patterns,
+                filter_rules,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
 
         conn.commit()
         conn.close()
 
-        logger.info(f"Saved notification config {notification_id} for bucket {bucket_name}")
+        logger.info(
+            f"Saved notification config {notification_id} for bucket {bucket_name}"
+        )
 
     def delete_notification_config(self, bucket_name, notification_id):
         """Delete S3 notification configuration"""
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
 
-        cursor.execute('''
+        cursor.execute(
+            """
             DELETE FROM s3_notification_configs
             WHERE bucket_name = ? AND notification_id = ?
-        ''', (bucket_name, notification_id))
+        """,
+            (bucket_name, notification_id),
+        )
 
         conn.commit()
         conn.close()
 
-        logger.info(f"Deleted notification config {notification_id} for bucket {bucket_name}")
+        logger.info(
+            f"Deleted notification config {notification_id} for bucket {bucket_name}"
+        )
 
     def get_minio_webhook_arn(self, bucket_name, notification_id):
         """Get MinIO webhook ARN from notification ID"""
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
 
-        cursor.execute('''
+        cursor.execute(
+            """
             SELECT minio_webhook_arn
             FROM s3_notification_mappings
             WHERE bucket_name = ? AND notification_id = ?
-        ''', (bucket_name, notification_id))
+        """,
+            (bucket_name, notification_id),
+        )
 
         row = cursor.fetchone()
         conn.close()
@@ -431,10 +492,13 @@ class Database:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
 
-        cursor.execute('''
+        cursor.execute(
+            """
             DELETE FROM s3_notification_mappings
             WHERE bucket_name = ?
-        ''', (bucket_name,))
+        """,
+            (bucket_name,),
+        )
 
         conn.commit()
         conn.close()
@@ -445,26 +509,32 @@ class Database:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
 
-        cursor.execute('''
+        cursor.execute(
+            """
             SELECT notification_id, queue_arn
             FROM s3_notification_mappings
             WHERE bucket_name = ?
-        ''', (bucket_name,))
+        """,
+            (bucket_name,),
+        )
 
         rows = cursor.fetchall()
         conn.close()
 
-        return [{'notification_id': row[0], 'queue_arn': row[1]} for row in rows]
+        return [{"notification_id": row[0], "queue_arn": row[1]} for row in rows]
 
     def delete_s3_notification_mapping(self, bucket_name, notification_id):
         """Delete a specific notification mapping"""
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
 
-        cursor.execute('''
+        cursor.execute(
+            """
             DELETE FROM s3_notification_mappings
             WHERE bucket_name = ? AND notification_id = ?
-        ''', (bucket_name, notification_id))
+        """,
+            (bucket_name, notification_id),
+        )
 
         conn.commit()
         conn.close()

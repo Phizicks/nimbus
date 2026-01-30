@@ -1,13 +1,14 @@
 import logging
 import os
 
+
 class CustomFormatter(logging.Formatter):
     COLORS = {
-        logging.DEBUG: "\x1b[36;21m",   # grey
-        logging.INFO: "\x1b[32;21m",    # green
-        logging.WARNING: "\x1b[33;21m", # yellow
-        logging.ERROR: "\x1b[31;21m",   # red
-        logging.CRITICAL: "\x1b[31;1m"  # bold red
+        logging.DEBUG: "\x1b[36;21m",  # grey
+        logging.INFO: "\x1b[32;21m",  # green
+        logging.WARNING: "\x1b[33;21m",  # yellow
+        logging.ERROR: "\x1b[31;21m",  # red
+        logging.CRITICAL: "\x1b[31;1m",  # bold red
     }
     RESET = "\x1b[0m"
 
@@ -17,6 +18,7 @@ class CustomFormatter(logging.Formatter):
         fmt = "%(asctime)s.%(msecs)03d [%(levelname)s] %(module)s.%(funcName)s:%(lineno)d | %(message)s"
         formatter = logging.Formatter(fmt, "%Y-%m-%d %H:%M:%S")
         return formatter.format(record)
+
 
 handler = logging.StreamHandler()
 handler.setFormatter(CustomFormatter())
@@ -34,6 +36,6 @@ logging.getLogger("werkzeug").setLevel(logging.WARNING)
 logging.getLogger("botocore").setLevel(logging.WARNING)
 logging.getLogger("boto3").setLevel(logging.WARNING)
 logging.getLogger("s3transfer").setLevel(logging.WARNING)
-logging.getLogger('urllib3.connectionpool').setLevel(logging.WARNING)
-logging.getLogger('urllib3.poolmanager').setLevel(logging.WARNING)
-logging.getLogger('urllib3.util.retry').setLevel(logging.WARNING)
+logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
+logging.getLogger("urllib3.poolmanager").setLevel(logging.WARNING)
+logging.getLogger("urllib3.util.retry").setLevel(logging.WARNING)

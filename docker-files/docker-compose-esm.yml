@@ -7,7 +7,7 @@ services:
       - data:/data
     environment:
       STORAGE_PATH: /data
-      LOG_LEVEL: DEBUG
+      LOG_LEVEL: INFO
     networks:
       - localcloud
     depends_on:
