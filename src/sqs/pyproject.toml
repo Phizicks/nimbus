@@ -1,5 +1,5 @@
 [project]
-name = "Nimbus - LocalCloud"
+name = "nimbus"
 version = "0.1.0"
 description = "A free and open source cloud computing platform for local development"
 readme = "README.md"
