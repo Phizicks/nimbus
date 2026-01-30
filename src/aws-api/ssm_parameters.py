@@ -380,6 +380,7 @@ class SSMParameterStore:
             return {
                 "Parameter": {
                     "Name": name,
+                    "Description": description,
                     "Type": parameter_type,
                     "Value": value,
                     "Version": ver,

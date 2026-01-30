@@ -2075,6 +2075,7 @@ async function loadParameters() {
                 <td>${new Date(param.LastModifiedDate * 1000).toLocaleString()}</td>
                 <td>
                     <div class="action-buttons">
+                        <button class="btn btn-secondary" onclick="showEditParameterModal('${param.Name}')">Edit</button>
                         <button class="btn btn-secondary" onclick="viewParameterDetails('${param.Name}')">Details</button>
                         <button class="btn btn-danger" onclick="deleteParameter('${param.Name}')">Delete</button>
                     </div>
@@ -2127,6 +2128,10 @@ async function viewParameterDetails(paramName) {
                 <div class="detail-value">${param.Name}</div>
             </div>
             <div class="detail-row">
+                <div class="detail-label">Description</div>
+                <div class="detail-value"><code>${param.Description || ''}</code></div>
+            </div>
+            <div class="detail-row">
                 <div class="detail-label">ARN</div>
                 <div class="detail-value"><code>${param.ARN || 'N/A'}</code></div>
             </div>
@@ -2166,10 +2171,10 @@ function showCreateParameterModal() {
 async function createParameter(event) {
     event.preventDefault();
 
-    const name = document.getElementById('param-name').value;
-    const type = document.getElementById('param-type').value;
-    const value = document.getElementById('param-value').value;
-    const description = document.getElementById('param-description').value;
+    const paramName = document.getElementById('param-name').value;
+    const paramType = document.getElementById('param-type').value;
+    const paramValue = document.getElementById('param-value').value;
+    const paramDescription = document.getElementById('param-description').value;
 
     try {
         response = await fetch(API_BASE, {
@@ -2179,10 +2184,10 @@ async function createParameter(event) {
                 'X-Amz-Target': 'AmazonSSM.PutParameter'
             },
             body: JSON.stringify({
-                Name: name,
-                Value: value,
-                Type: type,
-                Description: description,
+                Name: paramName,
+                Value: paramValue,
+                Type: paramType,
+                Description: paramDescription,
                 Overwrite: false
             })
         });
@@ -2190,6 +2195,9 @@ async function createParameter(event) {
             const errorText = await response.json();
             throw new Error(errorText.message);
         }
+        closeModal('create-parameter-modal');
+        showNotification(`Parameter ${paramName} created successfully`, 'success');
+        loadParameters();
     } catch (error) {
         console.error('Error creating parameter:', error);
         showNotification(`Error creating parameter: ${error}`, 'error');
@@ -2220,6 +2228,73 @@ async function deleteParameter(paramName) {
             }
         }
     )
+}
+
+async function showEditParameterModal(paramName) {
+    try {
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.1',
+                'X-Amz-Target': 'AmazonSSM.GetParameter'
+            },
+            body: JSON.stringify({
+                Name: paramName,
+                WithDecryption: true
+            })
+        });
+
+        const data = await response.json();
+        const param = data.Parameter || {};
+
+        document.getElementById('edit-param-name').value = param.Name;
+        document.getElementById('edit-param-type').value = param.Type;
+        document.getElementById('edit-param-value').value = param.Value;
+        document.getElementById('edit-param-description').value = param.Description || '';
+
+        showModal('edit-parameter-modal');
+    } catch (error) {
+        console.error('Error loading parameter:', error);
+        showNotification('Error loading parameter for editing', 'error');
+    }
+}
+
+async function updateParameter(event) {
+    event.preventDefault();
+
+    const paramName = document.getElementById('edit-param-name').value;
+    const paramType = document.getElementById('edit-param-type').value;
+    const paramValue = document.getElementById('edit-param-value').value;
+    const paramDescription = document.getElementById('edit-param-description').value;
+
+    try {
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.1',
+                'X-Amz-Target': 'AmazonSSM.PutParameter'
+            },
+            body: JSON.stringify({
+                Name: paramName,
+                Value: paramValue,
+                Type: paramType,
+                Description: paramDescription,
+                Overwrite: true
+            })
+        });
+
+        if (!response.ok) {
+            const errorText = await response.json();
+            throw new Error(errorText.message);
+        }
+
+        closeModal('edit-parameter-modal');
+        showNotification(`Parameter ${paramName} updated successfully`, 'success');
+        loadParameters();
+    } catch (error) {
+        console.error('Error updating parameter:', error);
+        showNotification(`Error updating parameter: ${error}`, 'error');
+    }
 }
 
 // ============================================================================

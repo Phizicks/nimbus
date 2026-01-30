@@ -434,6 +434,40 @@
         </div>
     </div>
 
+    <div id="edit-parameter-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Edit Parameter</div>
+            <div class="modal-body">
+                <form id="edit-parameter-form" onsubmit="updateParameter(event)">
+                    <div class="form-group">
+                        <label>Name</label>
+                        <input type="text" id="edit-param-name" disabled style="background: var(--bg-tertiary); cursor: not-allowed;">
+                    </div>
+                    <div class="form-group">
+                        <label>Type</label>
+                        <select id="edit-param-type" disabled style="background: var(--bg-tertiary); cursor: not-allowed;">
+                            <option value="String">String</option>
+                            <option value="StringList">StringList</option>
+                            <option value="SecureString">SecureString</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Value</label>
+                        <textarea id="edit-param-value" required placeholder="Enter parameter value"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Description</label>
+                        <input type="text" id="edit-param-description" placeholder="Optional description">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" form="edit-parameter-form" class="btn btn-primary">Update Parameter</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('edit-parameter-modal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
     <div id="create-parameter-modal" class="modal">
         <div class="modal-content">
             <div class="modal-header">Create Parameter</div>
