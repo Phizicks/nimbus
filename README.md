@@ -73,13 +73,13 @@ aws configure --profile nimbus
 
 # Option 2: Direct config
 cat <<EOF >> ~/.aws/credentials
-[localcloud]
+[nimbus]
 aws_access_key_id = localcloud
 aws_secret_access_key = localcloud
 EOF
 
 cat <<EOF >> ~/.aws/config
-[profile localcloud]
+[profile nimbus]
 region = ap-southeast-2
 output = json
 endpoint_url = http://localhost:4566
