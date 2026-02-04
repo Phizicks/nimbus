@@ -7,7 +7,6 @@ from collections import defaultdict
 from typing import Dict, Optional
 from pathlib import Path
 from hashlib import sha256
-import copy
 import logging
 import time
 import uuid
@@ -17,7 +16,6 @@ import json
 import docker
 import base64
 import sqlite3
-import requests
 from datetime import datetime, timezone
 from timedlocking import TimedLock
 from flask import Flask, request, jsonify, Response
@@ -612,7 +610,7 @@ class ContainerLifecycleManager:
             # Build image from code
             dockerfile = function_path / "Dockerfile"
             dockerfile.write_text(self.create_dockerfile_for_runtime(runtime, handler))
-            image_tag = f"lambda-{function_name}:latest"
+            image_tag = f"lambda-{function_name}:latest".lower()
 
             try:
                 logger.info(f"Building image from {function_path}")
@@ -1665,7 +1663,7 @@ class ContainerLifecycleManager:
                 dockerfile.write_text(
                     self.create_dockerfile_for_runtime(runtime, handler)
                 )
-                image_tag = f"lambda-{function_name}:latest"
+                image_tag = f"lambda-{function_name}:latest".lower()
                 try:
                     logger.info(f"Building image from {function_path}")
                     _, logs = self.docker_client.images.build(
