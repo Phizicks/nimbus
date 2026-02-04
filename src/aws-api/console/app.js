@@ -5,6 +5,7 @@ const API_BASE = '/';
 // Global state for S3 navigation
 let currentBucket = '';
 let currentPrefix = '';
+let currentSecretName = null;
 
 // S3 credentials - adjust these for your environment
 const S3_CONFIG = {
@@ -273,6 +274,7 @@ function switchService(service) {
     else if (service === 'cloudwatch') loadLogGroups();
     else if (service === 'ecr') loadRepositories();
     else if (service === 's3') loadBuckets();
+    else if (service === 'secretsmanager') loadSecrets();
 }
 
 function closeModal(modalId) {
@@ -4329,6 +4331,443 @@ function sortByProperty(property, order = 'asc') {
       // Apply descending order logic if requested
       return order === 'desc' ? comparison * -1 : comparison;
     };
+}
+
+
+// Load all secrets
+async function loadSecrets() {
+    const loading = document.getElementById('secretsmanager-loading');
+    const content = document.getElementById('secretsmanager-content');
+    const empty = document.getElementById('secretsmanager-empty');
+    const tbody = document.querySelector('#secretsmanager-table tbody');
+
+    loading.style.display = 'block';
+    content.style.display = 'none';
+    empty.style.display = 'none';
+
+    try {
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.1',
+                'X-Amz-Target': 'secretsmanager.ListSecrets'
+            },
+            body: JSON.stringify({
+                MaxResults: 100
+            })
+        });
+
+        const data = await response.json();
+
+        loading.style.display = 'none';
+
+        if (!data.SecretList || data.SecretList.length === 0) {
+            empty.style.display = 'block';
+            updateSecretsStats(0);
+            return;
+        }
+
+        tbody.innerHTML = '';
+        data.SecretList.forEach(secret => {
+            const row = tbody.insertRow();
+
+            // Secret Name
+            const nameCell = row.insertCell();
+            nameCell.textContent = secret.Name;
+
+            // Description
+            const descCell = row.insertCell();
+            descCell.textContent = secret.Description || '-';
+
+            // Last Modified
+            const modifiedCell = row.insertCell();
+            modifiedCell.textContent = new Date(secret.LastChangedDate * 1000).toLocaleString();
+
+            // Actions
+            const actionsCell = row.insertCell();
+            actionsCell.innerHTML = `
+                <div class="action-buttons">
+                    <button class="btn btn-primary" onclick="viewSecret('${secret.Name}')">View</button>
+                    <button class="btn btn-warning" onclick="showUpdateSecretModal('${secret.Name}')">Update</button>
+                    <button class="btn btn-danger" onclick="deleteSecret('${secret.Name}')">Delete</button>
+                </div>
+            `;
+        });
+
+        content.style.display = 'block';
+        updateSecretsStats(data.SecretList.length);
+
+    } catch (error) {
+        console.error('Error loading secrets:', error);
+        loading.style.display = 'none';
+        empty.style.display = 'block';
+        showNotification('Failed to load secrets: ' + error.message, 'error');
+    }
+}
+
+// Update secrets statistics
+function updateSecretsStats(count) {
+    const statsDiv = document.getElementById('secretsmanager-stats');
+    statsDiv.innerHTML = `
+        <div class="stat-card">
+            <div class="stat-label">Total Secrets</div>
+            <div class="stat-value">${count}</div>
+        </div>
+    `;
+}
+
+// Show create secret modal
+function showCreateSecretModal() {
+    document.getElementById('secret-name').value = '';
+    document.getElementById('secret-description').value = '';
+    document.getElementById('secret-string').value = '';
+    document.getElementById('secret-binary').value = '';
+    document.getElementById('secret-kms-key').value = '';
+    document.getElementById('secret-type').value = 'string';
+    toggleSecretType();
+    showModal('create-secret-modal');
+}
+
+// Toggle between string and binary secret types
+function toggleSecretType() {
+    const type = document.getElementById('secret-type').value;
+    const stringGroup = document.getElementById('secret-string-group');
+    const binaryGroup = document.getElementById('secret-binary-group');
+
+    if (type === 'string') {
+        stringGroup.style.display = 'block';
+        binaryGroup.style.display = 'none';
+        document.getElementById('secret-string').required = true;
+        document.getElementById('secret-binary').required = false;
+    } else {
+        stringGroup.style.display = 'none';
+        binaryGroup.style.display = 'block';
+        document.getElementById('secret-string').required = false;
+        document.getElementById('secret-binary').required = true;
+    }
+}
+
+// Toggle update secret type
+function toggleUpdateSecretType() {
+    const type = document.getElementById('update-secret-type').value;
+    const stringGroup = document.getElementById('update-secret-string-group');
+    const binaryGroup = document.getElementById('update-secret-binary-group');
+
+    if (type === 'string') {
+        stringGroup.style.display = 'block';
+        binaryGroup.style.display = 'none';
+        document.getElementById('update-secret-string').required = true;
+        document.getElementById('update-secret-binary').required = false;
+    } else {
+        stringGroup.style.display = 'none';
+        binaryGroup.style.display = 'block';
+        document.getElementById('update-secret-string').required = false;
+        document.getElementById('update-secret-binary').required = true;
+    }
+}
+
+// Create new secret
+async function createSecret(event) {
+    event.preventDefault();
+
+    const name = document.getElementById('secret-name').value;
+    const description = document.getElementById('secret-description').value;
+    const type = document.getElementById('secret-type').value;
+    const kmsKeyId = document.getElementById('secret-kms-key').value;
+
+    const payload = {
+        Name: name
+    };
+
+    if (description) {
+        payload.Description = description;
+    }
+
+    if (kmsKeyId) {
+        payload.KmsKeyId = kmsKeyId;
+    }
+
+    if (type === 'string') {
+        const secretString = document.getElementById('secret-string').value;
+        if (!secretString) {
+            showNotification('Secret value is required', 'error');
+            return;
+        }
+        payload.SecretString = secretString;
+    } else {
+        const secretBinary = document.getElementById('secret-binary').value;
+        if (!secretBinary) {
+            showNotification('Secret binary value is required', 'error');
+            return;
+        }
+        payload.SecretBinary = secretBinary;
+    }
+
+    try {
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.1',
+                'X-Amz-Target': 'secretsmanager.CreateSecret'
+            },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.message || 'Failed to create secret');
+        }
+
+        showNotification(`Secret "${name}" created successfully`, 'success');
+        closeModal('create-secret-modal');
+        loadSecrets();
+
+    } catch (error) {
+        console.error('Error creating secret:', error);
+        showNotification('Failed to create secret: ' + error.message, 'error');
+    }
+}
+
+// View secret details
+async function viewSecret(secretName) {
+    currentSecretName = secretName;
+
+    try {
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.1',
+                'X-Amz-Target': 'secretsmanager.DescribeSecret'
+            },
+            body: JSON.stringify({
+                SecretId: secretName
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.message || 'Failed to describe secret');
+        }
+
+        // Populate modal with secret details
+        document.getElementById('view-secret-name').textContent = data.Name;
+        document.getElementById('view-secret-arn').textContent = data.ARN;
+        document.getElementById('view-secret-description').textContent = data.Description || '-';
+        document.getElementById('view-secret-created').textContent = new Date(data.CreatedDate * 1000).toLocaleString();
+        document.getElementById('view-secret-modified').textContent = new Date(data.LastChangedDate * 1000).toLocaleString();
+        document.getElementById('view-secret-accessed').textContent = data.LastAccessedDate
+            ? new Date(data.LastAccessedDate * 1000).toLocaleString()
+            : '-';
+
+        // Display version information
+        const versionStages = data.VersionIdsToStages || {};
+        const currentVersionId = Object.keys(versionStages).find(vid =>
+            versionStages[vid].includes('AWSCURRENT')
+        );
+
+        document.getElementById('view-secret-version').textContent = currentVersionId || '-';
+
+        // Display all versions
+        const allVersions = Object.keys(versionStages).map(vid => {
+            const stages = versionStages[vid].join(', ');
+            return `${vid} (${stages})`;
+        }).join('<br>');
+
+        document.getElementById('view-secret-versions').innerHTML = allVersions || '-';
+
+        // Hide secret value section initially
+        document.getElementById('secret-value-section').style.display = 'none';
+
+        showModal('view-secret-modal');
+    } catch (error) {
+        console.error('Error viewing secret:', error);
+        showNotification('Failed to view secret: ' + error.message, 'error');
+    }
+}
+
+// Retrieve secret value
+async function retrieveSecretValue() {
+    if (!currentSecretName) return;
+
+    try {
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.1',
+                'X-Amz-Target': 'secretsmanager.GetSecretValue'
+            },
+            body: JSON.stringify({
+                SecretId: currentSecretName
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.message || 'Failed to retrieve secret value');
+        }
+
+        const valueSection = document.getElementById('secret-value-section');
+        const valueElement = document.getElementById('view-secret-value');
+
+        if (data.SecretString) {
+            // Try to format as JSON if possible
+            try {
+                const jsonValue = JSON.parse(data.SecretString);
+                valueElement.textContent = JSON.stringify(jsonValue, null, 2);
+            } catch (e) {
+                // Not JSON, display as plain text
+                valueElement.textContent = data.SecretString;
+            }
+        } else if (data.SecretBinary) {
+            valueElement.textContent = `[Binary Data - Base64]\n${data.SecretBinary}`;
+        } else {
+            valueElement.textContent = '[No value]';
+        }
+
+        valueSection.style.display = 'block';
+
+    } catch (error) {
+        console.error('Error retrieving secret value:', error);
+        showNotification('Failed to retrieve secret value: ' + error.message, 'error');
+    }
+}
+
+// Show update secret modal
+async function showUpdateSecretModal(secretName) {
+    // document.getElementById('update-secret-name').value = secretName;
+
+    try {
+        // Get current secret details
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.1',
+                'X-Amz-Target': 'secretsmanager.DescribeSecret'
+            },
+            body: JSON.stringify({
+                SecretId: secretName
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.message || 'Failed to describe secret');
+        }
+
+        document.getElementById('update-secret-name').value = data.Name || '';
+        document.getElementById('update-secret-description').value = data.Description || '';
+        document.getElementById('update-secret-string').value = '';
+        document.getElementById('update-secret-binary').value = '';
+        // document.getElementById('update-secret-type').value = 'string';
+        toggleUpdateSecretType();
+
+        showModal('update-secret-modal');
+    } catch (error) {
+        console.error('Error loading secret for update:', error);
+        showNotification('Failed to load secret: ' + error.message, 'error');
+    }
+}
+
+// Update secret
+async function updateSecret(event) {
+    event.preventDefault();
+
+    const name = document.getElementById('update-secret-name').value;
+    const description = document.getElementById('update-secret-description').value;
+    const type = document.getElementById('update-secret-type').value;
+
+    const payload = {
+        SecretId: name
+    };
+
+    if (description) {
+        payload.Description = description;
+    }
+
+    if (type === 'string') {
+        const secretString = document.getElementById('update-secret-string').value;
+        if (!secretString) {
+            showNotification('Secret value is required', 'error');
+            return;
+        }
+        payload.SecretString = secretString;
+    } else {
+        const secretBinary = document.getElementById('update-secret-binary').value;
+        if (!secretBinary) {
+            showNotification('Secret binary value is required', 'error');
+            return;
+        }
+        payload.SecretBinary = secretBinary;
+    }
+
+    try {
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.1',
+                'X-Amz-Target': 'secretsmanager.UpdateSecret'
+            },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.message || 'Failed to update secret');
+        }
+
+        showNotification(`Secret "${name}" updated successfully`, 'success');
+        closeModal('update-secret-modal');
+        loadSecrets();
+
+    } catch (error) {
+        console.error('Error updating secret:', error);
+        showNotification('Failed to update secret: ' + error.message, 'error');
+    }
+}
+
+// Delete secret
+async function deleteSecret(secretName) {
+    // if (!confirm(`Are you sure you want to delete secret "${secretName}"?\n\nThis will schedule the secret for deletion with a 30-day recovery window.`)) {
+    //     return;
+    // }
+    showConfirmModal(
+        `Are you sure you want to delete secret "${secretName}"?<br><br>
+        This will schedule the secret for deletion with a 30-day recovery window.<br>`,
+        async () => {
+            try {
+                const response = await fetch(API_BASE, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-amz-json-1.1',
+                        'X-Amz-Target': 'secretsmanager.DeleteSecret'
+                    },
+                    body: JSON.stringify({
+                        SecretId: secretName,
+                        RecoveryWindowInDays: 30
+                    })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.message || 'Failed to delete secret');
+                }
+
+                const deletionDate = new Date(data.DeletionDate * 1000);
+                showNotification(`Secret "${secretName}" scheduled for deletion on ${deletionDate.toLocaleDateString()}`, 'success');
+                loadSecrets();
+
+            } catch (error) {
+                console.error('Error deleting secret:', error);
+                showNotification('Failed to delete secret: ' + error.message, 'error');
+            }
+        }
+    )
 }
 
 // ============================================================================

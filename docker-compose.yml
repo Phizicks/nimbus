@@ -27,6 +27,7 @@ services:
       - esm
       - s3
       - ddb
+      - secretsmanager
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:4566/health"]
       interval: 10s
@@ -39,6 +40,7 @@ include:
   - path: docker-files/docker-compose-ecr.yml
   - path: docker-files/docker-compose-sqs.yml
   - path: docker-files/docker-compose-s3.yml
+  - path: docker-files/docker-compose-sm.yml
   - path: docker-files/docker-compose-lambda.yml
   - path: docker-files/docker-compose-esm.yml
 

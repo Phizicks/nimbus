@@ -71,6 +71,10 @@ S3_ENDPOINT = os.getenv("S3_ENDPOINT_URL", "http://s3:9000")
 # Lifecycle (Lambda) service endpoint
 LAMBDA_ENDPOINT = os.getenv("LAMBDA_ENDPOINT_URL", "http://lambda:4566")
 
+# Secrets Manager endpoint URL
+SECRETS_MANAGER_ENDPOINT = os.getenv(
+    "SECRETS_MANAGER_ENDPOINT_URL", "http://secretsmanager:4566"
+)
 
 # Runtime configurations - TODO make config
 RUNTIME_BASE_IMAGES = {
@@ -134,62 +138,52 @@ def esm_request(method: str, path: str, **kwargs):
         return 502, {"message": "ESM service unavailable"}
 
 
-# def esm_find_mapping_by_function(function_name: str):
-#     """Find an ESM mapping by function name by querying the ESM service."""
-#     status, data = esm_request('GET', '/2015-03-31/event-source-mappings')
-#     if status != 200:
-#         return None
-#     mappings = data.get('EventSourceMappings') if isinstance(data, dict) else []
-#     for m in mappings or []:
-#         if m.get('FunctionName') == function_name:
-#             return m
-#     return None
+def secretsmanager_request(method: str, path: str, **kwargs):
+    """Send an HTTP request to the Secrets Manager endpoint."""
+    url = SECRETS_MANAGER_ENDPOINT.rstrip("/") + path
+    logger.debug(f"Secrets Manager request sent: {method} {url}")
+    try:
+        resp = requests.request(method, url, timeout=5, **kwargs)
+        try:
+            return resp.status_code, resp.json(), resp
+        except Exception:
+            return resp.status_code, resp.text, resp
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Secrets Manager request failed: {method} {url} -> {e}")
+        return 502, {"message": "Secrets Manager service unavailable"}, None
 
 
-# def proxy_to_sqs(operation, records):
-#     """Proxy S3 event records to SQS using boto3 in LocalStack"""
-#     # SQS endpoint for LocalStack
-#     SQS_ENDPOINT = os.getenv('SQS_ENDPOINT', 'http://sqs:4566')
-#     QUEUE_URL = os.getenv('SQS_QUEUE_URL', 'http://sqs:4566/000000000000/my-queue')  # Adjust account & queue
+def proxy_to_secretsmanager():
+    """Proxy requests to Secrets Manager service."""
 
-#     # Create boto3 SQS client pointing to LocalStack
-#     sqs_client = boto3.client(
-#         'sqs',
-#         endpoint_url=SQS_ENDPOINT,
-#         region_name='us-east-1',
-#         aws_access_key_id='test',      # Required even in LocalStack
-#         aws_secret_access_key='test'
-#     )
+    headers = {
+        "Content-Type": "application/x-amz-json-1.1",
+    }
 
-#     try:
-#         # Send each record as a message (or send all together)
-#         # Option: send batch if multiple records
-#         entries = []
-#         for i, record in enumerate(records):
-#             entries.append({
-#                 'Id': str(i),
-#                 'MessageBody': json.dumps(record)
-#             })
+    # Preserve original headers
+    for key in ["X-Amz-Target", "Authorization", "X-Amz-Date", "X-Amz-Security-Token"]:
+        if key in request.headers:
+            headers[key] = request.headers[key]
 
-#         if len(entries) == 1:
-#             # Single message
-#             response = sqs_client.send_message(
-#                 QueueUrl=QUEUE_URL,
-#                 MessageBody=json.dumps(records[0])
-#             )
-#         else:
-#             # Batch (up to 10)
-#             response = sqs_client.send_message_batch(
-#                 QueueUrl=QUEUE_URL,
-#                 Entries=entries
-#             )
+    # Get request body
+    try:
+        data = request.get_json() or {}
+    except Exception:
+        data = {}
 
-#         logger.debug(f"Sent to SQS: {response}")
-#         return {'status': 'success', 'response': response}
+    status, resp, raw = secretsmanager_request("POST", "/", headers=headers, json=data)
 
-#     except Exception as e:
-#         logger.error(f"Failed to send to SQS: {e}")
-#         return {'status': 'error', 'error': str(e)}
+    if raw is None:
+        return jsonify(resp), status
+
+    try:
+        return Response(
+            raw.content,
+            status=raw.status_code,
+            mimetype=raw.headers.get("Content-Type", "application/x-amz-json-1.1"),
+        )
+    except Exception:
+        return jsonify(resp), status
 
 
 def dynamodb_request(method: str, path: str, **kwargs):
@@ -2749,7 +2743,6 @@ def handle_request():
     logger.debug(
         f"Request: method={request.method}, action={action}, operation={operation}, content_type={content_type}"
     )
-    logger.debug(f"Request: data={request.get_data()}")
 
     # If this is an SQS API call (via X-Amz-Target or Action), proxy it to the SQS container
     SQS_ACTIONS = {
@@ -3021,6 +3014,19 @@ def handle_request():
             ),
             400,
         )
+
+    secretsmanager_handlers = {
+        "CreateSecret": proxy_to_secretsmanager,
+        "DescribeSecret": proxy_to_secretsmanager,
+        "UpdateSecret": proxy_to_secretsmanager,
+        "GetSecretValue": proxy_to_secretsmanager,
+        "PutSecretValue": proxy_to_secretsmanager,
+        "ListSecrets": proxy_to_secretsmanager,
+        "DeleteSecret": proxy_to_secretsmanager,
+    }
+    if operation in secretsmanager_handlers:
+        logger.info(f"Routing to SecretsManager handler: Operation={operation}")
+        return proxy_to_secretsmanager()
 
     s3_handlers = {
         "Ls": proxy_to_s3,
@@ -4066,6 +4072,18 @@ def delete_event_source_mapping_endpoint(uuid):
     if status in (200, 202, 204):
         return "", 204
     return jsonify({"__type": "ResourceNotFoundException"}), 404
+
+
+# SM
+# ============================================================================
+# Secrets manager
+# ===========================================================================
+
+
+# @app.route("/secretsmanager", methods=["POST"])
+# def secretsmanager_endpoint():
+#     """Dedicated Secrets Manager endpoint"""
+#     return proxy_to_secretsmanager()
 
 
 if __name__ == "__main__":

@@ -59,6 +59,7 @@
         <button onclick="switchService('lambda')" id="service-button-lambda">Lambda</button>
         <button onclick="switchService('dynamodb')" id="service-button-dynamodb">DynamoDB</button>
         <button onclick="switchService('ssm')" id="service-button-ssm">Systems Manager</button>
+        <button onclick="switchService('secretsmanager')" id="service-button-secretsmanager">Secrets Manager</button>
         <button onclick="switchService('cloudwatch')" id="service-button-cloudwatch">CloudWatch Logs</button>
         <button onclick="switchService('ecr')" id="service-button-ecr">ECR</button>
         <button onclick="switchService('s3')" id="service-button-s3">S3</button>
@@ -213,6 +214,43 @@
                     <div class="empty-state-icon">🔧</div>
                     <h3>No parameters found</h3>
                     <p>Create your first parameter to get started</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Secrets Manager Panel -->
+        <div id="secretsmanager-panel" class="service-panel">
+            <div class="panel-header">
+                <h2>AWS Secrets Manager</h2>
+                <div class="actions">
+                    <button class="btn btn-primary" onclick="showCreateSecretModal()">Create Secret</button>
+                    <button class="btn btn-secondary" onclick="loadSecrets()">🔄 Refresh</button>
+                </div>
+            </div>
+            <div id="secretsmanager-stats" class="stats-grid"></div>
+            <div class="card">
+                <div class="card-title">Secrets</div>
+                <div id="secretsmanager-loading" class="loading">
+                    <div class="spinner"></div>
+                    <div>Loading secrets...</div>
+                </div>
+                <div id="secretsmanager-content" style="display:none;">
+                    <table id="secretsmanager-table">
+                        <thead>
+                            <tr>
+                                <th>Secret Name</th>
+                                <th>Description</th>
+                                <th>Last Modified</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div id="secretsmanager-empty" class="empty-state" style="display:none;">
+                    <div class="empty-state-icon">🔐</div>
+                    <h3>No secrets found</h3>
+                    <p>Create your first secret to get started</p>
                 </div>
             </div>
         </div>
@@ -916,6 +954,159 @@
             <div class="modal-footer">
                 <button type="submit" form="move-object-form" class="btn btn-primary">Move</button>
                 <button type="button" class="btn btn-secondary" onclick="closeModal('move-object-modal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Secret Modal -->
+    <div id="create-secret-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Create Secret</div>
+            <div class="modal-body">
+                <form id="create-secret-form" onsubmit="createSecret(event)">
+                    <div class="form-group">
+                        <label>Secret Name *</label>
+                        <input type="text" id="secret-name" required placeholder="my-secret">
+                        <small style="color: var(--text-secondary); font-size: 12px;">Must be unique within your account</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Description</label>
+                        <input type="text" id="secret-description" placeholder="Description of this secret">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Secret Type *</label>
+                        <select id="secret-type" onchange="toggleSecretType()">
+                            <option value="string">Secret String (JSON or Text)</option>
+                            <option value="binary">Secret Binary</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group" id="secret-string-group">
+                        <label>Secret Value *</label>
+                        <textarea id="secret-string" placeholder='{"username":"admin","password":"secret123"}' rows="8"></textarea>
+                        <small style="color: var(--text-secondary); font-size: 12px;">Enter JSON or plain text</small>
+                    </div>
+
+                    <div class="form-group" id="secret-binary-group" style="display:none;">
+                        <label>Secret Binary (Base64) *</label>
+                        <textarea id="secret-binary" placeholder="Base64 encoded binary data" rows="8"></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label>KMS Key ID (Optional)</label>
+                        <input type="text" id="secret-kms-key" placeholder="arn:aws:kms:region:account:key/key-id">
+                        <small style="color: var(--text-secondary); font-size: 12px;">Leave empty for default encryption</small>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" form="create-secret-form" class="btn btn-primary">Create Secret</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('create-secret-modal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- View Secret Modal -->
+    <div id="view-secret-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Secret Details</div>
+            <div class="modal-body">
+                <div id="secret-details-content">
+                    <div class="detail-row">
+                        <div class="detail-label">Secret Name:</div>
+                        <div class="detail-value" id="view-secret-name"></div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">ARN:</div>
+                        <div class="detail-value" id="view-secret-arn"></div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Description:</div>
+                        <div class="detail-value" id="view-secret-description"></div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Created:</div>
+                        <div class="detail-value" id="view-secret-created"></div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Last Modified:</div>
+                        <div class="detail-value" id="view-secret-modified"></div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Last Accessed:</div>
+                        <div class="detail-value" id="view-secret-accessed"></div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Current Version:</div>
+                        <div class="detail-value" id="view-secret-version"></div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">All Versions:</div>
+                        <div class="detail-value" id="view-secret-versions"></div>
+                    </div>
+
+                    <div style="margin-top: 20px;">
+                        <button class="btn btn-primary" onclick="retrieveSecretValue()">🔓 Retrieve Secret Value</button>
+                    </div>
+
+                    <div id="secret-value-section" style="display:none; margin-top: 20px;">
+                        <div class="detail-row">
+                            <div class="detail-label">Secret Value:</div>
+                            <div class="detail-value">
+                                <pre class="code-block" id="view-secret-value"></pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('view-secret-modal')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Update Secret Modal -->
+    <div id="update-secret-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Update Secret</div>
+            <div class="modal-body">
+                <form id="update-secret-form" onsubmit="updateSecret(event)">
+                    <!-- input type="hidden" id="update-secret-name" -->
+                    <div class="form-group">
+                        <label>Secret Name</label>
+                        <input type="text" id="update-secret-name" disabled="" style="background: var(--bg-tertiary); cursor: not-allowed; --darkreader-inline-bg: var(--darkreader-bg--bg-tertiary);" data-darkreader-inline-bg="">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Description</label>
+                        <input type="text" id="update-secret-description" placeholder="Description of this secret">
+                    </div>
+
+                    <div class="form-group" style="cursor: not-allowed;">
+                        <label>Secret Type *</label>
+                        <select id="update-secret-type" style="cursor: not-allowed;" disabled>
+                            <option value="string">Secret String (JSON or Text)</option>
+                            <option value="binary">Secret Binary</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group" id="update-secret-string-group">
+                        <label>New Secret Value *</label>
+                        <textarea id="update-secret-string" placeholder='{"username":"admin","password":"newpassword"}' rows="8"></textarea>
+                        <small style="color: var(--text-secondary); font-size: 12px;">This will create a new version</small>
+                    </div>
+
+                    <div class="form-group" id="update-secret-binary-group" style="display:none;">
+                        <label>Secret Binary (Base64) *</label>
+                        <textarea id="update-secret-binary" placeholder="Base64 encoded binary data" rows="8"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" form="update-secret-form" class="btn btn-primary">Update Secret</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('update-secret-modal')">Cancel</button>
             </div>
         </div>
     </div>
