@@ -16,6 +16,11 @@ services:
       - data-s3:/data
     networks:
       - localcloud
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   data-s3:

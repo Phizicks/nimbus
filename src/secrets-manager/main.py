@@ -28,6 +28,7 @@ DB_PATH = os.getenv("STORAGE_PATH", "/data") + "/secrets_manager.db"
 
 class SecretsManagerException(Exception):
     """Base exception for Secrets Manager errors"""
+
     def __init__(self, error_type: str, message: str):
         self.error_type = error_type
         self.message = message
@@ -36,24 +37,28 @@ class SecretsManagerException(Exception):
 
 class ResourceNotFoundException(SecretsManagerException):
     """Secret not found exception"""
+
     def __init__(self, message: str):
         super().__init__("ResourceNotFoundException", message)
 
 
 class InvalidParameterException(SecretsManagerException):
     """Invalid parameter exception"""
+
     def __init__(self, message: str):
         super().__init__("InvalidParameterException", message)
 
 
 class InvalidRequestException(SecretsManagerException):
     """Invalid request exception"""
+
     def __init__(self, message: str):
         super().__init__("InvalidRequestException", message)
 
 
 class ResourceExistsException(SecretsManagerException):
     """Resource already exists exception"""
+
     def __init__(self, message: str):
         super().__init__("ResourceExistsException", message)
 
@@ -134,11 +139,11 @@ class SecretsManagerDatabase:
 
     def _encode_secret(self, value: str) -> str:
         """Encode secret value using base64"""
-        return base64.b64encode(value.encode('utf-8')).decode('utf-8')
+        return base64.b64encode(value.encode("utf-8")).decode("utf-8")
 
     def _decode_secret(self, encoded_value: str) -> str:
         """Decode secret value from base64"""
-        return base64.b64decode(encoded_value.encode('utf-8')).decode('utf-8')
+        return base64.b64decode(encoded_value.encode("utf-8")).decode("utf-8")
 
     def create_secret(
         self,
@@ -173,7 +178,7 @@ class SecretsManagerDatabase:
             # Check if secret already exists
             cursor.execute(
                 "SELECT secret_name FROM secrets WHERE secret_name = ? AND deleted_date IS NULL",
-                (secret_name,)
+                (secret_name,),
             )
             if cursor.fetchone():
                 raise ResourceExistsException(
@@ -274,7 +279,7 @@ class SecretsManagerDatabase:
             # Check if secret exists and is not deleted
             cursor.execute(
                 "SELECT * FROM secrets WHERE secret_name = ? AND deleted_date IS NULL",
-                (secret_name,)
+                (secret_name,),
             )
             secret = cursor.fetchone()
             if not secret:
@@ -285,7 +290,7 @@ class SecretsManagerDatabase:
             # Update last accessed date
             cursor.execute(
                 "UPDATE secrets SET last_accessed_date = ? WHERE secret_name = ?",
-                (int(time.time()), secret_name)
+                (int(time.time()), secret_name),
             )
             conn.commit()
 
@@ -365,7 +370,7 @@ class SecretsManagerDatabase:
             # Check if secret exists and is not deleted
             cursor.execute(
                 "SELECT * FROM secrets WHERE secret_name = ? AND deleted_date IS NULL",
-                (secret_name,)
+                (secret_name,),
             )
             secret = cursor.fetchone()
             if not secret:
@@ -398,7 +403,7 @@ class SecretsManagerDatabase:
 
                 cursor.execute(
                     f"UPDATE secrets SET {', '.join(updates)} WHERE secret_name = ?",
-                    params
+                    params,
                 )
 
             # If secret value is being updated
@@ -421,7 +426,11 @@ class SecretsManagerDatabase:
                         SET version_stages = ?
                         WHERE secret_name = ? AND version_id = ?
                     """,
-                        (json.dumps(["AWSPREVIOUS"]), secret_name, current_version["version_id"])
+                        (
+                            json.dumps(["AWSPREVIOUS"]),
+                            secret_name,
+                            current_version["version_id"],
+                        ),
                     )
 
                 # Encode the new secret value
@@ -452,7 +461,7 @@ class SecretsManagerDatabase:
                 # Update last_updated_date
                 cursor.execute(
                     "UPDATE secrets SET last_updated_date = ? WHERE secret_name = ?",
-                    (now, secret_name)
+                    (now, secret_name),
                 )
 
             conn.commit()
@@ -494,7 +503,7 @@ class SecretsManagerDatabase:
             # Check if secret exists and is not already deleted
             cursor.execute(
                 "SELECT * FROM secrets WHERE secret_name = ? AND deleted_date IS NULL",
-                (secret_name,)
+                (secret_name,),
             )
             secret = cursor.fetchone()
             if not secret:
@@ -507,27 +516,29 @@ class SecretsManagerDatabase:
             if force_delete:
                 # Immediate deletion
                 cursor.execute(
-                    "DELETE FROM secret_versions WHERE secret_name = ?",
-                    (secret_name,)
+                    "DELETE FROM secret_versions WHERE secret_name = ?", (secret_name,)
                 )
                 cursor.execute(
-                    "DELETE FROM secrets WHERE secret_name = ?",
-                    (secret_name,)
+                    "DELETE FROM secrets WHERE secret_name = ?", (secret_name,)
                 )
                 deletion_date = now
             else:
                 # Scheduled deletion
-                if recovery_window_in_days is not None and (recovery_window_in_days < 7 or recovery_window_in_days > 30):
+                if recovery_window_in_days is not None and (
+                    recovery_window_in_days < 7 or recovery_window_in_days > 30
+                ):
                     raise InvalidParameterException(
                         "Recovery window must be between 7 and 30 days."
                     )
 
                 recovery_window = recovery_window_in_days or 30
-                deletion_date = now + (recovery_window * 86400)  # Convert days to seconds
+                deletion_date = now + (
+                    recovery_window * 86400
+                )  # Convert days to seconds
 
                 cursor.execute(
                     "UPDATE secrets SET deleted_date = ? WHERE secret_name = ?",
-                    (deletion_date, secret_name)
+                    (deletion_date, secret_name),
                 )
 
             conn.commit()
@@ -540,10 +551,12 @@ class SecretsManagerDatabase:
                 ORDER BY created_date DESC
                 LIMIT 1
             """,
-                (secret_name,)
+                (secret_name,),
             )
             latest_version = cursor.fetchone()
-            version_suffix = latest_version["version_id"][:6] if latest_version else "??????"
+            version_suffix = (
+                latest_version["version_id"][:6] if latest_version else "??????"
+            )
 
             arn = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT_ID}:secret:{secret_name}-{version_suffix}"
 
@@ -555,13 +568,79 @@ class SecretsManagerDatabase:
                 "DeletionDate": deletion_date,
             }
 
+    def restore_secret(self, secret_name: str) -> Dict:
+        """
+        Restore a deleted secret (cancel scheduled deletion)
+
+        Args:
+            secret_name: Name of the secret to restore
+
+        Returns:
+            Dict with ARN and Name
+
+        Raises:
+            ResourceNotFoundException: If secret not found or not scheduled for deletion
+            InvalidRequestException: If secret deletion window has passed
+        """
+        # Purge if expired (this will delete it if past recovery window)
+        if self._purge_if_expired(secret_name):
+            raise ResourceNotFoundException(
+                f"Secrets Manager can't find the specified secret: {secret_name}"
+            )
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Check if secret exists
+            cursor.execute(
+                "SELECT deleted_date FROM secrets WHERE secret_name = ?", (secret_name,)
+            )
+            secret = cursor.fetchone()
+
+            if not secret:
+                raise ResourceNotFoundException(
+                    f"Secrets Manager can't find the specified secret: {secret_name}"
+                )
+
+            if not secret["deleted_date"]:
+                raise InvalidRequestException(
+                    f"The secret {secret_name} is not scheduled for deletion."
+                )
+
+            # Check if still within recovery window
+            now = int(time.time())
+            if now >= secret["deleted_date"]:
+                raise InvalidRequestException(
+                    f"The secret {secret_name} recovery window has expired."
+                )
+
+            # Clear the deletion date to restore the secret
+            cursor.execute(
+                "UPDATE secrets SET deleted_date = NULL WHERE secret_name = ?",
+                (secret_name,),
+            )
+            conn.commit()
+
+            # Get version for ARN
+            cursor.execute(
+                "SELECT version_id FROM secret_versions WHERE secret_name = ? ORDER BY created_date DESC LIMIT 1",
+                (secret_name,),
+            )
+            version = cursor.fetchone()
+            version_suffix = version["version_id"][:6] if version else "??????"
+            arn = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT_ID}:secret:{secret_name}-{version_suffix}"
+
+            logger.info(f"Restored secret: {secret_name}")
+
+            return {"ARN": arn, "Name": secret_name}
+
     def list_secrets(
         self,
         max_results: int = 100,
         next_token: Optional[str] = None,
     ) -> Dict:
         """
-        List all secrets
+        List all secrets (includes secrets scheduled for deletion, but not purged ones)
 
         Args:
             max_results: Maximum number of results
@@ -573,15 +652,15 @@ class SecretsManagerDatabase:
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
-            # Get all non-deleted secrets
+            # Get all secrets (including deleted ones)
+            # Purged secrets are automatically removed by CASCADE DELETE
             cursor.execute(
                 """
                 SELECT * FROM secrets
-                WHERE deleted_date IS NULL
                 ORDER BY secret_name
                 LIMIT ?
             """,
-                (max_results + 1,)  # Get one extra to check if there are more
+                (max_results + 1,),  # Get one extra to check if there are more
             )
 
             secrets = cursor.fetchall()
@@ -617,6 +696,8 @@ class SecretsManagerDatabase:
                     secret_info["KmsKeyId"] = secret["kms_key_id"]
                 if secret["tags"]:
                     secret_info["Tags"] = json.loads(secret["tags"])
+                if secret["deleted_date"]:
+                    secret_info["DeletedDate"] = secret["deleted_date"]
 
                 secret_list.append(secret_info)
 
@@ -624,13 +705,52 @@ class SecretsManagerDatabase:
 
             # Add NextToken if there are more results
             if len(secrets) > max_results:
-                result["NextToken"] = str(max_results)  # Simple pagination token, use max * page# for next batch
+                result["NextToken"] = str(
+                    max_results
+                )  # Simple pagination token, use max * page# for next batch
 
             return result
 
+    def _purge_if_expired(self, secret_name: str) -> bool:
+        """
+        Check if a secret is past its deletion window and purge it if so.
+        This implements lazy deletion - secrets are purged when accessed.
+
+        Args:
+            secret_name: Name of the secret to check
+
+        Returns:
+            True if secret was purged, False otherwise
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Get secret with deletion info
+            cursor.execute(
+                "SELECT deleted_date FROM secrets WHERE secret_name = ?", (secret_name,)
+            )
+            secret = cursor.fetchone()
+
+            if not secret or not secret["deleted_date"]:
+                return False
+
+            # Calculate deletion deadline (deleted_date is the future deletion date)
+            # If current time is past deletion date, purge it
+            now = int(time.time())
+            if now >= secret["deleted_date"]:
+                # Permanently delete the secret and all its versions
+                cursor.execute(
+                    "DELETE FROM secrets WHERE secret_name = ?", (secret_name,)
+                )
+                conn.commit()
+                logger.info(f"Purged expired secret: {secret_name}")
+                return True
+
+            return False
+
     def secret_exists(self, secret_name: str) -> bool:
         """
-        Check if a secret exists and is not marked deleted.
+        Check if a secret exists and is not marked deleted (purges if expired).
 
         Args:
             secret_name: Name of the secret to check.
@@ -638,6 +758,9 @@ class SecretsManagerDatabase:
         Returns:
             True if the secret exists and is active (not deleted), False otherwise.
         """
+        # Purge if expired first
+        self._purge_if_expired(secret_name)
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -668,7 +791,7 @@ class SecretsManagerDatabase:
 
             cursor.execute(
                 "SELECT * FROM secrets WHERE secret_name = ? AND deleted_date IS NULL",
-                (secret_name,)
+                (secret_name,),
             )
             secret = cursor.fetchone()
 
@@ -684,7 +807,7 @@ class SecretsManagerDatabase:
                 WHERE secret_name = ?
                 ORDER BY created_date DESC
             """,
-                (secret_name,)
+                (secret_name,),
             )
             versions = cursor.fetchall()
 
@@ -693,7 +816,9 @@ class SecretsManagerDatabase:
                 version_ids_to_stages[v["version_id"]] = json.loads(v["version_stages"])
 
             latest_version = versions[0] if versions else None
-            version_suffix = latest_version["version_id"][:6] if latest_version else "??????"
+            version_suffix = (
+                latest_version["version_id"][:6] if latest_version else "??????"
+            )
             arn = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT_ID}:secret:{secret_name}-{version_suffix}"
 
             result = {
@@ -733,7 +858,9 @@ class SecretsManager:
             raise InvalidParameterException("Secret name is required")
 
         if self.db.secret_exists(secret_name):
-            raise ResourceExistsException(f'A resource with the name {secret_name} already exists.')
+            raise ResourceExistsException(
+                f"A resource with the name {secret_name} already exists."
+            )
 
         return self.db.create_secret(
             secret_name=secret_name,
@@ -783,6 +910,14 @@ class SecretsManager:
             force_delete=params.get("ForceDeleteWithoutRecovery", False),
         )
 
+    def restore_secret(self, params: Dict) -> Dict:
+        """Restore a secret"""
+        secret_id = params.get("SecretId")
+        if not secret_id:
+            raise InvalidParameterException("SecretId is required")
+
+        return self.db.restore_secret(secret_name=secret_id)
+
     def list_secrets(self, params: Dict) -> Dict:
         """List all secrets"""
         return self.db.list_secrets(
@@ -820,14 +955,24 @@ def handle_request():
         operation = target.split(".")[-1] if "." in target else None
 
         if not operation:
-            return jsonify(error_response("InvalidAction", "Missing X-Amz-Target header")), 400
+            return (
+                jsonify(error_response("InvalidAction", "Missing X-Amz-Target header")),
+                400,
+            )
 
         # Get request body
         try:
             params = request.get_json(force=True) or {}
         except Exception:
             logger.error(f"Invalid JSON in request body: {request.data}")
-            return jsonify(error_response("InvalidRequestException", "Invalid JSON in request body")), 400
+            return (
+                jsonify(
+                    error_response(
+                        "InvalidRequestException", "Invalid JSON in request body"
+                    )
+                ),
+                400,
+            )
 
         logger.info(f"Secrets Manager operation: {operation}")
 
@@ -848,6 +993,10 @@ def handle_request():
             result = secrets_manager.delete_secret(params)
             return jsonify(result), 200
 
+        elif operation == "RestoreSecret":
+            result = secrets_manager.restore_secret(params)
+            return jsonify(result), 200
+
         elif operation == "ListSecrets":
             result = secrets_manager.list_secrets(params)
             return jsonify(result), 200
@@ -857,7 +1006,12 @@ def handle_request():
             return jsonify(result), 200
 
         else:
-            return jsonify(error_response("InvalidAction", f"Unknown operation: {operation}")), 400
+            return (
+                jsonify(
+                    error_response("InvalidAction", f"Unknown operation: {operation}")
+                ),
+                400,
+            )
 
     except SecretsManagerException as e:
         logger.error(f"Secrets Manager error: {e.error_type} - {e.message}")
@@ -877,6 +1031,6 @@ def health_check():
 if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
     app.run(host="0.0.0.0", port=4566, debug=False)

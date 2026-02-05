@@ -223,6 +223,10 @@
             <div class="panel-header">
                 <h2>AWS Secrets Manager</h2>
                 <div class="actions">
+                    <label style="display: flex; align-items: center; margin-right: 15px; cursor: pointer;">
+                        <input type="checkbox" id="show-deleted-secrets" onchange="loadSecrets()" style="width: auto; margin-right: 8px;">
+                        <span>Show deleted secrets</span>
+                    </label>
                     <button class="btn btn-primary" onclick="showCreateSecretModal()">Create Secret</button>
                     <button class="btn btn-secondary" onclick="loadSecrets()">🔄 Refresh</button>
                 </div>
@@ -241,6 +245,7 @@
                                 <th>Secret Name</th>
                                 <th>Description</th>
                                 <th>Last Modified</th>
+                                <th>Status</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
@@ -251,6 +256,31 @@
                     <div class="empty-state-icon">🔐</div>
                     <h3>No secrets found</h3>
                     <p>Create your first secret to get started</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Restore Secret Modal -->
+        <div id="restore-secret-modal" class="modal">
+            <div class="modal-content" style="max-width: 500px;">
+                <div class="modal-header">Restore Secret</div>
+                <div class="modal-body">
+                    <form id="restore-secret-form" onsubmit="confirmRestoreSecret(event)">
+                        <input type="hidden" id="restore-secret-name">
+
+                        <div style="background: #D4EDDA; padding: 15px; border-radius: 4px; margin-bottom: 20px; border-left: 4px solid #28A745;">
+                            <strong>✓ Restore Secret:</strong> You are about to restore the secret "<strong id="restore-secret-display-name"></strong>".
+                        </div>
+
+                        <p style="color: var(--text-secondary); margin-bottom: 15px;">
+                            This will cancel the scheduled deletion and make the secret available again.
+                            Any applications or services can resume using this secret immediately.
+                        </p>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="submit" form="restore-secret-form" class="btn btn-primary">Restore Secret</button>
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('restore-secret-modal')">Cancel</button>
                 </div>
             </div>
         </div>

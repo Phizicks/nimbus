@@ -3023,6 +3023,7 @@ def handle_request():
         "PutSecretValue": proxy_to_secretsmanager,
         "ListSecrets": proxy_to_secretsmanager,
         "DeleteSecret": proxy_to_secretsmanager,
+        "RestoreSecret": proxy_to_secretsmanager,
     }
     if operation in secretsmanager_handlers:
         logger.info(f"Routing to SecretsManager handler: Operation={operation}")

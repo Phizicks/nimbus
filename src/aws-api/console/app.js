@@ -4340,6 +4340,10 @@ async function loadSecrets() {
     const content = document.getElementById('secretsmanager-content');
     const empty = document.getElementById('secretsmanager-empty');
     const tbody = document.querySelector('#secretsmanager-table tbody');
+    const showDeleted = document.getElementById('show-deleted-secrets').checked;
+
+    // Save checkbox state to localStorage
+    localStorage.setItem('showDeletedSecrets', showDeleted);
 
     loading.style.display = 'block';
     content.style.display = 'none';
@@ -4363,13 +4367,31 @@ async function loadSecrets() {
 
         if (!data.SecretList || data.SecretList.length === 0) {
             empty.style.display = 'block';
-            updateSecretsStats(0);
+            updateSecretsStats(0, 0);
+            return;
+        }
+
+        // Filter secrets based on checkbox
+        const filteredSecrets = showDeleted
+            ? data.SecretList
+            : data.SecretList.filter(s => !s.DeletedDate);
+
+        if (filteredSecrets.length === 0) {
+            empty.style.display = 'block';
+            updateSecretsStats(data.SecretList.length, data.SecretList.filter(s => s.DeletedDate).length);
             return;
         }
 
         tbody.innerHTML = '';
-        data.SecretList.forEach(secret => {
+        filteredSecrets.forEach(secret => {
             const row = tbody.insertRow();
+            const isDeleted = !!secret.DeletedDate;
+
+            // Apply styling for deleted secrets
+            if (isDeleted) {
+                row.style.backgroundColor = 'var(--bg-tertiary)';
+                row.style.opacity = '0.7';
+            }
 
             // Secret Name
             const nameCell = row.insertCell();
@@ -4383,19 +4405,37 @@ async function loadSecrets() {
             const modifiedCell = row.insertCell();
             modifiedCell.textContent = new Date(secret.LastChangedDate * 1000).toLocaleString();
 
+            // Status
+            const statusCell = row.insertCell();
+            if (isDeleted) {
+                const deletionDate = new Date(secret.DeletedDate * 1000);
+                const daysRemaining = Math.ceil((secret.DeletedDate - Date.now() / 1000) / 86400);
+                statusCell.innerHTML = `<span style="color: var(--danger); font-weight: 500;">Scheduled for deletion</span><br><small style="color: var(--text-secondary);">Deletes on ${deletionDate.toLocaleDateString()} (${daysRemaining} days)</small>`;
+            } else {
+                statusCell.innerHTML = `<span style="color: var(--success); font-weight: 500;">Active</span>`;
+            }
+
             // Actions
             const actionsCell = row.insertCell();
-            actionsCell.innerHTML = `
-                <div class="action-buttons">
-                    <button class="btn btn-primary" onclick="viewSecret('${secret.Name}')">View</button>
-                    <button class="btn btn-warning" onclick="showUpdateSecretModal('${secret.Name}')">Update</button>
-                    <button class="btn btn-danger" onclick="showDeleteSecretModal('${secret.Name}')">Delete</button>
-                </div>
-            `;
+            if (isDeleted) {
+                actionsCell.innerHTML = `
+                    <div class="action-buttons">
+                        <button class="btn btn-primary" onclick="showRestoreSecretModal('${secret.Name}')">Restore</button>
+                    </div>
+                `;
+            } else {
+                actionsCell.innerHTML = `
+                    <div class="action-buttons">
+                        <button class="btn btn-primary" onclick="viewSecret('${secret.Name}')">View</button>
+                        <button class="btn btn-warning" onclick="showUpdateSecretModal('${secret.Name}')">Update</button>
+                        <button class="btn btn-danger" onclick="showDeleteSecretModal('${secret.Name}')">Delete</button>
+                    </div>
+                `;
+            }
         });
 
         content.style.display = 'block';
-        updateSecretsStats(data.SecretList.length);
+        updateSecretsStats(data.SecretList.length, data.SecretList.filter(s => s.DeletedDate).length);
 
     } catch (error) {
         console.error('Error loading secrets:', error);
@@ -4406,14 +4446,68 @@ async function loadSecrets() {
 }
 
 // Update secrets statistics
-function updateSecretsStats(count) {
+function updateSecretsStats(total, deleted) {
     const statsDiv = document.getElementById('secretsmanager-stats');
+    const active = total - deleted;
     statsDiv.innerHTML = `
         <div class="stat-card">
             <div class="stat-label">Total Secrets</div>
-            <div class="stat-value">${count}</div>
+            <div class="stat-value">${total}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Active</div>
+            <div class="stat-value">${active}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Scheduled for Deletion</div>
+            <div class="stat-value">${deleted}</div>
         </div>
     `;
+}
+
+// Show restore secret modal
+function showRestoreSecretModal(secretName) {
+    document.getElementById('restore-secret-name').value = secretName;
+    document.getElementById('restore-secret-display-name').textContent = secretName;
+    showModal('restore-secret-modal');
+}
+
+// Confirm restore secret
+async function confirmRestoreSecret(event) {
+    event.preventDefault();
+
+    const secretName = document.getElementById('restore-secret-name').value;
+
+    try {
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.1',
+                'X-Amz-Target': 'secretsmanager.RestoreSecret'
+            },
+            body: JSON.stringify({
+                SecretId: secretName
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.message || 'Failed to restore secret');
+        }
+
+        // Close modal
+        closeModal('restore-secret-modal');
+
+        showNotification(`Secret "${secretName}" has been restored successfully`, 'success');
+
+        // Reload the secrets list
+        loadSecrets();
+
+    } catch (error) {
+        console.error('Error restoring secret:', error);
+        showNotification('Failed to restore secret: ' + error.message, 'error');
+    }
 }
 
 // Show create secret modal
@@ -4873,6 +4967,12 @@ window.addEventListener('DOMContentLoaded', function() {
     // Initialize theme UI
     const currentTheme = getCookie('theme') || 'system';
     updateThemeUI(currentTheme);
+
+    // Restore show deleted secrets checkbox state
+    const showDeletedSecrets = localStorage.getItem('showDeletedSecrets');
+    if (showDeletedSecrets !== null) {
+        document.getElementById('show-deleted-secrets').checked = showDeletedSecrets === 'true';
+    }
 
     // Load data for the active tab
     const activeTab = localStorage.getItem('activeTab') || 'sqs';
