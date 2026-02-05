@@ -961,48 +961,52 @@
     <!-- Create Secret Modal -->
     <div id="create-secret-modal" class="modal">
         <div class="modal-content">
-            <div class="modal-header">Create Secret</div>
+            <div class="modal-header">Create secret</div>
             <div class="modal-body">
                 <form id="create-secret-form" onsubmit="createSecret(event)">
                     <div class="form-group">
-                        <label>Secret Name *</label>
-                        <input type="text" id="secret-name" required placeholder="my-secret">
-                        <small style="color: var(--text-secondary); font-size: 12px;">Must be unique within your account</small>
+                        <label>Secret name *</label>
+                        <input type="text" id="secret-name" required placeholder="my-database-secret">
+                        <small style="color: var(--text-secondary); font-size: 12px;">
+                            Must be unique within your account. Use alphanumeric characters, hyphens, and underscores.
+                        </small>
                     </div>
 
                     <div class="form-group">
-                        <label>Description</label>
-                        <input type="text" id="secret-description" placeholder="Description of this secret">
+                        <label>Description (optional)</label>
+                        <input type="text" id="secret-description" placeholder="Database credentials for production">
                     </div>
 
                     <div class="form-group">
-                        <label>Secret Type *</label>
+                        <label>Secret type *</label>
                         <select id="secret-type" onchange="toggleSecretType()">
-                            <option value="string">Secret String (JSON or Text)</option>
-                            <option value="binary">Secret Binary</option>
+                            <option value="string">Secret string (JSON or plain text)</option>
+                            <option value="binary">Secret binary (Base64 encoded)</option>
                         </select>
+                        <small style="color: var(--text-secondary); font-size: 12px;">
+                            ⚠️ Secret type cannot be changed after creation
+                        </small>
                     </div>
 
                     <div class="form-group" id="secret-string-group">
-                        <label>Secret Value *</label>
-                        <textarea id="secret-string" placeholder='{"username":"admin","password":"secret123"}' rows="8"></textarea>
-                        <small style="color: var(--text-secondary); font-size: 12px;">Enter JSON or plain text</small>
+                        <label>Secret value *</label>
+                        <textarea id="secret-string" placeholder='{"username":"admin","password":"MySecurePassword123!"}' rows="10"></textarea>
+                        <small style="color: var(--text-secondary); font-size: 12px;">
+                            Enter JSON for structured secrets, or plain text for simple values
+                        </small>
                     </div>
 
                     <div class="form-group" id="secret-binary-group" style="display:none;">
-                        <label>Secret Binary (Base64) *</label>
-                        <textarea id="secret-binary" placeholder="Base64 encoded binary data" rows="8"></textarea>
-                    </div>
-
-                    <div class="form-group">
-                        <label>KMS Key ID (Optional)</label>
-                        <input type="text" id="secret-kms-key" placeholder="arn:aws:kms:region:account:key/key-id">
-                        <small style="color: var(--text-secondary); font-size: 12px;">Leave empty for default encryption</small>
+                        <label>Secret binary (Base64 encoded) *</label>
+                        <textarea id="secret-binary" placeholder="SGVsbG8gV29ybGQh" rows="10"></textarea>
+                        <small style="color: var(--text-secondary); font-size: 12px;">
+                            Provide Base64-encoded binary data. Binary secrets cannot be updated through the console.
+                        </small>
                     </div>
                 </form>
             </div>
             <div class="modal-footer">
-                <button type="submit" form="create-secret-form" class="btn btn-primary">Create Secret</button>
+                <button type="submit" form="create-secret-form" class="btn btn-primary">Create secret</button>
                 <button type="button" class="btn btn-secondary" onclick="closeModal('create-secret-modal')">Cancel</button>
             </div>
         </div>
@@ -1067,40 +1071,105 @@
         </div>
     </div>
 
+    <!-- Delete Secret Modal -->
+    <div id="delete-secret-modal" class="modal">
+        <div class="modal-content" style="max-width: 600px;">
+            <div class="modal-header">Schedule secret deletion</div>
+            <div class="modal-body">
+                <form id="delete-secret-form" onsubmit="confirmDeleteSecret(event)">
+                    <input type="hidden" id="delete-secret-name">
+
+                    <div style="background: #FADBD8; padding: 15px; border-radius: 4px; margin-bottom: 20px; border-left: 4px solid var(--danger);">
+                        <strong>⚠️ Warning:</strong> You are about to delete the secret "<strong id="delete-secret-display-name"></strong>".
+                    </div>
+
+                    <div class="form-group">
+                        <label>Recovery window (days)</label>
+                        <input
+                            type="number"
+                            id="delete-recovery-days"
+                            min="7"
+                            max="30"
+                            value="30"
+                            placeholder="30"
+                            style="width: 150px;"
+                        >
+                        <small style="color: var(--text-secondary); font-size: 12px; display: block; margin-top: 5px;">
+                            Minimum 7 days, maximum 30 days. During this period, you can recover the secret.
+                        </small>
+                    </div>
+
+                    <div class="form-group">
+                        <label style="display: flex; align-items: center; cursor: pointer;">
+                            <input
+                                type="checkbox"
+                                id="delete-force-immediate"
+                                style="width: auto; margin-right: 10px;"
+                                onchange="toggleImmediateDelete()"
+                            >
+                            <span>Disable recovery (Delete immediately without recovery window)</span>
+                        </label>
+                        <small style="color: var(--text-secondary); font-size: 12px; display: block; margin-top: 5px; margin-left: 30px;">
+                            <strong>Warning:</strong> This action is irreversible. The secret will be permanently deleted and cannot be recovered.
+                        </small>
+                    </div>
+
+                    <div id="immediate-delete-warning" style="display: none; background: #FADBD8; padding: 15px; border-radius: 4px; margin-top: 15px; border-left: 4px solid var(--danger);">
+                        <strong>🚨 IMMEDIATE DELETION</strong>
+                        <p style="margin: 10px 0 0 0;">
+                            The secret will be permanently deleted immediately. This action cannot be undone.
+                            Any applications or services using this secret will fail.
+                        </p>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" form="delete-secret-form" class="btn btn-danger" id="delete-confirm-button">Schedule deletion</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('delete-secret-modal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Update Secret Modal -->
     <div id="update-secret-modal" class="modal">
         <div class="modal-content">
             <div class="modal-header">Update Secret</div>
             <div class="modal-body">
                 <form id="update-secret-form" onsubmit="updateSecret(event)">
-                    <!-- input type="hidden" id="update-secret-name" -->
-                    <div class="form-group">
-                        <label>Secret Name</label>
-                        <input type="text" id="update-secret-name" disabled="" style="background: var(--bg-tertiary); cursor: not-allowed; --darkreader-inline-bg: var(--darkreader-bg--bg-tertiary);" data-darkreader-inline-bg="">
-                    </div>
+                    <input type="hidden" id="update-secret-name">
+                    <input type="hidden" id="update-secret-type-hidden" value="string">
 
                     <div class="form-group">
                         <label>Description</label>
                         <input type="text" id="update-secret-description" placeholder="Description of this secret">
+                        <small style="color: var(--text-secondary); font-size: 12px;">Optional - update the secret description</small>
                     </div>
 
-                    <div class="form-group" style="cursor: not-allowed;">
-                        <label>Secret Type *</label>
-                        <select id="update-secret-type" style="cursor: not-allowed;" disabled>
-                            <option value="string">Secret String (JSON or Text)</option>
-                            <option value="binary">Secret Binary</option>
-                        </select>
+                    <!-- Note about secret type -->
+                    <div style="background: var(--bg-tertiary); padding: 12px; border-radius: 4px; margin-bottom: 20px; border-left: 3px solid var(--aws-blue);">
+                        <strong>Note:</strong> Secret type (string/binary) cannot be changed after creation.
+                        Binary secrets cannot be updated through the console.
                     </div>
 
+                    <!-- Only string secrets can be updated through console -->
                     <div class="form-group" id="update-secret-string-group">
                         <label>New Secret Value *</label>
-                        <textarea id="update-secret-string" placeholder='{"username":"admin","password":"newpassword"}' rows="8"></textarea>
-                        <small style="color: var(--text-secondary); font-size: 12px;">This will create a new version</small>
+                        <textarea id="update-secret-string" placeholder='{"username":"admin","password":"newpassword"}' rows="8" required></textarea>
+                        <small style="color: var(--text-secondary); font-size: 12px;">This will create a new version. Previous version will be tagged as AWSPREVIOUS.</small>
                     </div>
 
+                    <!-- Binary group hidden - not used in console -->
                     <div class="form-group" id="update-secret-binary-group" style="display:none;">
-                        <label>Secret Binary (Base64) *</label>
+                        <label>Secret Binary (Base64)</label>
                         <textarea id="update-secret-binary" placeholder="Base64 encoded binary data" rows="8"></textarea>
+                    </div>
+
+                    <!-- Hidden type selector group - kept for compatibility but hidden -->
+                    <div id="update-secret-type-group" style="display:none;">
+                        <select id="update-secret-type">
+                            <option value="string">Secret String</option>
+                            <option value="binary">Secret Binary</option>
+                        </select>
                     </div>
                 </form>
             </div>

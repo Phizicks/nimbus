@@ -4389,7 +4389,7 @@ async function loadSecrets() {
                 <div class="action-buttons">
                     <button class="btn btn-primary" onclick="viewSecret('${secret.Name}')">View</button>
                     <button class="btn btn-warning" onclick="showUpdateSecretModal('${secret.Name}')">Update</button>
-                    <button class="btn btn-danger" onclick="deleteSecret('${secret.Name}')">Delete</button>
+                    <button class="btn btn-danger" onclick="showDeleteSecretModal('${secret.Name}')">Delete</button>
                 </div>
             `;
         });
@@ -4422,7 +4422,6 @@ function showCreateSecretModal() {
     document.getElementById('secret-description').value = '';
     document.getElementById('secret-string').value = '';
     document.getElementById('secret-binary').value = '';
-    document.getElementById('secret-kms-key').value = '';
     document.getElementById('secret-type').value = 'string';
     toggleSecretType();
     showModal('create-secret-modal');
@@ -4473,20 +4472,17 @@ async function createSecret(event) {
     const name = document.getElementById('secret-name').value;
     const description = document.getElementById('secret-description').value;
     const type = document.getElementById('secret-type').value;
-    const kmsKeyId = document.getElementById('secret-kms-key').value;
 
     const payload = {
         Name: name
     };
 
+    // Only add description if it has a value
     if (description) {
         payload.Description = description;
     }
 
-    if (kmsKeyId) {
-        payload.KmsKeyId = kmsKeyId;
-    }
-
+    // Add the secret value based on type
     if (type === 'string') {
         const secretString = document.getElementById('secret-string').value;
         if (!secretString) {
@@ -4519,7 +4515,10 @@ async function createSecret(event) {
             throw new Error(data.message || 'Failed to create secret');
         }
 
-        showNotification(`Secret "${name}" created successfully`, 'success');
+        showNotification(
+            `Secret "${name}" created successfully with version ${data.VersionId.substring(0, 8)}...`,
+            'success'
+        );
         closeModal('create-secret-modal');
         loadSecrets();
 
@@ -4637,11 +4636,11 @@ async function retrieveSecretValue() {
 
 // Show update secret modal
 async function showUpdateSecretModal(secretName) {
-    // document.getElementById('update-secret-name').value = secretName;
+    document.getElementById('update-secret-name').value = secretName;
 
     try {
-        // Get current secret details
-        const response = await fetch(API_BASE, {
+        // Get current secret details AND value to determine type
+        const describeResponse = await fetch(API_BASE, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-amz-json-1.1',
@@ -4652,20 +4651,58 @@ async function showUpdateSecretModal(secretName) {
             })
         });
 
-        const data = await response.json();
+        const describeData = await describeResponse.json();
 
-        if (!response.ok) {
-            throw new Error(data.message || 'Failed to describe secret');
+        if (!describeResponse.ok) {
+            throw new Error(describeData.message || 'Failed to describe secret');
         }
 
-        document.getElementById('update-secret-name').value = data.Name || '';
-        document.getElementById('update-secret-description').value = data.Description || '';
+        // Get the actual secret value to determine if it's binary or string
+        const valueResponse = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.1',
+                'X-Amz-Target': 'secretsmanager.GetSecretValue'
+            },
+            body: JSON.stringify({
+                SecretId: secretName
+            })
+        });
+
+        const valueData = await valueResponse.json();
+
+        if (!valueResponse.ok) {
+            throw new Error(valueData.message || 'Failed to retrieve secret value');
+        }
+
+        // Check if this is a binary secret
+        const isBinary = !!valueData.SecretBinary;
+
+        if (isBinary) {
+            // AWS Console doesn't allow updating binary secrets
+            showNotification('Binary secrets cannot be updated through the console. Please use the AWS CLI or SDK.', 'warning');
+            return;
+        }
+
+        // It's a string secret - populate the form
+        document.getElementById('update-secret-description').value = describeData.Description || '';
         document.getElementById('update-secret-string').value = '';
-        document.getElementById('update-secret-binary').value = '';
-        // document.getElementById('update-secret-type').value = 'string';
-        toggleUpdateSecretType();
+
+        // Remove the type selector entirely - secret type is fixed
+        const typeGroup = document.getElementById('update-secret-type-group');
+        if (typeGroup) {
+            typeGroup.style.display = 'none';
+        }
+
+        // Only show string input, hide binary
+        document.getElementById('update-secret-string-group').style.display = 'block';
+        document.getElementById('update-secret-binary-group').style.display = 'none';
+
+        // Store the secret type in a hidden field
+        document.getElementById('update-secret-type-hidden').value = 'string';
 
         showModal('update-secret-modal');
+
     } catch (error) {
         console.error('Error loading secret for update:', error);
         showNotification('Failed to load secret: ' + error.message, 'error');
@@ -4678,30 +4715,22 @@ async function updateSecret(event) {
 
     const name = document.getElementById('update-secret-name').value;
     const description = document.getElementById('update-secret-description').value;
-    const type = document.getElementById('update-secret-type').value;
 
-    const payload = {
-        SecretId: name
-    };
-
-    if (description) {
-        payload.Description = description;
+    // Secret type is fixed - can only be string at this point since binary is blocked
+    const secretString = document.getElementById('update-secret-string').value;
+    if (!secretString) {
+        showNotification('Secret value is required', 'error');
+        return;
     }
 
-    if (type === 'string') {
-        const secretString = document.getElementById('update-secret-string').value;
-        if (!secretString) {
-            showNotification('Secret value is required', 'error');
-            return;
-        }
-        payload.SecretString = secretString;
-    } else {
-        const secretBinary = document.getElementById('update-secret-binary').value;
-        if (!secretBinary) {
-            showNotification('Secret binary value is required', 'error');
-            return;
-        }
-        payload.SecretBinary = secretBinary;
+    const payload = {
+        SecretId: name,
+        SecretString: secretString
+    };
+
+    // Only update description if it was changed
+    if (description) {
+        payload.Description = description;
     }
 
     try {
@@ -4720,7 +4749,7 @@ async function updateSecret(event) {
             throw new Error(data.message || 'Failed to update secret');
         }
 
-        showNotification(`Secret "${name}" updated successfully`, 'success');
+        showNotification(`Secret "${name}" updated successfully with new version ${data.VersionId}`, 'success');
         closeModal('update-secret-modal');
         loadSecrets();
 
@@ -4731,43 +4760,109 @@ async function updateSecret(event) {
 }
 
 // Delete secret
-async function deleteSecret(secretName) {
-    // if (!confirm(`Are you sure you want to delete secret "${secretName}"?\n\nThis will schedule the secret for deletion with a 30-day recovery window.`)) {
-    //     return;
-    // }
-    showConfirmModal(
-        `Are you sure you want to delete secret "${secretName}"?<br><br>
-        This will schedule the secret for deletion with a 30-day recovery window.<br>`,
-        async () => {
-            try {
-                const response = await fetch(API_BASE, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/x-amz-json-1.1',
-                        'X-Amz-Target': 'secretsmanager.DeleteSecret'
-                    },
-                    body: JSON.stringify({
-                        SecretId: secretName,
-                        RecoveryWindowInDays: 30
-                    })
-                });
+// Show delete secret modal - NEW FUNCTION
+function showDeleteSecretModal(secretName) {
+    // Populate the modal
+    document.getElementById('delete-secret-name').value = secretName;
+    document.getElementById('delete-secret-display-name').textContent = secretName;
 
-                const data = await response.json();
+    // Reset form to defaults
+    document.getElementById('delete-recovery-days').value = 30;
+    document.getElementById('delete-force-immediate').checked = false;
+    document.getElementById('delete-recovery-days').disabled = false;
+    document.getElementById('immediate-delete-warning').style.display = 'none';
+    document.getElementById('delete-confirm-button').textContent = 'Schedule deletion';
 
-                if (!response.ok) {
-                    throw new Error(data.message || 'Failed to delete secret');
-                }
+    showModal('delete-secret-modal');
+}
 
-                const deletionDate = new Date(data.DeletionDate * 1000);
-                showNotification(`Secret "${secretName}" scheduled for deletion on ${deletionDate.toLocaleDateString()}`, 'success');
-                loadSecrets();
+// Toggle immediate delete warning - NEW FUNCTION
+function toggleImmediateDelete() {
+    const forceImmediate = document.getElementById('delete-force-immediate').checked;
+    const recoveryDaysInput = document.getElementById('delete-recovery-days');
+    const warningDiv = document.getElementById('immediate-delete-warning');
+    const confirmButton = document.getElementById('delete-confirm-button');
 
-            } catch (error) {
-                console.error('Error deleting secret:', error);
-                showNotification('Failed to delete secret: ' + error.message, 'error');
-            }
+    if (forceImmediate) {
+        // Immediate deletion mode
+        recoveryDaysInput.disabled = true;
+        recoveryDaysInput.style.opacity = '0.5';
+        warningDiv.style.display = 'block';
+        confirmButton.textContent = 'Delete immediately';
+        confirmButton.style.background = '#8B0000'; // Darker red for emphasis
+    } else {
+        // Scheduled deletion mode
+        recoveryDaysInput.disabled = false;
+        recoveryDaysInput.style.opacity = '1';
+        warningDiv.style.display = 'none';
+        confirmButton.textContent = 'Schedule deletion';
+        confirmButton.style.background = ''; // Reset to default
+    }
+}
+
+// Confirm delete secret - NEW FUNCTION
+async function confirmDeleteSecret(event) {
+    event.preventDefault();
+
+    const secretName = document.getElementById('delete-secret-name').value;
+    const forceImmediate = document.getElementById('delete-force-immediate').checked;
+    const recoveryDays = parseInt(document.getElementById('delete-recovery-days').value);
+
+    // Validate recovery window
+    if (!forceImmediate && (recoveryDays < 7 || recoveryDays > 30)) {
+        showNotification('Recovery window must be between 7 and 30 days', 'error');
+        return;
+    }
+
+    // Build the payload
+    const payload = {
+        SecretId: secretName
+    };
+
+    if (forceImmediate) {
+        payload.ForceDeleteWithoutRecovery = true;
+    } else {
+        payload.RecoveryWindowInDays = recoveryDays;
+    }
+
+    try {
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.1',
+                'X-Amz-Target': 'secretsmanager.DeleteSecret'
+            },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.message || 'Failed to delete secret');
         }
-    )
+
+        // Close modal
+        closeModal('delete-secret-modal');
+
+        // Show appropriate success message
+        if (forceImmediate) {
+            showNotification(`Secret "${secretName}" has been permanently deleted`, 'success');
+        } else {
+            const deletionDate = new Date(data.DeletionDate * 1000);
+            showNotification(
+                `Secret "${secretName}" is scheduled for deletion on ${deletionDate.toLocaleDateString()} ` +
+                `(${recoveryDays} days from now)`,
+                'success'
+            );
+        }
+
+        // Reload the secrets list
+        loadSecrets();
+
+    } catch (error) {
+        console.error('Error deleting secret:', error);
+        showNotification('Failed to delete secret: ' + error.message, 'error');
+    }
 }
 
 // ============================================================================
