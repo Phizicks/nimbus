@@ -82,7 +82,7 @@ function toggleThemePicker() {
 }
 
 // Close dropdown when clicking outside
-document.addEventListener('click', function(event) {
+document.addEventListener('click', function (event) {
     const themePicker = document.querySelector('.theme-picker');
     const dropdown = document.getElementById('theme-dropdown');
 
@@ -92,7 +92,7 @@ document.addEventListener('click', function(event) {
 });
 
 // Listen for system theme changes
-window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
     const currentTheme = getCookie('theme') || 'system';
     if (currentTheme === 'system') {
         setTheme('system');
@@ -1257,6 +1257,302 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+function initEnvironmentVariablesEditor(functionName, envVars) {
+    const container = document.getElementById('env-vars-container');
+
+    const html = `
+        <div class="env-vars-list" id="env-vars-list"></div>
+        <div style="margin-top: 10px;">
+            <button class="btn btn-primary btn-sm" onclick="addNewEnvVar()">+ Add Variable</button>
+            <button class="btn btn-secondary btn-sm" id="env-cancel-btn" style="display: none;" onclick="cancelEnvVarEdits()">Cancel</button>
+        </div>
+    `;
+
+    container.innerHTML = html;
+    container.dataset.functionName = functionName;
+
+    // Render existing env vars
+    renderEnvVars(envVars);
+}
+
+function renderEnvVars(envVars) {
+    const list = document.getElementById('env-vars-list');
+
+    if (!envVars || Object.keys(envVars).length === 0) {
+        list.innerHTML = '<div style="color: var(--text-secondary); font-style: italic;">No environment variables</div>';
+        return;
+    }
+
+    let html = '';
+    for (const [key, value] of Object.entries(envVars)) {
+        html += createEnvVarRow(key, value, false);
+    }
+
+    list.innerHTML = html;
+}
+
+function createEnvVarRow(key, value, isEditing) {
+    const rowId = `env-row-${Math.random().toString(36).substr(2, 9)}`;
+
+    if (isEditing) {
+        return `
+            <div class="env-var-row editing" id="${rowId}" data-original-key="${escapeHtml(key)}" data-original-value="${escapeHtml(value)}">
+                <input type="text" class="env-key-input" value="${escapeHtml(key)}" placeholder="KEY" ${key ? '' : 'autofocus'}>
+                <span class="env-equals">=</span>
+                <input type="text" class="env-value-input" value="${escapeHtml(value)}" placeholder="value">
+                <button class="env-icon-btn" onclick="saveEnvVar('${rowId}')" title="Save">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M13.854 3.646a.5.5 0 0 1 0 .708l-7 7a.5.5 0 0 1-.708 0l-3.5-3.5a.5.5 0 1 1 .708-.708L6.5 10.293l6.646-6.647a.5.5 0 0 1 .708 0z"/>
+                    </svg>
+                </button>
+                <button class="env-icon-btn" onclick="deleteEnvVarRow('${rowId}')" title="Delete">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/>
+                        <path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/>
+                    </svg>
+                </button>
+            </div>
+        `;
+    } else {
+        return `
+            <div class="env-var-row" id="${rowId}" data-key="${escapeHtml(key)}" data-value="${escapeHtml(value)}">
+                <span class="env-key">${escapeHtml(key)}</span>
+                <span class="env-equals">=</span>
+                <span class="env-value">${escapeHtml(value)}</span>
+                <button class="env-icon-btn" onclick="editEnvVar('${rowId}')" title="Edit">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z"/>
+                    </svg>
+                </button>
+                <button class="env-icon-btn" onclick="deleteEnvVar('${rowId}', '${escapeHtml(key)}')" title="Delete">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/>
+                        <path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/>
+                    </svg>
+                </button>
+            </div>
+        `;
+    }
+}
+
+function addNewEnvVar() {
+    const list = document.getElementById('env-vars-list');
+
+    // Remove "no variables" message if present
+    if (list.querySelector('div[style*="font-style: italic"]')) {
+        list.innerHTML = '';
+    }
+
+    // Add new editable row
+    list.insertAdjacentHTML('beforeend', createEnvVarRow('', '', true));
+
+    // Show cancel button
+    document.getElementById('env-cancel-btn').style.display = 'inline-block';
+}
+
+function editEnvVar(rowId) {
+    const row = document.getElementById(rowId);
+    const key = row.dataset.key;
+    const value = row.dataset.value;
+
+    // Replace row with editable version
+    row.outerHTML = createEnvVarRow(key, value, true);
+
+    // Show cancel button
+    document.getElementById('env-cancel-btn').style.display = 'inline-block';
+}
+
+function cancelEnvVarEdits() {
+    // Get current env vars from function
+    const container = document.getElementById('env-vars-container');
+    const functionName = container.dataset.functionName;
+
+    // Reload function details to reset
+    viewFunctionDetails(functionName);
+}
+
+async function saveEnvVar(rowId) {
+    const row = document.getElementById(rowId);
+    const keyInput = row.querySelector('.env-key-input');
+    const valueInput = row.querySelector('.env-value-input');
+
+    const newKey = keyInput.value.trim();
+    const newValue = valueInput.value.trim();
+    const originalKey = row.dataset.originalKey;
+
+    // Validation
+    if (!newKey) {
+        showNotification('Environment variable key cannot be empty', 'error');
+        keyInput.focus();
+        return;
+    }
+
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(newKey)) {
+        showNotification('Key must start with letter or underscore and contain only alphanumeric characters and underscores', 'error');
+        keyInput.focus();
+        return;
+    }
+
+    // Check for duplicate keys (excluding the original key if editing)
+    const allRows = document.querySelectorAll('.env-var-row');
+    for (const otherRow of allRows) {
+        if (otherRow.id === rowId) continue;
+
+        const otherKey = otherRow.dataset.key || otherRow.querySelector('.env-key-input')?.value.trim();
+        if (otherKey === newKey) {
+            showNotification(`Environment variable "${newKey}" already exists`, 'error');
+            keyInput.focus();
+            return;
+        }
+    }
+
+    // Get function name
+    const container = document.getElementById('env-vars-container');
+    const functionName = container.dataset.functionName;
+
+    // Collect all current env vars
+    const envVars = {};
+    for (const r of allRows) {
+        let k, v;
+        if (r.classList.contains('editing')) {
+            k = r.querySelector('.env-key-input')?.value.trim();
+            v = r.querySelector('.env-value-input')?.value.trim();
+        } else {
+            k = r.dataset.key;
+            v = r.dataset.value;
+        }
+
+        if (k) {
+            envVars[k] = v;
+        }
+    }
+
+    // Update with new/edited value
+    if (originalKey && originalKey !== newKey) {
+        delete envVars[originalKey]; // Remove old key if renamed
+    }
+    envVars[newKey] = newValue;
+
+    // Update configuration
+    try {
+        const response = await fetch(`${API_BASE}2015-03-31/functions/${functionName}/configuration`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                Environment: {
+                    Variables: envVars
+                }
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to update: ${response.statusText}`);
+        }
+
+        showNotification('Environment variable saved', 'success');
+
+        // Refresh the view
+        viewFunctionDetails(functionName);
+
+    } catch (error) {
+        console.error('Error saving environment variable:', error);
+        showNotification('Error saving environment variable', 'error');
+    }
+}
+
+async function deleteEnvVar(rowId, key) {
+    showConfirmModal(
+        `Delete environment variable "${key}"?`,
+        async () => {
+            await deleteEnvVarConfirmed(rowId, key);
+        }
+    );
+}
+
+async function deleteEnvVarConfirmed(rowId, key) {
+    const container = document.getElementById('env-vars-container');
+    const functionName = container.dataset.functionName;
+
+    // Collect all env vars except the one being deleted
+    const envVars = {};
+    const allRows = document.querySelectorAll('.env-var-row');
+    for (const row of allRows) {
+        if (row.id === rowId) continue;
+
+        let k, v;
+        if (row.classList.contains('editing')) {
+            k = row.querySelector('.env-key-input')?.value.trim();
+            v = row.querySelector('.env-value-input')?.value.trim();
+        } else {
+            k = row.dataset.key;
+            v = row.dataset.value;
+        }
+
+        if (k) {
+            envVars[k] = v;
+        }
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}2015-03-31/functions/${functionName}/configuration`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                Environment: {
+                    Variables: envVars
+                }
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to delete: ${response.statusText}`);
+        }
+
+        showNotification('Environment variable deleted', 'success');
+
+        // Refresh the view
+        viewFunctionDetails(functionName);
+
+    } catch (error) {
+        console.error('Error deleting environment variable:', error);
+        showNotification('Error deleting environment variable', 'error');
+    }
+}
+
+function deleteEnvVarRow(rowId) {
+    // For new unsaved rows, just remove them
+    const row = document.getElementById(rowId);
+    const originalKey = row.dataset.originalKey;
+
+    if (!originalKey) {
+        // New row that was never saved - just remove it
+        row.remove();
+
+        // Hide cancel button if no more editing rows
+        if (!document.querySelector('.env-var-row.editing')) {
+            document.getElementById('env-cancel-btn').style.display = 'none';
+        }
+
+        // Show "no variables" message if list is empty
+        const list = document.getElementById('env-vars-list');
+        if (list.children.length === 0) {
+            list.innerHTML = '<div style="color: var(--text-secondary); font-style: italic;">No environment variables</div>';
+        }
+    } else {
+        // Existing row being edited - revert to original
+        row.outerHTML = createEnvVarRow(originalKey, row.dataset.originalValue, false);
+
+        // Hide cancel button if no more editing rows
+        if (!document.querySelector('.env-var-row.editing')) {
+            document.getElementById('env-cancel-btn').style.display = 'none';
+        }
+    }
+}
+
 async function peekMessage(queueUrl, queueName) {
     try {
         const response = await fetch(API_BASE, {
@@ -1559,23 +1855,23 @@ async function viewFunctionDetails(functionName) {
         content.innerHTML = `
             <div class="detail-row">
                 <div class="detail-label">Function Name</div>
-                <div class="detail-value">${config.FunctionName}</div>
+                <div class="detail-value">${escapeHtml(config.FunctionName)}</div>
             </div>
             <div class="detail-row">
                 <div class="detail-label">Function ARN</div>
-                <div class="detail-value"><code>${config.FunctionArn || 'N/A'}</code></div>
+                <div class="detail-value"><code>${escapeHtml(config.FunctionArn || 'N/A')}</code></div>
             </div>
             <div class="detail-row">
                 <div class="detail-label">Runtime</div>
-                <div class="detail-value">${config.Runtime}</div>
+                <div class="detail-value">${escapeHtml(config.Runtime || 'N/A')}</div>
             </div>
             <div class="detail-row">
                 <div class="detail-label">Handler</div>
-                <div class="detail-value">${config.Handler}</div>
+                <div class="detail-value">${escapeHtml(config.Handler || 'N/A')}</div>
             </div>
             <div class="detail-row">
                 <div class="detail-label">State</div>
-                <div class="detail-value"><span class="badge ${config.State === 'Active' ? 'badge-success' : 'badge-danger'}">${config.State}</span></div>
+                <div class="detail-value"><span class="badge ${config.State === 'Active' ? 'badge-success' : 'badge-danger'}">${escapeHtml(config.State)}</span></div>
             </div>
             <div class="detail-row">
                 <div class="detail-label">Memory Size</div>
@@ -1588,8 +1884,8 @@ async function viewFunctionDetails(functionName) {
             <div class="detail-row">
                 <div class="detail-label">Log Group</div>
                 <div class="detail-value">
-                    <code>${logGroupName}</code>
-                    <button class="btn btn-secondary" style="margin-left: 10px;" onclick="viewFunctionLogs('${config.FunctionName}')">
+                    <code>${escapeHtml(logGroupName)}</code>
+                    <button class="btn btn-secondary" style="margin-left: 10px;" onclick="viewFunctionLogs('${escapeHtml(config.FunctionName)}')">
                         View Logs
                     </button>
                 </div>
@@ -1597,22 +1893,25 @@ async function viewFunctionDetails(functionName) {
             ${config.Description ? `
             <div class="detail-row">
                 <div class="detail-label">Description</div>
-                <div class="detail-value">${config.Description}</div>
+                <div class="detail-value">${escapeHtml(config.Description)}</div>
             </div>
             ` : ''}
             ${config.Role ? `
             <div class="detail-row">
                 <div class="detail-label">Execution Role</div>
-                <div class="detail-value"><code style="font-size: 11px; word-break: break-all;">${config.Role}</code></div>
+                <div class="detail-value"><code style="font-size: 11px; word-break: break-all;">${escapeHtml(config.Role)}</code></div>
             </div>
             ` : ''}
-            ${config.Environment && config.Environment && Object.keys(config.Environment).length > 0 ? `
             <div class="detail-row">
                 <div class="detail-label">Environment Variables</div>
-                <div class="detail-value"><pre class="code-block">${JSON.stringify(config.Environment, null, 2)}</pre></div>
+                <div class="detail-value">
+                    <div id="env-vars-container"></div>
+                </div>
             </div>
-            ` : ''}
         `;
+
+        // Initialize environment variables editor
+        initEnvironmentVariablesEditor(config.FunctionName, config.Environment || {});
 
         showModal('function-details-modal');
     } catch (error) {
@@ -2193,7 +2492,7 @@ async function createParameter(event) {
                 Overwrite: false
             })
         });
-        if ( ! response.ok ) {
+        if (!response.ok) {
             const errorText = await response.json();
             throw new Error(errorText.message);
         }
@@ -3057,9 +3356,9 @@ function updateNotificationDestination() {
         if (type === 'Queue') {
             label.textContent = 'SQS Queue ARN *';
             input.placeholder = 'arn:aws:sqs:us-east-1:000000000000:my-queue';
-        // } else if (type === 'Topic') {
-        //     label.textContent = 'SNS Topic ARN *';
-        //     input.placeholder = 'arn:aws:sns:us-east-1:000000000000:my-topic';
+            // } else if (type === 'Topic') {
+            //     label.textContent = 'SNS Topic ARN *';
+            //     input.placeholder = 'arn:aws:sns:us-east-1:000000000000:my-topic';
         } else if (type === 'Lambda') {
             label.textContent = 'Lambda Function ARN *';
             input.placeholder = 'arn:aws:lambda:us-east-1:000000000000:function:my-function';
@@ -3464,7 +3763,7 @@ async function configureLifecycle(event) {
 
     // Validate that at least one action is configured
     const hasActions = rule.Transitions || rule.Expiration || rule.NoncurrentVersionTransitions ||
-                      rule.NoncurrentVersionExpiration || rule.AbortIncompleteMultipartUpload;
+        rule.NoncurrentVersionExpiration || rule.AbortIncompleteMultipartUpload;
 
     if (!hasActions) {
         showNotification('Please configure at least one lifecycle action', 'error');
@@ -3987,8 +4286,8 @@ function renderObjects(objects, prefixes) {
 
         const sizeMB = (obj.Size / 1024 / 1024).toFixed(2);
         const sizeDisplay = obj.Size < 1024 ? `${obj.Size} B` :
-                          obj.Size < 1024 * 1024 ? `${(obj.Size / 1024).toFixed(2)} KB` :
-                          `${sizeMB} MB`;
+            obj.Size < 1024 * 1024 ? `${(obj.Size / 1024).toFixed(2)} KB` :
+                `${sizeMB} MB`;
         const modifiedDate = obj.LastModified ? new Date(obj.LastModified).toLocaleString() : 'N/A';
 
         html += `
@@ -4114,8 +4413,8 @@ async function viewObjectMetadata(bucketName, key) {
 
         const sizeMB = (metadata.Size / 1024 / 1024).toFixed(2);
         const sizeDisplay = metadata.Size < 1024 ? `${metadata.Size} B` :
-                          metadata.Size < 1024 * 1024 ? `${(metadata.Size / 1024).toFixed(2)} KB` :
-                          `${sizeMB} MB`;
+            metadata.Size < 1024 * 1024 ? `${(metadata.Size / 1024).toFixed(2)} KB` :
+                `${sizeMB} MB`;
 
         content.innerHTML = `
             <div class="detail-row">
@@ -4317,19 +4616,19 @@ async function deleteBucket(bucketName) {
 }
 
 function sortByProperty(property, order = 'asc') {
-    return function(a, b) {
-      const valueA = typeof a[property] === 'string' ? a[property].toUpperCase() : a[property];
-      const valueB = typeof b[property] === 'string' ? b[property].toUpperCase() : b[property];
+    return function (a, b) {
+        const valueA = typeof a[property] === 'string' ? a[property].toUpperCase() : a[property];
+        const valueB = typeof b[property] === 'string' ? b[property].toUpperCase() : b[property];
 
-      let comparison = 0;
-      if (valueA > valueB) {
-        comparison = 1;
-      } else if (valueA < valueB) {
-        comparison = -1;
-      }
+        let comparison = 0;
+        if (valueA > valueB) {
+            comparison = 1;
+        } else if (valueA < valueB) {
+            comparison = -1;
+        }
 
-      // Apply descending order logic if requested
-      return order === 'desc' ? comparison * -1 : comparison;
+        // Apply descending order logic if requested
+        return order === 'desc' ? comparison * -1 : comparison;
     };
 }
 
@@ -4963,7 +5262,7 @@ async function confirmDeleteSecret(event) {
 // INITIALIZATION
 // ============================================================================
 
-window.addEventListener('DOMContentLoaded', function() {
+window.addEventListener('DOMContentLoaded', function () {
     // Initialize theme UI
     const currentTheme = getCookie('theme') || 'system';
     updateThemeUI(currentTheme);
