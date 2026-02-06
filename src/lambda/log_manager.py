@@ -822,10 +822,6 @@ class LogManager:
             logger.debug(
                 f"[{time.time()}] _stream_container_logs STARTED for {container_id}"
             )
-
-            # DON'T get request_id here - it will be None since no invocation started yet
-            # request_id = self.get_active_request(container_id)  # <-- REMOVE THIS
-
             # Get CloudWatch log config for this container
             log_config = getattr(self, "container_log_config", {}).get(container_id, {})
             log_group = log_config.get("log_group")
