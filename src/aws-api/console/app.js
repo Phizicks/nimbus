@@ -1606,10 +1606,10 @@ async function viewFunctionDetails(functionName) {
                 <div class="detail-value"><code style="font-size: 11px; word-break: break-all;">${config.Role}</code></div>
             </div>
             ` : ''}
-            ${config.Environment && config.Environment.Variables && Object.keys(config.Environment.Variables).length > 0 ? `
+            ${config.Environment && config.Environment && Object.keys(config.Environment).length > 0 ? `
             <div class="detail-row">
                 <div class="detail-label">Environment Variables</div>
-                <div class="detail-value"><pre class="code-block">${JSON.stringify(config.Environment.Variables, null, 2)}</pre></div>
+                <div class="detail-value"><pre class="code-block">${JSON.stringify(config.Environment, null, 2)}</pre></div>
             </div>
             ` : ''}
         `;
