@@ -72,8 +72,9 @@ exports.handler = async (event) => {
       results.processed++;
     } catch (error) {
       console.error(`  ✗ Failed to process record`);
+      console.error("  Event Data:", JSON.stringify(event));
       console.error("  Error Type:", error.constructor.name);
-      console.error("  Error Message:", error.message);
+      console.error("  Error Message:", error.message.replace("\r",""));
 
       results.failed++;
       results.errors.push({

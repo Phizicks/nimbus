@@ -6,7 +6,8 @@ export PS4='# ${BASH_SOURCE}:${LINENO}: ${FUNCNAME[0]-main()}() - [${SHLVL},${BA
 
 IMAGE_TAG="latest"
 REPOSITORY_NAME="test-ecr-repository"
-ECR_URI="localhost:5000/${REPOSITORY_NAME}"
+endpoint_url=$(aws configure get endpoint_url 2>/dev/null)
+ECR_URI="${endpoint_url#http://}/${REPOSITORY_NAME}"
 IMAGE_TAG="latest"
 DOCKERFILE_PATH="."
 

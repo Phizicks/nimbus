@@ -11,6 +11,7 @@ LAMBDA_NAME="ddb-esm-test"
 QUEUE_NAME="ddb-esm-result-queue"
 QUEUE_URL="http://localhost:9324/456645664566/$QUEUE_NAME"
 HANDLER_FILE="../lambda/nodejs/src/events.js"
+endpoint_url=$(aws configure get endpoint_url 2>/dev/null)
 
 # Colors for output
 RED='\033[0;31m'
@@ -156,7 +157,7 @@ echo ""
 
 # Test: Health check
 start_test "Test 1: DynamoDB service health check"
-curl -s http://localhost:4566/debug/dynamodb-status > response.json
+curl -s $endpoint_url/debug/dynamodb-status > response.json
 check_success "DynamoDB service is healthy"
 cat response.json | jq '.'
 pass_test

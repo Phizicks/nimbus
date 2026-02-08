@@ -7,7 +7,8 @@ REPOSITORY_NAME="test-rust-repository"
 FUNCTION_NAME=ecr-rust-function
 IMAGE_TAG="latest"
 DOCKERFILE_PATH="."
-ECR_URI="localhost:4566/${REPOSITORY_NAME}"
+endpoint_url=$(aws configure get endpoint_url 2>/dev/null)
+ECR_URI="${endpoint_url#http://}/${REPOSITORY_NAME}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -99,7 +100,7 @@ aws lambda create-function \
   --runtime provided.al2023 \
   --package-type Image \
   --code ImageUri="${ECR_URI}:${IMAGE_TAG}" \
-  --environment "Variables={ENVIRONMENT=dev,ENGINE_ROOT_LOCATION=/app/engines,SESSION_EXPIRATION_QUEUE_URL=http://localhost:4566/session-queue,SEND_TO_BIZ_METRICS_QUEUE_URL=http://localhost:4566/bix-queue,TRANSACTION_ASSETS_BUCKET_NAME=bucket,JWT_SECRET_SSM_PATH=/JWT_SECRET,IDVP_OAUTH_AUTHORIZER_FUNCTION_ARN=arn,TENANTS_USERS_TABLE_NAME=arm:aws:table-users,TENANTS_USERS_TABLE_NAME=tenant-users,TENANTS_USERS_TABLE_GSI3_INDEX_NAME=gsi3,IDVP_TRANSACTION_TABLE_NAME=tx-table,ENGINE4_FR_ENGINE_FUNCTION_ARN=arn:aws:fr-engine,SPOOF_ENGINE_FUNCTION_ARN=arn:aws:spoof-engine,ADDRESS_ENGINE_FUNCTION_ARN=arn:aws:address-engine,PROOF_OF_ADDRESS_ENGINE_FUNCTION_ARN=arn:aws:poa-engine,CERTIFICATES_ENGINE_FUNCTION_ARN=arn:aws:cert-engine,TENANT_KMS_KEY_ID=key-id,AWS_ENDPOINT_URL=http://host.docker.internal:4566}" \
+  --environment "Variables={ENVIRONMENT=dev,ENGINE_ROOT_LOCATION=/app/engines,SESSION_EXPIRATION_QUEUE_URL=http://localhost:4566/session-queue,SEND_TO_BIZ_METRICS_QUEUE_URL=http://localhost:4566/bix-queue,TRANSACTION_ASSETS_BUCKET_NAME=bucket,JWT_SECRET_SSM_PATH=/JWT_SECRET,IDVP_OAUTH_AUTHORIZER_FUNCTION_ARN=arn,TENANTS_USERS_TABLE_NAME=arm:aws:table-users,TENANTS_USERS_TABLE_NAME=tenant-users,TENANTS_USERS_TABLE_GSI3_INDEX_NAME=gsi3,IDVP_TRANSACTION_TABLE_NAME=tx-table,ENGINE4_FR_ENGINE_FUNCTION_ARN=arn:aws:fr-engine,SPOOF_ENGINE_FUNCTION_ARN=arn:aws:spoof-engine,ADDRESS_ENGINE_FUNCTION_ARN=arn:aws:address-engine,PROOF_OF_ADDRESS_ENGINE_FUNCTION_ARN=arn:aws:poa-engine,CERTIFICATES_ENGINE_FUNCTION_ARN=arn:aws:cert-engine,TENANT_KMS_KEY_ID=key-id}" \
   --role arn:aws:iam::456645664566:role/lambda-role || log_error "Failed to create function [${FUNCTION_NAME}]"
 
 log_info "Cold Start: Invoking lambda function '${FUNCTION_NAME}' (Rust compiled via Docker multi-stage build)"
