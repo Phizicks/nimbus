@@ -44,7 +44,7 @@ class C:
 ACCOUNT_ID = "456645664566"
 REGISTRY_HOST = os.getenv("REGISTRY_HOST", "ecr:5000")
 REGION = "ap-southeast-2"  # TODO config or parsed
-LOCALCLOUD_API_HOSTNAME = os.getenv("LOCALCLOUD_API_HOSTNAME", "host.docker.internal")
+LOCALCLOUD_API_HOSTNAME = os.getenv("LOCALCLOUD_API_HOSTNAME", "api")
 LOCALCLOUD_NETWORK_NAME = os.getenv("LOCALCLOUD_NETWORK_NAME", "localcloud")
 STORAGE_PATH = os.getenv("STORAGE_PATH", "./data")
 DB_PATH = os.getenv("STORAGE_PATH", "/data") + "/lambda_metadata.db"
@@ -1717,7 +1717,7 @@ class ContainerLifecycleManager:
                     "localhost",
                     "127.0.0.1",
                 ):
-                    runtime_api_host = "lambda"
+                    runtime_api_host = "api"
 
                 container_env = {
                     "AWS_LAMBDA_FUNCTION_NAME": function_name,
@@ -1745,6 +1745,8 @@ class ContainerLifecycleManager:
                     "LD_LIBRARY_PATH": "/var/lang/lib:/lib64:/usr/lib64:/var/runtime:/var/runtime/lib:/var/task:/var/task/lib:/opt/lib",
                     "NODE_PATH": "/opt/nodejs/node_modules:/opt/nodejs/node14/node_modules:/var/runtime/node_modules:/var/runtime:/var/task",
                 }
+
+                logger.critical(f'### Lambda Environment: {container_env}')
 
                 # Merge user-provided environment variables
                 if environment and isinstance(environment, dict):
@@ -3504,82 +3506,94 @@ def create_function():
 
 @app.route("/2018-06-01/runtime/invocation/next", methods=["GET"])
 def runtime_next():
-    """Lambda Runtime API - Container polls this for next invocation."""
-    if not lifecycle_manager:
-        return jsonify({"message": "Lambda not initialized"}), 500
+    try:
+        """Lambda Runtime API - Container polls this for next invocation."""
+        if not lifecycle_manager:
+            return jsonify({"message": "Lambda not initialized"}), 500
 
-    client_ip = _get_client_ip()
+        client_ip = _get_client_ip()
 
-    # Get container metadata with retry for race condition during startup
-    container_meta = _get_container_with_retry(client_ip)
-    if not container_meta:
-        logger.warning(f"Runtime next: container not found for IP {client_ip}")
-        return jsonify({"message": "Container not registered"}), 404
+        # Get container metadata with retry for race condition during startup
+        container_meta = _get_container_with_retry(client_ip)
+        if not container_meta:
+            logger.warning(f"Runtime next: container not found for IP {client_ip}")
+            return jsonify({"message": "Container not registered"}), 404
 
-    function_name = container_meta.function_name
-    container_id = container_meta.container_id
+        function_name = container_meta.function_name
+        container_id = container_meta.container_id
 
-    # Validate container is in correct state to receive work
-    if container_meta.state not in [ContainerState.READY, ContainerState.STARTING]:
-        logger.error(
-            f"Invalid state for next request - IP:{client_ip} "
-            f"Container:{C.MAGENTA}{container_id}{C.RESET} Function:{function_name} State:{container_meta.state}"
-        )
-        return "", 204
+        # Validate container is in correct state to receive work
+        if container_meta.state not in [ContainerState.READY, ContainerState.STARTING]:
+            logger.error(
+                f"Invalid state for next request - IP:{client_ip} "
+                f"Container:{C.MAGENTA}{container_id}{C.RESET} Function:{function_name} State:{container_meta.state}"
+            )
+            return "", 204
 
-    # Transition to LEASED - container is now waiting for work
-    lifecycle_manager.update_container_state(container_id, ContainerState.LEASED)
-    logger.debug(
-        f"Container {C.MAGENTA}{container_id}{C.RESET} transitioned to LEASED state"
-    )
-
-    # Block until task arrives (or container is killed)
-    task = _wait_for_task(client_ip, function_name)
-
-    if task is None:
-        # Container was killed while waiting - just drop connection
-        try:
-            # ensure it's cleaned up
-            lifecycle_manager.unregister_container(container_id)
-        except:
-            pass
+        # Transition to LEASED - container is now waiting for work
+        lifecycle_manager.update_container_state(container_id, ContainerState.LEASED)
         logger.debug(
-            f"Container {C.MAGENTA}{container_id}{C.RESET} no longer exists, dropping connection"
+            f"Container {C.MAGENTA}{container_id}{C.RESET} transitioned to LEASED state"
         )
-        return "", 410
 
-    # We have a task - prepare invocation response
-    request_id = task.get("request_id")
-    event = task.get("event")
+        # Block until task arrives (or container is killed)
+        task = _wait_for_task(client_ip, function_name)
 
-    # Set container
-    lifecycle_manager.log_manager.set_active_request(container_id, request_id)
+        if task is None:
+            # Container was killed while waiting - just drop connection
+            try:
+                # ensure it's cleaned up
+                lifecycle_manager.unregister_container(container_id)
+            except:
+                pass
+            logger.debug(
+                f"Container {C.MAGENTA}{container_id}{C.RESET} no longer exists, dropping connection"
+            )
+            return "", 410
 
-    # Write START line to CloudWatch
-    _write_start_log(container_id, request_id)
+        # We have a task - prepare invocation response
+        request_id = task.get("request_id")
+        event = task.get("event")
 
-    # Build response
-    response = _build_invocation_response(event, request_id, function_name)
+        # Set container
+        lifecycle_manager.log_manager.set_active_request(container_id, request_id)
 
-    # Final state transition to RUNNING (container is processing invocation)
-    # Check one last time that container still exists
-    container_meta = lifecycle_manager.get_container_metadata_by_ip(client_ip)
-    if not container_meta:
-        logger.warning(
-            f"Container killed before RUNNING transition - requeueing task {request_id}"
+        # Write START line to CloudWatch
+        _write_start_log(container_id, request_id)
+
+        # Build response
+        response = _build_invocation_response(event, request_id, function_name)
+
+        # Final state transition to RUNNING (container is processing invocation)
+        # Check one last time that container still exists
+        container_meta = lifecycle_manager.get_container_metadata_by_ip(client_ip)
+        if not container_meta:
+            logger.warning(
+                f"Container killed before RUNNING transition - requeueing task {request_id}"
+            )
+            lifecycle_manager.set_invocation_queue(function_name, task)
+            return "", 410
+
+        lifecycle_manager.update_container_state(container_id, ContainerState.RUNNING)
+        lifecycle_manager.mark_container_active(container_id)
+
+        logger.info(
+            f"Dispatched invocation - Container:{C.MAGENTA}{container_id}{C.RESET} "
+            f"Function:{function_name} RequestID:{request_id}"
         )
-        lifecycle_manager.set_invocation_queue(function_name, task)
-        return "", 410
-
-    lifecycle_manager.update_container_state(container_id, ContainerState.RUNNING)
-    lifecycle_manager.mark_container_active(container_id)
-
-    logger.info(
-        f"Dispatched invocation - Container:{C.MAGENTA}{container_id}{C.RESET} "
-        f"Function:{function_name} RequestID:{request_id}"
-    )
-    return response, 200
-
+        logger.critical(f'Response for invocation/next: {response}')
+        return response, 200
+    except Exception as e:
+        logger.critical(f'Unhandled Exception - {e}', exc_info=True)
+        return (
+            jsonify(
+                {
+                    "__type": "ServiceException:",
+                    "message": f"Unhandled exception - {e}",
+                }
+            ),
+            500,
+        )
 
 def _get_container_with_retry(client_ip, max_retries=10, delay=0.5):
     """Retry lookup to handle race condition during container startup."""
@@ -3944,15 +3958,7 @@ def put_log_events():
             )
 
         if not log_manager.logs_db.log_stream_exists(group, stream):
-            return (
-                jsonify(
-                    {
-                        "__type": "ResourceNotFoundException",
-                        "message": f"Log stream {stream} does not exist",
-                    }
-                ),
-                404,
-            )
+            create_log_stream()
 
         next_seq_token = log_manager.logs_db.put_log_events(group, stream, events)
         return jsonify({"nextSequenceToken": next_seq_token}), 200

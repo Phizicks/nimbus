@@ -1604,35 +1604,41 @@ def runtime_next_invocation():
     """
     Lambda Runtime API - Container polls this for next invocation
     """
-    # Proxy the runtime "next" request to the Lambda lifecycle service
-    client_ip = request.remote_addr
-    headers = dict(request.headers)
-    headers["X-Forwarded-For"] = client_ip
-    status, data, raw = lambda_request(
-        "GET", "/2018-06-01/runtime/invocation/next", headers=headers
-    )
-    if status == 200:
-        # {
-        # 'Lambda-Runtime-Aws-Request-Id': request_id,
-        # 'Lambda-Runtime-Invoked-Function-Arn': f'arn:aws:lambda:{REGION}:{ACCOUNT_ID}:function:{function_name}',
-        # 'Lambda-Runtime-Deadline-Ms': str(int(time.time() * 1000) + 60000)
-        # }
-        logger.info(f"Lambda response received: {status}:{raw}")
-        return Response(
-            raw.content,
-            status=200,
-            mimetype=raw.headers.get("Content-Type", "text/plain"),
-            headers=raw.headers.get("lambda-runtime-aws-request-id"),
+    try:
+        # Proxy the runtime "next" request to the Lambda lifecycle service
+        client_ip = request.remote_addr
+        headers = dict(request.headers)
+        headers["X-Forwarded-For"] = client_ip
+        status, data, raw = lambda_request(
+            "GET", "/2018-06-01/runtime/invocation/next", headers=headers
         )
-    if status == 204:
-        return Response(
-            "",
-            status=204,
-            mimetype=raw.headers.get("Content-Type", "text/plain"),
-            headers=raw.headers.get("lambda-runtime-aws-request-id"),
+        if status == 200:
+            logger.info(f"Lambda response received: {status}:{raw} , headers:{raw.headers}")
+            return Response(
+                raw.content,
+                status=200,
+                mimetype=raw.headers.get("Content-Type", "text/plain"),
+                headers=raw.headers #.get("lambda-runtime-aws-request-id"),
+            )
+        if status == 204:
+            return Response(
+                "",
+                status=204,
+                mimetype=raw.headers.get("Content-Type", "text/plain"),
+                headers=raw.headers #.get("lambda-runtime-aws-request-id"),
+            )
+        return (status, 500)
+    except Exception as e:
+        logger.critical(f'Unhandled Exception - {e}', exc_info=True)
+        return (
+            jsonify(
+                {
+                    "__type": "ServiceException:",
+                    "message": f"Unhandled exception - {e}",
+                }
+            ),
+            500,
         )
-    return (status, 500)
-
 
 @app.route("/2018-06-01/runtime/invocation/<request_id>/response", methods=["POST"])
 def runtime_invocation_response(request_id):

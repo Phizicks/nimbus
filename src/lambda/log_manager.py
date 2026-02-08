@@ -831,18 +831,6 @@ class LogManager:
                 f"CloudWatch config: log_group={log_group}, log_stream={log_stream}"
             )
 
-            # Store buffer reference so we can force flush on demand
-            with self._lock("LogManager._stream_container_logs.init_buffer"):
-                if not hasattr(self, "log_buffers"):
-                    self.log_buffers = {}
-                self.log_buffers[container_id] = []
-
-            # Buffer for batching CloudWatch log events
-            cloudwatch_buffer = self.log_buffers[container_id]
-            last_flush = time.time()
-            FLUSH_INTERVAL = 1.0  # Flush every second
-            MAX_BATCH_SIZE = 100  # Max events per batch
-
             container = self.docker_client.containers.get(container_id)
 
             # Check if container uses a log driver that supports logs() API
@@ -887,7 +875,6 @@ class LogManager:
                     log_str = log_line.decode("utf-8", errors="ignore").rstrip()
 
                     # Docker timestamps format: "2024-01-01T12:00:00.123456789Z message"
-                    # ideally we deal with json directly, work it out later
                     if " " in log_str:
                         timestamp_str, message = log_str.split(" ", 1)
                         try:
@@ -919,58 +906,30 @@ class LogManager:
                         with self._lock("LogManager._stream_container_logs.store_log"):
                             self.invocation_logs[current_request_id].append(log_entry)
 
-                    # Add to CloudWatch buffer if configured
+                    # Send to CloudWatch immediately (no buffering)
                     if log_group and log_stream:
                         cloudwatch_event = {
                             "timestamp": int(timestamp.timestamp() * 1000),
                             "message": message,
                         }
-                        with self._lock("LogManager._stream_container_logs.append"):
-                            cloudwatch_buffer.append(cloudwatch_event)
+
+                        try:
+                            self.put_log_events(
+                                log_group, log_stream, [cloudwatch_event]
+                            )
+                        except Exception as e:
+                            logger.error(f"Error sending log to CloudWatch: {e}")
 
                     # Server-side debug logging only (not customer-facing)
                     logger.debug(
                         f"[Container:{container_id}][Request:{C.CYAN}{current_request_id}{C.RESET}] {message[:100]}"
                     )
 
-                    # Flush CloudWatch buffer if needed
-                    now = time.time()
-                    should_flush = len(cloudwatch_buffer) >= MAX_BATCH_SIZE or (
-                        cloudwatch_buffer and now - last_flush >= FLUSH_INTERVAL
-                    )
-
-                    if should_flush and log_group and log_stream:
-                        try:
-                            # Copy buffer before sending (thread-safe)
-                            with self._lock("LogManager._stream_container_logs.flush"):
-                                events_to_send = cloudwatch_buffer.copy()
-                                cloudwatch_buffer.clear()
-
-                            if events_to_send:
-                                self.put_log_events(
-                                    log_group, log_stream, events_to_send
-                                )
-                                last_flush = now
-                                logger.debug(
-                                    f"Flushed {len(events_to_send)} events to CloudWatch {log_group}/{log_stream}"
-                                )
-                        except Exception as e:
-                            logger.error(f"Error sending logs to CloudWatch: {e}")
-                            # Don't clear buffer on error - will retry next flush
-
                 except Exception as e:
                     logger.error(f"Error processing log line: {e}")
                     continue
 
-            # Final flush of any remaining logs
-            if cloudwatch_buffer and log_group and log_stream:
-                try:
-                    self.put_log_events(log_group, log_stream, cloudwatch_buffer)
-                    logger.debug(
-                        f"Final flush of {len(cloudwatch_buffer)} events to CloudWatch"
-                    )
-                except Exception as e:
-                    logger.error(f"Error in final flush to CloudWatch: {e}")
+            # No final flush needed - all logs sent immediately
 
         except docker.errors.NotFound:
             logger.warning(f"Container {container_id} not found for logging")
@@ -1202,6 +1161,7 @@ class LogManager:
             if not self.logs_db.log_group_exists(group_name):
                 self.create_log_group(group_name)
 
+            # Create locally - not sure if needed if we do it below via api
             created = self.logs_db.create_log_stream(group_name, stream_name)
             if created:
                 logger.info(f"Created log stream: {group_name}/{stream_name}")
