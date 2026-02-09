@@ -4909,7 +4909,7 @@ async function createSecret(event) {
         }
 
         showNotification(
-            `Secret "${name}" created successfully with version ${data.VersionId.substring(0, 8)}...`,
+            `Secret "${name}" created successfully with version ${data.VersionId}...`,
             'success'
         );
         closeModal('create-secret-modal');
@@ -4961,16 +4961,13 @@ async function viewSecret(secretName) {
 
         document.getElementById('view-secret-version').textContent = currentVersionId || '-';
 
-        // Display all versions
-        const allVersions = Object.keys(versionStages).map(vid => {
-            const stages = versionStages[vid].join(', ');
-            return `${vid} (${stages})`;
-        }).join('<br>');
-
-        document.getElementById('view-secret-versions').innerHTML = allVersions || '-';
+        // Load all versions for the version selector
+        await loadSecretVersions(secretName, currentVersionId, versionStages);
 
         // Hide secret value section initially
         document.getElementById('secret-value-section').style.display = 'none';
+        document.getElementById('restore-version-btn').style.display = 'none';
+        document.getElementById('version-info-banner').style.display = 'none';
 
         showModal('view-secret-modal');
     } catch (error) {
@@ -4979,20 +4976,218 @@ async function viewSecret(secretName) {
     }
 }
 
+// Load all secret versions into the version selector
+async function loadSecretVersions(secretName, currentVersionId, versionStages) {
+    const selector = document.getElementById('version-selector');
+
+    try {
+        // Get list of all versions
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.1',
+                'X-Amz-Target': 'secretsmanager.ListSecretVersionIds'
+            },
+            body: JSON.stringify({
+                SecretId: secretName,
+                IncludeDeprecated: true
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.message || 'Failed to list versions');
+        }
+
+        // Clear and populate selector
+        selector.innerHTML = '';
+
+        if (data.Versions && data.Versions.length > 0) {
+            data.Versions.forEach(version => {
+                const option = document.createElement('option');
+                option.value = version.VersionId;
+
+                // Build label with stages
+                const stages = version.VersionStages || [];
+                let label = version.VersionId;
+
+                if (stages.length > 0) {
+                    label += ` (${stages.join(', ')})`;
+
+                    // Mark current version
+                    if (stages.includes('AWSCURRENT')) {
+                        label += ' ← CURRENT';
+                        option.selected = true;
+                    } else if (stages.includes('AWSPREVIOUS')) {
+                        label += ' ← PREVIOUS';
+                    }
+                } else {
+                    label += ' (deprecated)';
+                }
+
+                // Add timestamp
+                const created = new Date(version.CreatedDate * 1000);
+                label += ` - ${created.toLocaleDateString()} ${created.toLocaleTimeString()}`;
+
+                option.textContent = label;
+                option.dataset.stages = JSON.stringify(stages);
+                option.dataset.isCurrent = stages.includes('AWSCURRENT') ? 'true' : 'false';
+
+                selector.appendChild(option);
+            });
+        } else {
+            const option = document.createElement('option');
+            option.value = '';
+            option.textContent = 'No versions found';
+            selector.appendChild(option);
+        }
+
+    } catch (error) {
+        console.error('Error loading versions:', error);
+        selector.innerHTML = '<option value="">Error loading versions</option>';
+    }
+}
+
+// Handle version selector change
+function onVersionChange() {
+    // Hide secret value when version changes
+    document.getElementById('secret-value-section').style.display = 'none';
+
+    // Show/hide restore button based on whether current version is selected
+    const selector = document.getElementById('version-selector');
+    const selectedOption = selector.options[selector.selectedIndex];
+
+    if (selectedOption && selectedOption.dataset.isCurrent === 'false') {
+        document.getElementById('restore-version-btn').style.display = 'inline-block';
+    } else {
+        document.getElementById('restore-version-btn').style.display = 'none';
+    }
+}
+
+// Restore selected version to current
+async function restoreSelectedVersion() {
+    if (!currentSecretName) return;
+
+    const selector = document.getElementById('version-selector');
+    const versionId = selector.value;
+
+    if (!versionId) {
+        showNotification('Please select a version to restore', 'warning');
+        return;
+    }
+
+    const selectedOption = selector.options[selector.selectedIndex];
+    const isCurrent = selectedOption.dataset.isCurrent === 'true';
+
+    if (isCurrent) {
+        showNotification('This version is already current', 'info');
+        return;
+    }
+
+    showConfirmModal(
+        'Restore Version</br>' +
+        `Are you sure you want to restore this version?</br></br>` +
+        `<strong>Version:</strong> ${versionId}...</br></br>` +
+        `This will:</br>` +
+        `• Retrieve the old version's value</br>` +
+        `• Create a new version with that value</br>` +
+        `• Make the new version AWSCURRENT</br>` +
+        `• Move the old AWSCURRENT to AWSPREVIOUS`,
+        async () => {
+            try {
+                // First, get the value of the version we want to restore
+                const getResponse = await fetch(API_BASE, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-amz-json-1.1',
+                        'X-Amz-Target': 'secretsmanager.GetSecretValue'
+                    },
+                    body: JSON.stringify({
+                        SecretId: currentSecretName,
+                        VersionId: versionId
+                    })
+                });
+
+                const getValue = await getResponse.json();
+
+                if (!getResponse.ok) {
+                    throw new Error(getValue.message || 'Failed to retrieve version value');
+                }
+
+                // Then create a new version with that value (makes it AWSCURRENT)
+                const putBody = {
+                    SecretId: currentSecretName,
+                    VersionStages: ['AWSCURRENT']
+                };
+
+                if (getValue.SecretString) {
+                    putBody.SecretString = getValue.SecretString;
+                } else if (getValue.SecretBinary) {
+                    putBody.SecretBinary = getValue.SecretBinary;
+                }
+
+                const putResponse = await fetch(API_BASE, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-amz-json-1.1',
+                        'X-Amz-Target': 'secretsmanager.PutSecretValue'
+                    },
+                    body: JSON.stringify(putBody)
+                });
+
+                const putData = await putResponse.json();
+
+                if (!putResponse.ok) {
+                    throw new Error(putData.message || 'Failed to restore version');
+                }
+
+                showNotification('Version restored successfully! A new version has been created as AWSCURRENT.', 'success');
+
+                // Refresh the modal to show updated versions
+                closeModal('view-secret-modal');
+                await viewSecret(currentSecretName);
+
+            } catch (error) {
+                console.error('Error restoring version:', error);
+                showNotification('Failed to restore version: ' + error.message, 'error');
+            }
+        }
+    );
+}
+
 // Retrieve secret value
 async function retrieveSecretValue() {
     if (!currentSecretName) return;
 
+    const selector = document.getElementById('version-selector');
+    const selectedVersionId = selector.value;
+
+    if (!selectedVersionId) {
+        showNotification('Please select a version', 'warning');
+        return;
+    }
+
+    const selectedOption = selector.options[selector.selectedIndex];
+    const isCurrent = selectedOption.dataset.isCurrent === 'true';
+
     try {
+        const requestBody = {
+            SecretId: currentSecretName
+        };
+
+        // Only add VersionId if not current (AWS defaults to AWSCURRENT)
+        if (selectedVersionId) {
+            requestBody.VersionId = selectedVersionId;
+        }
+
         const response = await fetch(API_BASE, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-amz-json-1.1',
                 'X-Amz-Target': 'secretsmanager.GetSecretValue'
             },
-            body: JSON.stringify({
-                SecretId: currentSecretName
-            })
+            body: JSON.stringify(requestBody)
         });
 
         const data = await response.json();
@@ -5003,6 +5198,7 @@ async function retrieveSecretValue() {
 
         const valueSection = document.getElementById('secret-value-section');
         const valueElement = document.getElementById('view-secret-value');
+        const versionBanner = document.getElementById('version-info-banner');
 
         if (data.SecretString) {
             // Try to format as JSON if possible
@@ -5017,6 +5213,13 @@ async function retrieveSecretValue() {
             valueElement.textContent = `[Binary Data - Base64]\n${data.SecretBinary}`;
         } else {
             valueElement.textContent = '[No value]';
+        }
+
+        // Show warning banner if viewing a previous version
+        if (!isCurrent) {
+            versionBanner.style.display = 'block';
+        } else {
+            versionBanner.style.display = 'none';
         }
 
         valueSection.style.display = 'block';

@@ -1076,13 +1076,19 @@
                         <div class="detail-label">Current Version:</div>
                         <div class="detail-value" id="view-secret-version"></div>
                     </div>
+
                     <div class="detail-row">
-                        <div class="detail-label">All Versions:</div>
-                        <div class="detail-value" id="view-secret-versions"></div>
+                        <div class="detail-label">Version Selector:</div>
+                        <div class="detail-value">
+                            <select id="version-selector" onchange="onVersionChange()" style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary);">
+                                <option value="">Loading versions...</option>
+                            </select>
+                        </div>
                     </div>
 
-                    <div style="margin-top: 20px;">
+                    <div style="margin-top: 20px; display: flex; gap: 10px; align-items: center;">
                         <button class="btn btn-primary" onclick="retrieveSecretValue()">🔓 Retrieve Secret Value</button>
+                        <button id="restore-version-btn" class="btn btn-warning" onclick="restoreSelectedVersion()" style="display:none;">↩️ Restore This Version</button>
                     </div>
 
                     <div id="secret-value-section" style="display:none; margin-top: 20px;">
@@ -1091,6 +1097,10 @@
                             <div class="detail-value">
                                 <pre class="code-block" id="view-secret-value"></pre>
                             </div>
+                        </div>
+                        <div id="version-info-banner" style="margin-top: 10px; padding: 10px; background: var(--bg-secondary); border-left: 4px solid var(--warning); border-radius: 4px; display:none;">
+                            <strong>⚠️ Viewing Previous Version</strong><br>
+                            <small>This is not the current version. Click "Restore This Version" to make it current.</small>
                         </div>
                     </div>
                 </div>

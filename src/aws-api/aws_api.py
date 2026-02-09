@@ -1627,6 +1627,12 @@ def runtime_next_invocation():
                 mimetype=raw.headers.get("Content-Type", "text/plain"),
                 headers=raw.headers #.get("lambda-runtime-aws-request-id"),
             )
+        # if status == 410:
+        #     return Response("Lambda runtime shutting down",
+        #         status=status,
+        #         mimetype=raw.headers.get("Content-Type", "text/plain"),
+        #         headers=raw.headers #.get("lambda-runtime-aws-request-id"),
+        #     )
         return (status, 500)
     except Exception as e:
         logger.critical(f'Unhandled Exception - {e}', exc_info=True)
@@ -3025,6 +3031,8 @@ def handle_request():
         "CreateSecret": proxy_to_secretsmanager,
         "DescribeSecret": proxy_to_secretsmanager,
         "UpdateSecret": proxy_to_secretsmanager,
+        "UpdateSecretVersionStage": proxy_to_secretsmanager,
+        "ListSecretVersionIds": proxy_to_secretsmanager,
         "GetSecretValue": proxy_to_secretsmanager,
         "PutSecretValue": proxy_to_secretsmanager,
         "ListSecrets": proxy_to_secretsmanager,

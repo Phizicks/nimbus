@@ -476,6 +476,162 @@ class SecretsManagerDatabase:
                 "VersionId": new_version_id,
             }
 
+    def update_secret_version_stage(
+        self,
+        secret_name: str,
+        version_stage: str,
+        move_to_version_id: Optional[str] = None,
+        remove_from_version_id: Optional[str] = None,
+    ) -> Dict:
+        """
+        Update version stages for a secret
+
+        Args:
+            secret_name: Name of the secret
+            version_stage: The staging label to modify
+            move_to_version_id: Version ID to move the stage to
+            remove_from_version_id: Version ID to remove the stage from
+
+        Returns:
+            Dict with ARN, Name, and VersionId
+
+        Raises:
+            ResourceNotFoundException: If secret or version not found
+            InvalidParameterException: If invalid parameters provided
+            InvalidRequestException: If operation would violate constraints
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Check if secret exists
+            cursor.execute(
+                "SELECT secret_name FROM secrets WHERE secret_name = ? AND deleted_date IS NULL",
+                (secret_name,),
+            )
+            if not cursor.fetchone():
+                raise ResourceNotFoundException(f"Secret '{secret_name}' not found.")
+
+            # Validate that at least one action is specified
+            if not move_to_version_id and not remove_from_version_id:
+                raise InvalidParameterException(
+                    "You must specify either MoveToVersionId or RemoveFromVersionId."
+                )
+
+            # If moving, validate the target version exists
+            if move_to_version_id:
+                cursor.execute(
+                    "SELECT version_id, version_stages FROM secret_versions WHERE secret_name = ? AND version_id = ?",
+                    (secret_name, move_to_version_id),
+                )
+                target_version = cursor.fetchone()
+                if not target_version:
+                    raise ResourceNotFoundException(
+                        f"Version '{move_to_version_id}' not found for secret '{secret_name}'."
+                    )
+
+            # If removing from specific version, validate it exists
+            if remove_from_version_id:
+                cursor.execute(
+                    "SELECT version_id, version_stages FROM secret_versions WHERE secret_name = ? AND version_id = ?",
+                    (secret_name, remove_from_version_id),
+                )
+                source_version = cursor.fetchone()
+                if not source_version:
+                    raise ResourceNotFoundException(
+                        f"Version '{remove_from_version_id}' not found for secret '{secret_name}'."
+                    )
+
+                # Check if the version actually has this stage
+                stages = json.loads(source_version["version_stages"])
+                if version_stage not in stages:
+                    raise InvalidRequestException(
+                        f"Version '{remove_from_version_id}' does not have stage '{version_stage}'."
+                    )
+
+            # Handle AWSCURRENT special case - find current version if not specified
+            current_version_id = None
+            if version_stage == "AWSCURRENT" and not remove_from_version_id:
+                cursor.execute(
+                    "SELECT version_id, version_stages FROM secret_versions WHERE secret_name = ?",
+                    (secret_name,),
+                )
+                for row in cursor.fetchall():
+                    stages = json.loads(row["version_stages"])
+                    if "AWSCURRENT" in stages:
+                        current_version_id = row["version_id"]
+                        break
+
+            # Remove stage from source version
+            if remove_from_version_id or current_version_id:
+                version_to_remove_from = remove_from_version_id or current_version_id
+                cursor.execute(
+                    "SELECT version_stages FROM secret_versions WHERE secret_name = ? AND version_id = ?",
+                    (secret_name, version_to_remove_from),
+                )
+                row = cursor.fetchone()
+                if row:
+                    stages = json.loads(row["version_stages"])
+                    if version_stage in stages:
+                        stages.remove(version_stage)
+
+                        # If this was AWSCURRENT being moved, add AWSPREVIOUS to old version
+                        if version_stage == "AWSCURRENT" and move_to_version_id:
+                            if "AWSPREVIOUS" not in stages:
+                                stages.append("AWSPREVIOUS")
+
+                        cursor.execute(
+                            "UPDATE secret_versions SET version_stages = ? WHERE secret_name = ? AND version_id = ?",
+                            (
+                                json.dumps(stages),
+                                secret_name,
+                                version_to_remove_from,
+                            ),
+                        )
+
+            # Add stage to target version
+            if move_to_version_id:
+                cursor.execute(
+                    "SELECT version_stages FROM secret_versions WHERE secret_name = ? AND version_id = ?",
+                    (secret_name, move_to_version_id),
+                )
+                row = cursor.fetchone()
+                stages = json.loads(row["version_stages"])
+
+                if version_stage not in stages:
+                    stages.append(version_stage)
+
+                # If adding AWSCURRENT, remove AWSPREVIOUS if present
+                if version_stage == "AWSCURRENT" and "AWSPREVIOUS" in stages:
+                    stages.remove("AWSPREVIOUS")
+
+                cursor.execute(
+                    "UPDATE secret_versions SET version_stages = ? WHERE secret_name = ? AND version_id = ?",
+                    (json.dumps(stages), secret_name, move_to_version_id),
+                )
+
+            # Update last_updated_date
+            cursor.execute(
+                "UPDATE secrets SET last_updated_date = ? WHERE secret_name = ?",
+                (int(time.time()), secret_name),
+            )
+
+            conn.commit()
+
+            # Build ARN
+            cursor.execute(
+                "SELECT version_id FROM secret_versions WHERE secret_name = ? ORDER BY created_date DESC LIMIT 1",
+                (secret_name,),
+            )
+            latest = cursor.fetchone()
+            version_suffix = latest["version_id"] if latest else "??????"
+            arn = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT_ID}:secret:{secret_name}-{version_suffix}"
+
+            return {
+                "ARN": arn,
+                "Name": secret_name,
+                "VersionId": move_to_version_id or remove_from_version_id,
+            }
+
     def delete_secret(
         self,
         secret_name: str,
@@ -627,7 +783,7 @@ class SecretsManagerDatabase:
                 (secret_name,),
             )
             version = cursor.fetchone()
-            version_suffix = version["version_id"][:6] if version else "??????"
+            version_suffix = version["version_id"] if version else "??????"
             arn = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT_ID}:secret:{secret_name}-{version_suffix}"
 
             logger.info(f"Restored secret: {secret_name}")
@@ -679,7 +835,7 @@ class SecretsManagerDatabase:
                 )
                 version = cursor.fetchone()
 
-                version_suffix = version["version_id"][:6] if version else "??????"
+                version_suffix = version["version_id"] if version else "??????"
                 arn = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT_ID}:secret:{secret['secret_name']}-{version_suffix}"
 
                 secret_info = {
@@ -842,6 +998,202 @@ class SecretsManagerDatabase:
 
             return result
 
+    def list_secret_version_ids(
+        self, secret_name: str, max_results: int = 100, include_deprecated: bool = True
+    ) -> Dict:
+        """
+        List all version IDs for a secret
+
+        Args:
+            secret_name: Name of the secret
+            max_results: Maximum number of results
+            include_deprecated: Include versions without staging labels
+
+        Returns:
+            Dict with version information including VersionIdsToStages
+
+        Raises:
+            ResourceNotFoundException: If secret not found
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Check if secret exists and is not deleted
+            cursor.execute(
+                "SELECT secret_name FROM secrets WHERE secret_name = ? AND deleted_date IS NULL",
+                (secret_name,),
+            )
+            if not cursor.fetchone():
+                raise ResourceNotFoundException(
+                    f"Secrets Manager can't find the specified secret: {secret_name}"
+                )
+
+            # Get all versions
+            cursor.execute(
+                """
+                SELECT version_id, version_stages, created_date
+                FROM secret_versions
+                WHERE secret_name = ?
+                ORDER BY created_date DESC
+                LIMIT ?
+            """,
+                (secret_name, max_results),
+            )
+            versions = cursor.fetchall()
+
+            # Build version list
+            version_list = []
+            for v in versions:
+                stages = json.loads(v["version_stages"])
+
+                # Skip deprecated versions if requested
+                if not include_deprecated and len(stages) == 0:
+                    continue
+
+                version_info = {
+                    "VersionId": v["version_id"],
+                    "VersionStages": stages,
+                    "CreatedDate": v["created_date"],
+                }
+                version_list.append(version_info)
+
+            # Get latest version for ARN
+            cursor.execute(
+                "SELECT version_id FROM secret_versions WHERE secret_name = ? ORDER BY created_date DESC LIMIT 1",
+                (secret_name,),
+            )
+            latest = cursor.fetchone()
+            version_suffix = latest["version_id"] if latest else "??????"
+            arn = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT_ID}:secret:{secret_name}-{version_suffix}"
+
+            return {
+                "ARN": arn,
+                "Name": secret_name,
+                "Versions": version_list,
+            }
+
+    def put_secret_value(
+        self,
+        secret_name: str,
+        secret_string: Optional[str] = None,
+        secret_binary: Optional[bytes] = None,
+        version_stages: Optional[List[str]] = None,
+    ) -> Dict:
+        """
+        Create a new version of a secret or restore a previous version to current.
+        This is the AWS-native way to "restore" - by making a previous version current.
+
+        Args:
+            secret_name: Name of the secret
+            secret_string: Secret value as string
+            secret_binary: Secret value as binary
+            version_stages: List of staging labels (default ["AWSCURRENT"])
+
+        Returns:
+            Dict with ARN, Name, VersionId, and VersionStages
+
+        Raises:
+            ResourceNotFoundException: If secret not found
+            InvalidParameterException: If invalid parameters provided
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Check if secret exists and is not deleted
+            cursor.execute(
+                "SELECT * FROM secrets WHERE secret_name = ? AND deleted_date IS NULL",
+                (secret_name,),
+            )
+            secret = cursor.fetchone()
+            if not secret:
+                raise ResourceNotFoundException(
+                    f"Secrets Manager can't find the specified secret: {secret_name}"
+                )
+
+            # Validate secret value provided
+            if not secret_string and not secret_binary:
+                raise InvalidParameterException(
+                    "You must provide either SecretString or SecretBinary."
+                )
+
+            if secret_string and secret_binary:
+                raise InvalidParameterException(
+                    "You can't provide both SecretString and SecretBinary."
+                )
+
+            # Set default stages if not provided
+            if not version_stages:
+                version_stages = ["AWSCURRENT"]
+
+            # If AWSCURRENT is in the stages, move it from the old version
+            if "AWSCURRENT" in version_stages:
+                # Find current AWSCURRENT version
+                cursor.execute(
+                    "SELECT version_id, version_stages FROM secret_versions WHERE secret_name = ?",
+                    (secret_name,),
+                )
+                for row in cursor.fetchall():
+                    stages = json.loads(row["version_stages"])
+                    if "AWSCURRENT" in stages:
+                        # Remove AWSCURRENT and add AWSPREVIOUS
+                        stages.remove("AWSCURRENT")
+                        if "AWSPREVIOUS" not in stages:
+                            stages.append("AWSPREVIOUS")
+                        cursor.execute(
+                            "UPDATE secret_versions SET version_stages = ? WHERE secret_name = ? AND version_id = ?",
+                            (json.dumps(stages), secret_name, row["version_id"]),
+                        )
+                        break
+
+            # Create new version
+            now = int(time.time())
+            version_id = str(uuid.uuid4())
+
+            # Encode the secret value
+            encoded_string = None
+            encoded_binary = None
+            if secret_string:
+                encoded_string = self._encode_secret(secret_string)
+            if secret_binary:
+                encoded_binary = secret_binary
+
+            cursor.execute(
+                """
+                INSERT INTO secret_versions
+                (secret_name, version_id, secret_string, secret_binary, version_stages, created_date)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """,
+                (
+                    secret_name,
+                    version_id,
+                    encoded_string,
+                    encoded_binary,
+                    json.dumps(version_stages),
+                    now,
+                ),
+            )
+
+            # Update last_updated_date
+            cursor.execute(
+                "UPDATE secrets SET last_updated_date = ? WHERE secret_name = ?",
+                (now, secret_name),
+            )
+
+            conn.commit()
+
+            arn = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT_ID}:secret:{secret_name}-{version_id[:6]}"
+
+            logger.info(
+                f"Created new secret version for '{secret_name}' with stages {version_stages}"
+            )
+
+            return {
+                "ARN": arn,
+                "Name": secret_name,
+                "VersionId": version_id,
+                "VersionStages": version_stages,
+            }
+
 
 class SecretsManager:
     """Container for Secrets Manager operations"""
@@ -898,6 +1250,23 @@ class SecretsManager:
             kms_key_id=params.get("KmsKeyId"),
         )
 
+    def update_secret_version_stage(self, params: Dict) -> Dict:
+        """Update version stages for a secret"""
+        secret_id = params.get("SecretId")
+        if not secret_id:
+            raise InvalidParameterException("SecretId is required")
+
+        version_stage = params.get("VersionStage")
+        if not version_stage:
+            raise InvalidParameterException("VersionStage is required")
+
+        return self.db.update_secret_version_stage(
+            secret_name=secret_id,
+            version_stage=version_stage,
+            move_to_version_id=params.get("MoveToVersionId"),
+            remove_from_version_id=params.get("RemoveFromVersionId"),
+        )
+
     def delete_secret(self, params: Dict) -> Dict:
         """Delete a secret"""
         secret_id = params.get("SecretId")
@@ -932,6 +1301,31 @@ class SecretsManager:
             raise InvalidParameterException("SecretId is required")
 
         return self.db.describe_secret(secret_name=secret_id)
+
+    def list_secret_version_ids(self, params: Dict) -> Dict:
+        """List all version IDs for a secret"""
+        secret_id = params.get("SecretId")
+        if not secret_id:
+            raise InvalidParameterException("SecretId is required")
+
+        return self.db.list_secret_version_ids(
+            secret_name=secret_id,
+            max_results=params.get("MaxResults", 100),
+            include_deprecated=params.get("IncludeDeprecated", True),
+        )
+
+    def put_secret_value(self, params: Dict) -> Dict:
+        """Put a new secret value (creates new version)"""
+        secret_id = params.get("SecretId")
+        if not secret_id:
+            raise InvalidParameterException("SecretId is required")
+
+        return self.db.put_secret_value(
+            secret_name=secret_id,
+            secret_string=params.get("SecretString"),
+            secret_binary=params.get("SecretBinary"),
+            version_stages=params.get("VersionStages"),
+        )
 
 
 # Flask routes
@@ -989,6 +1383,10 @@ def handle_request():
             result = secrets_manager.update_secret(params)
             return jsonify(result), 200
 
+        elif operation == "UpdateSecretVersionStage":
+            result = secrets_manager.update_secret_version_stage(params)
+            return jsonify(result), 200
+
         elif operation == "DeleteSecret":
             result = secrets_manager.delete_secret(params)
             return jsonify(result), 200
@@ -1003,6 +1401,14 @@ def handle_request():
 
         elif operation == "DescribeSecret":
             result = secrets_manager.describe_secret(params)
+            return jsonify(result), 200
+
+        elif operation == "ListSecretVersionIds":
+            result = secrets_manager.list_secret_version_ids(params)
+            return jsonify(result), 200
+
+        elif operation == "PutSecretValue":
+            result = secrets_manager.put_secret_value(params)
             return jsonify(result), 200
 
         else:
