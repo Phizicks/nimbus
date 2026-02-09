@@ -464,12 +464,31 @@
         <div class="modal-content">
             <div class="modal-header">Test Function: <span id="test-function-name"></span></div>
             <div class="modal-body">
+                <div class="form-group">
+                    <label>Saved Test Events</label>
+                    <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+                        <select id="saved-events-select" style="flex: 1;" onchange="loadSavedEvent()">
+                            <option value="">-- Select a saved event --</option>
+                        </select>
+                        <button type="button" class="btn btn-secondary" onclick="deleteSavedEvent()" style="padding: 8px 16px;">Delete</button>
+                    </div>
+                </div>
+
                 <form id="test-lambda-form" onsubmit="testFunction(event)">
                     <div class="form-group">
                         <label>Event JSON</label>
                         <textarea id="test-payload" placeholder='{"key": "value"}'>{}</textarea>
                     </div>
+
+                    <div class="form-group">
+                        <label>Save this test event as:</label>
+                        <div style="display: flex; gap: 10px;">
+                            <input type="text" id="event-name" placeholder="e.g., Test Event 1" style="flex: 1;">
+                            <button type="button" class="btn btn-secondary" onclick="saveTestEvent()" style="padding: 8px 16px;">Save</button>
+                        </div>
+                    </div>
                 </form>
+
                 <div id="test-result" style="margin-top: 20px; display: none;">
                     <div class="card-title">Result</div>
                     <div id="test-result-content"></div>

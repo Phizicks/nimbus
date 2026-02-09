@@ -1923,8 +1923,13 @@ async function viewFunctionDetails(functionName) {
 function showTestFunctionModal(functionName) {
     document.getElementById('test-function-name').textContent = functionName;
     document.getElementById('test-payload').value = '{}';
+    document.getElementById('event-name').value = '';
     document.getElementById('test-result').style.display = 'none';
     document.getElementById('test-result-content').innerHTML = '';
+
+    // Load saved events for this function
+    loadSavedEventsList(functionName);
+
     showModal('test-lambda-modal');
 }
 
@@ -2007,6 +2012,98 @@ async function testFunction(event) {
             </div>
         `;
     }
+}
+
+// Lambda Test Event Payload Management
+function getStorageKey(functionName) {
+    return `lambda-test-events-${functionName}`;
+}
+
+function getSavedEvents(functionName) {
+    const key = getStorageKey(functionName);
+    const stored = localStorage.getItem(key);
+    return stored ? JSON.parse(stored) : {};
+}
+
+function saveTestEvent() {
+    const functionName = document.getElementById('test-function-name').textContent;
+    const eventName = document.getElementById('event-name').value.trim();
+    const payload = document.getElementById('test-payload').value;
+
+    if (!eventName) {
+        showNotification('Please enter a name for this test event', 'error');
+        return;
+    }
+
+    try {
+        JSON.parse(payload);
+    } catch (e) {
+        showNotification('Invalid JSON payload', 'error');
+        return;
+    }
+
+    const events = getSavedEvents(functionName);
+    events[eventName] = payload;
+
+    localStorage.setItem(getStorageKey(functionName), JSON.stringify(events));
+
+    document.getElementById('event-name').value = '';
+    loadSavedEventsList(functionName);
+
+    showNotification(`Test event "${eventName}" saved successfully`, 'success');
+}
+
+function loadSavedEvent() {
+    const functionName = document.getElementById('test-function-name').textContent;
+    const select = document.getElementById('saved-events-select');
+    const eventName = select.value;
+
+    if (!eventName) return;
+
+    const events = getSavedEvents(functionName);
+    const payload = events[eventName];
+
+    if (payload) {
+        document.getElementById('test-payload').value = payload;
+    }
+}
+
+function deleteSavedEvent() {
+    const functionName = document.getElementById('test-function-name').textContent;
+    const select = document.getElementById('saved-events-select');
+    const eventName = select.value;
+
+    if (!eventName) {
+        showNotification('Please select a test event to delete', 'error');
+        return;
+    }
+
+    showConfirmModal(
+        `Delete test event "${eventName}"?`,
+        async () => {
+            const events = getSavedEvents(functionName);
+            delete events[eventName];
+
+            localStorage.setItem(getStorageKey(functionName), JSON.stringify(events));
+
+            document.getElementById('test-payload').value = '{}';
+            loadSavedEventsList(functionName);
+        }
+    );
+}
+
+function loadSavedEventsList(functionName) {
+    const events = getSavedEvents(functionName);
+    const select = document.getElementById('saved-events-select');
+
+    select.innerHTML = '<option value="">-- Select a saved event --</option>';
+
+    Object.keys(events).sort().forEach(eventName => {
+        const option = document.createElement('option');
+        option.value = eventName;
+        option.textContent = eventName;
+        select.appendChild(option);
+    });
 }
 
 function viewFunctionLogs(functionName) {
