@@ -1746,8 +1746,6 @@ class ContainerLifecycleManager:
                     "NODE_PATH": "/opt/nodejs/node_modules:/opt/nodejs/node14/node_modules:/var/runtime/node_modules:/var/runtime:/var/task",
                 }
 
-                logger.critical(f'### Lambda Environment: {container_env}')
-
                 # Merge user-provided environment variables
                 if environment and isinstance(environment, dict):
                     container_env.update(environment)
