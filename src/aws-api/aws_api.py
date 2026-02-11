@@ -1627,13 +1627,13 @@ def runtime_next_invocation():
                 mimetype=raw.headers.get("Content-Type", "text/plain"),
                 headers=raw.headers #.get("lambda-runtime-aws-request-id"),
             )
-        # if status == 410:
-        #     return Response("Lambda runtime shutting down",
-        #         status=status,
-        #         mimetype=raw.headers.get("Content-Type", "text/plain"),
-        #         headers=raw.headers #.get("lambda-runtime-aws-request-id"),
-        #     )
-        return (status, 500)
+        if status == 410:
+            return Response("",
+                status=status,
+                mimetype=raw.headers.get("Content-Type", "text/plain"),
+                headers=raw.headers #.get("lambda-runtime-aws-request-id"),
+            )
+        return (status, "", 500)
     except Exception as e:
         logger.critical(f'Unhandled Exception - {e}', exc_info=True)
         return (
