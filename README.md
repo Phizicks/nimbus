@@ -1,7 +1,7 @@
 ![Image](./nimbus.png)
 # Nimbus LocalCloud - Free AWS Services Emulator
 
-A **complete, free AWS services emulator** for local development. Nimbus provides the essential AWS functionality you need without the complexity or cost of paid alternatives.
+A **complete, free AWS services emulator** for local development. Nimbus provides essential AWS functionality you need without the complexity or cost of paid alternatives.
 
 ## Why Nimbus?
 
@@ -10,19 +10,21 @@ A **complete, free AWS services emulator** for local development. Nimbus provide
 - ⚡ **Fast** - Real AWS Lambda containers, not slow emulation
 - 🎯 **Practical** - Focus on the 80% of AWS features you actually use
 - 🔧 **Simple** - Docker Compose setup, works in minutes
+- 🌐 **Web Console** - Built-in web interface for quick service management
 
 ### What's Supported
 
 | Service | Features | Status |
 |---------|----------|--------|
-| **Lambda** | Create/update/delete/invoke, ZIP & Docker images, real runtime environment | ✅ Full |
-| **ECR** | Push/pull images, repositories, authentication | ✅ Full |
-| **SQS** | Queues, messages, dead-letter queues, FIFO | ✅ Full |
-| **Event Source Mapping** | SQS → Lambda triggers, batch processing | ✅ Full |
-| **S3** | Basic operations (via MinIO) | ✅ Full |
-| **DDB** | Most - no TxWriteItems/Provisioned Throughput (via Scylla) | ✅ Full |
-| **SSM Parameter Store** | Parameters, versions, encryption | ✅ Full |
-| **CloudWatch Logs** | Log groups/streams, filtering | ✅ Full |
+| **Lambda** | Create/update/delete/invoke, ZIP & Docker images, real runtime environment, multiple runtimes (Python, Node.js, Java, Go, Rust) | ✅ Full |
+| **ECR** | Push/pull images, repositories, authentication, Docker Registry UI | ✅ Full |
+| **SQS** | Standard & FIFO queues, messages, dead-letter queues, queue management | ✅ Full |
+| **Event Source Mapping** | SQS → Lambda triggers, batch processing, automatic polling | ✅ Full |
+| **S3** | Buckets, objects, metadata, lifecycle policies, event notifications (via MinIO) | ✅ Full |
+| **DynamoDB** | Tables, items, queries, scans, indexes (via ScyllaDB Alternator) | ✅ Full |
+| **Secrets Manager** | Create/retrieve/update/delete secrets, versioning, rotation | ✅ Full |
+| **SSM Parameter Store** | Parameters, versions, tags, SecureString encryption, hierarchies | ✅ Full |
+| **CloudWatch Logs** | Log groups, log streams, log events, filtering, retention | ✅ Full |
 
 ### Comparison with Alternatives
 
@@ -32,11 +34,13 @@ A **complete, free AWS services emulator** for local development. Nimbus provide
 | Lambda (ECR/Docker) | ✅ | ❌ | ✅ |
 | Real Lambda runtime | ✅ | ❌ | ✅ |
 | SQS + Lambda triggers | ✅ | ⚠️ Limited | ✅ |
-| S3 (basic operations) | ✅ | ✅ | ✅ |
-| DDB (most operations) | ✅ | ✅ | ✅ |
+| S3 (full operations) | ✅ | ✅ | ✅ |
+| DynamoDB (full operations) | ✅ | ✅ | ✅ |
 | ECR | ✅ | ❌ | ✅ |
+| Secrets Manager | ✅ | ⚠️ Basic | ✅ |
 | SSM Parameter Store | ✅ | ⚠️ Basic | ✅ |
 | CloudWatch Logs | ✅ | ⚠️ Basic | ✅ |
+| Web Console | ✅ | ❌ | ✅ |
 | Cost | **Free** | Free | **$$$** |
 
 ## Quick Start
@@ -47,17 +51,20 @@ A **complete, free AWS services emulator** for local development. Nimbus provide
 
 ### 1. Start Nimbus
 
-Create the docker network manually
-```
+Create the docker network:
+```bash
 docker network create localcloud
 ```
 
-Start the system
+Start all services:
 ```bash
 docker compose up -d
 ```
 
-That's it! Services are now running on `localhost:4566` with web console for basic AWS Console for quick view of services
+That's it! Services are now running:
+- **API Endpoint**: `http://localhost:4566`
+- **Web Console**: `http://localhost:4566/console`
+- **ECR Registry**: `localhost:5000`
 
 ### 2. Configure AWS CLI
 
@@ -119,11 +126,24 @@ aws lambda invoke \
 
 cat response.json
 ```
-> Output
 
+> Output
 ```json
 {"statusCode": 200, "body": "Hello from Nimbus!"}
 ```
+
+## Supported Runtimes
+
+Nimbus supports all major AWS Lambda runtimes:
+
+| Runtime | Versions |
+|---------|----------|
+| **Python** | 3.10, 3.11, 3.12, 3.13, 3.14 |
+| **Node.js** | 20.x, 22.x, 24.x |
+| **Java** | 8.al2, 11, 17, 20, 21, 25 |
+| **Go** | 1.x |
+| **Custom** | provided.al2, provided.al2023 |
+| **Container** | Any Docker image |
 
 ## Common Use Cases
 
@@ -159,8 +179,7 @@ aws lambda invoke \
 # Check response
 cat response.json
 ```
->Output
-
+> Output
 ```json
 {"statusCode": 200, "body": "Hello to Freedom!"}
 ```
@@ -205,7 +224,6 @@ aws lambda invoke \
 cat response.json
 ```
 > Output
-
 ```json
 {"statusCode": 200, "body": "Hello from Docker!"}
 ```
@@ -214,7 +232,7 @@ cat response.json
 
 ```bash
 # Create queue
-queueUrl=$(aws sqs create-queue --queue-name my-queue| jq -r '.QueueUrl')
+queueUrl=$(aws sqs create-queue --queue-name my-queue | jq -r '.QueueUrl')
 
 # Send message
 aws sqs send-message \
@@ -238,6 +256,24 @@ aws lambda create-event-source-mapping \
 # Messages sent to the queue will automatically trigger your Lambda
 ```
 
+### Secrets Manager
+
+```bash
+# Create secret
+aws secretsmanager create-secret \
+  --name myapp/database/credentials \
+  --secret-string '{"username":"admin","password":"secret123"}'
+
+# Retrieve secret
+aws secretsmanager get-secret-value \
+  --secret-id myapp/database/credentials
+
+# Update secret
+aws secretsmanager update-secret \
+  --secret-id myapp/database/credentials \
+  --secret-string '{"username":"admin","password":"newsecret456"}'
+```
+
 ### SSM Parameters
 
 ```bash
@@ -251,6 +287,48 @@ aws ssm put-parameter \
 aws ssm get-parameter \
   --name /myapp/database/password \
   --with-decryption
+
+# List parameters by path
+aws ssm get-parameters-by-path \
+  --path /myapp/database
+```
+
+### DynamoDB
+
+```bash
+# Create table
+aws dynamodb create-table \
+  --table-name Users \
+  --attribute-definitions AttributeName=UserId,AttributeType=S \
+  --key-schema AttributeName=UserId,KeyType=HASH \
+  --billing-mode PAY_PER_REQUEST
+
+# Put item
+aws dynamodb put-item \
+  --table-name Users \
+  --item '{"UserId": {"S": "user123"}, "Name": {"S": "John Doe"}}'
+
+# Get item
+aws dynamodb get-item \
+  --table-name Users \
+  --key '{"UserId": {"S": "user123"}}'
+```
+
+### S3
+
+```bash
+# Create bucket
+aws s3 mb s3://my-bucket
+
+# Upload file
+echo "Hello S3" > test.txt
+aws s3 cp test.txt s3://my-bucket/
+
+# List objects
+aws s3 ls s3://my-bucket/
+
+# Download file
+aws s3 cp s3://my-bucket/test.txt downloaded.txt
 ```
 
 ### CloudWatch Logs
@@ -259,7 +337,30 @@ aws ssm get-parameter \
 # View logs for a Lambda function
 aws logs filter-log-events \
   --log-group-name /aws/lambda/my-function
+
+# Create log group
+aws logs create-log-group \
+  --log-group-name /myapp/logs
+
+# Put log events
+aws logs put-log-events \
+  --log-group-name /myapp/logs \
+  --log-stream-name stream1 \
+  --log-events timestamp=$(date +%s000),message="Test log message"
 ```
+
+## Web Console
+
+Access the built-in web console at `http://localhost:4566/console` to:
+- View and manage Lambda functions
+- Monitor SQS queues and messages
+- Browse DynamoDB tables and items
+- Manage Secrets Manager secrets
+- View CloudWatch log streams
+- Browse ECR repositories
+- Manage S3 buckets and objects
+
+The console provides a visual interface similar to the AWS Console for quick debugging and testing.
 
 ## Performance
 
@@ -271,7 +372,7 @@ $ time aws lambda invoke --function-name my-function \
 real    0m1.223s  # First invocation (container startup)
 ```
 
-### Lambda Warm Start (Almost no difference)
+### Lambda Warm Start
 ```bash
 $ time aws lambda invoke --function-name my-function \
   --payload '{}' --cli-binary-format raw-in-base64-out response.json
@@ -286,8 +387,13 @@ Run the included test suite:
 ```bash
 cd tests
 
-# Test all tests found
+# Run all tests
 ./run_all_tests.sh
+
+# Run specific service tests
+cd lambda && ./test.sh
+cd sqs && ./test.sh
+cd ddb && ./test.sh
 ```
 
 ## Debugging
@@ -298,65 +404,116 @@ docker compose logs -f
 
 # View specific service
 docker compose logs -f lambda
+docker compose logs -f sqs
+docker compose logs -f api
 
 # View Lambda container logs
-docker compose logs lambda-{function-name}-{instance-id}
+docker logs lambda-{function-name}-{instance-id}
 ```
 
 ## Architecture
 
 Nimbus uses a microservices architecture with dedicated containers for each AWS service:
 
-- **API Gateway** (`api`) - Routes requests to appropriate services
-- **Lambda** (`lambda`) - Container lifecycle management, invocations
-- **ECR** (`ecr`) - Docker registry (port 5000)
-- **SQS** (`sqs`) - Message queuing
-- **Event Source Mapping** (`esm`) - Trigger management
-- **Dynamo DB** (`ddb`) - No SQL tables
-- **S3** (`s3`) - Object storage (MinIO)
+- **API Gateway** (`api`) - Routes requests to appropriate services, unified endpoint on port 4566
+- **Lambda** (`lambda`) - Container lifecycle management, function invocations
+- **ECR** (`ecr`) - Docker registry (port 5000) with web UI
+- **SQS** (`sqs`) - Message queuing service
+- **Event Source Mapping** (`esm`) - Manages Lambda triggers from SQS and other sources
+- **DynamoDB** (`ddb`) - NoSQL database using ScyllaDB Alternator
+- **S3** (`s3`) - Object storage using MinIO
+- **Secrets Manager** (`secretsmanager`) - Secrets storage and versioning
+- **SSM Parameter Store** - Built into API Gateway
 
-All services communicate via Docker networking and expose a unified API on `localhost:4566`.
+All services communicate via Docker networking on the `localcloud` network and expose a unified API on `localhost:4566`.
 
 ## Advanced Configuration
 
 ### Environment Variables
 
-```bash
-# docker-compose.yml
+Configure services via `docker-compose.yml`:
+
+```yaml
 environment:
   - AWS_REGION=ap-southeast-2
   - AWS_ACCOUNT_ID=456645664566
   - STORAGE_PATH=/data  # Persist data between restarts
+  - LOG_LEVEL=DEBUG     # Set logging level
 ```
 
 ### Data Persistence
 
-Nimbus stores data in Docker volumes:
-- Lambda functions: `./data/lambda-functions`
-- Databases: `./data/*.db`
-- S3 objects: MinIO volume
+Nimbus stores data in Docker volumes and local directories:
+- **Lambda functions**: `./data/lambda-functions`
+- **Metadata databases**: `./data/*.db`
+- **S3 objects**: `data-s3` volume (MinIO)
+- **DynamoDB data**: `/docker-volumes/nimbus-ddb-data` (ScyllaDB)
+
+### Custom Network
+
+By default, Nimbus uses the `localcloud` network. Create it before starting:
+
+```bash
+docker network create localcloud
+```
 
 ## What's Missing?
 
-Nimbus focuses on **development workflows**, not completely production feature parity. Not included:
+Nimbus focuses on **development workflows**, not complete production feature parity. Not included:
 
 - ❌ IAM permissions (all operations allowed)
 - ❌ VPC/networking simulation
 - ❌ CloudFormation
 - ❌ Step Functions
-- ❌ Advanced S3 features (versioning, lifecycle policies.... yet)
-- ❌ API Gateway (use Lambda invoke directly)
+- ❌ API Gateway REST/HTTP APIs (use Lambda invoke directly)
+- ❌ Some advanced DynamoDB features (transactions with TxWriteItems, provisioned throughput)
+- ❌ Some advanced S3 features (versioning in progress, lifecycle policies partial)
 
 **This is intentional.** These features add complexity that most developers don't need for local testing.
 
+## Project Structure
+
+```
+nimbus/
+├── src/
+│   ├── aws-api/         # Main API gateway, SSM, routing
+│   │   ├── aws_api.py   # Core API implementation
+│   │   ├── console/     # Web console UI
+│   │   └── ssm_parameters.py
+│   ├── lambda/          # Lambda service
+│   │   └── main.py
+│   ├── sqs/             # SQS service
+│   │   └── main.py
+│   ├── event-source-mapping/  # ESM service
+│   │   └── main.py
+│   ├── secrets-manager/ # Secrets Manager service
+│   │   └── main.py
+│   ├── s3/              # S3/MinIO service
+│   ├── dynamodb/        # DynamoDB/ScyllaDB
+│   └── ecr/             # ECR registry
+├── tests/               # Integration tests
+│   ├── lambda/
+│   ├── sqs/
+│   ├── ddb/
+│   ├── s3/
+│   ├── ssm/
+│   └── run_all_tests.sh
+├── docker-compose.yml   # Main compose file
+└── docker-files/        # Service-specific compose files
+```
+
 ## Contributing
 
-Nimbus is open source and contributions are welcome, send a PR with unittests! The codebase is designed to be readable and modular:
+Nimbus is open source and contributions are welcome! Send a PR with unit tests.
 
-- `aws_api.py` - Main API gateway and routing, built in S3 proxying and simple SSM support.
-- `lambda/main.py` - Lambda container lifecycle
-- `sqs/main.py` - SQS implementation
-- `esm/main.py` - Event source mapping
+The codebase is designed to be readable and modular:
+- `src/aws-api/aws_api.py` - Main API gateway, routing, ECR, SSM
+- `src/lambda/main.py` - Lambda container lifecycle and invocations
+- `src/sqs/main.py` - SQS queue and message management
+- `src/event-source-mapping/main.py` - Event source mapping and triggers
+- `src/secrets-manager/main.py` - Secrets Manager implementation
+- `src/aws-api/ssm_parameters.py` - SSM Parameter Store
+- `src/aws-api/console/` - Web console frontend
 
 ## License
 
@@ -364,4 +521,4 @@ MIT - Use freely for any purpose.
 
 ---
 
-**Built by freedom for developers who want simple, free AWS emulation**
+**Built for developers who want simple, free AWS emulation**
