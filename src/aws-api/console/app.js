@@ -2884,37 +2884,43 @@ async function viewLogStreams(logGroupName) {
         document.getElementById('log-group-name').textContent = logGroupName;
         const content = document.getElementById('log-streams-content');
 
-        if (logStreams.length === 0) {
-            content.innerHTML = '<p>No log streams found in this log group.</p>';
-        } else {
-            let html = `
-                <div style="margin-bottom: 15px; display: flex; gap: 10px; align-items: center;">
-                    <button class="btn btn-danger" id="delete-selected-streams" onclick="deleteSelectedLogStreams('${logGroupName}')" disabled>
-                        Delete Selected
-                    </button>
-                    <button class="btn btn-secondary" onclick="viewLogStreams('${logGroupName}')">🔄 Refresh</button>
-                </div>
-                <table style="width:100%;">
-                    <thead>
-                        <tr>
-                            <th style="width: 40px;">
-                                <input type="checkbox" onchange="toggleAllLogStreams(this.checked)">
-                            </th>
-                            <th>Log Stream Name</th>
-                            <th>Last Event Time</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-            `;
+        let html = `
+            <div style="margin-bottom: 15px; display: flex; gap: 10px; align-items: center;">
+                <button class="btn btn-danger" id="delete-selected-streams" onclick="deleteSelectedLogStreams('${logGroupName}')" ${logStreams.length === 0 ? 'disabled' : ''}>
+                    Delete Selected
+                </button>
+                <button class="btn btn-secondary" onclick="viewLogStreams('${logGroupName}')">🔄 Refresh</button>
+            </div>
+            <table style="width:100%;">
+                <thead>
+                    <tr>
+                        <th style="width: 40px;">
+                            <input type="checkbox" onchange="toggleAllLogStreams(this.checked)" ${logStreams.length === 0 ? 'disabled' : ''}>
+                        </th>
+                        <th>Log Stream Name</th>
+                        <th>Last Event Time</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+        `;
 
+        if (logStreams.length === 0) {
+            html += `
+                <tr>
+                    <td colspan="4" style="text-align: center; padding: 20px; color: var(--text-secondary);">
+                        No log streams found in this log group.
+                    </td>
+                </tr>
+            `;
+        } else {
             for (const stream of logStreams) {
                 const lastEventTime = stream.lastEventTimestamp ? new Date(stream.lastEventTimestamp).toLocaleString() : 'N/A';
                 html += `
                     <tr>
                         <td>
                             <input type="checkbox" class="log-stream-checkbox" value="${stream.logStreamName}"
-                                   onchange="updateLogStreamDeleteButton()">
+                                onchange="updateLogStreamDeleteButton()">
                         </td>
                         <td><strong>${stream.logStreamName}</strong></td>
                         <td>${lastEventTime}</td>
@@ -2927,10 +2933,10 @@ async function viewLogStreams(logGroupName) {
                     </tr>
                 `;
             }
-
-            html += '</tbody></table>';
-            content.innerHTML = html;
         }
+
+        html += '</tbody></table>';
+        content.innerHTML = html;
 
         showModal('log-streams-modal');
     } catch (error) {
@@ -4730,6 +4736,52 @@ function sortByProperty(property, order = 'asc') {
 }
 
 
+async function fetchSecretType(secretName, typeCell) {
+    try {
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.1',
+                'X-Amz-Target': 'secretsmanager.GetSecretValue'
+            },
+            body: JSON.stringify({
+                SecretId: secretName
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            typeCell.innerHTML = '<span style="color: var(--text-secondary);">-</span>';
+            return;
+        }
+
+        let secretType = 'String';
+        let typeColor = 'var(--text-secondary)';
+
+        if (data.SecretBinary) {
+            secretType = 'Binary';
+            typeColor = 'var(--warning)';
+        } else if (data.SecretString) {
+            // Try to detect if it's JSON
+            try {
+                JSON.parse(data.SecretString);
+                secretType = 'JSON';
+                typeColor = 'var(--primary)';
+            } catch {
+                secretType = 'String';
+            }
+        }
+
+        typeCell.innerHTML = `<span style="color: ${typeColor};">${secretType}</span>`;
+
+    } catch (error) {
+        console.error(`Error fetching type for ${secretName}:`, error);
+        typeCell.innerHTML = '<span style="color: var(--text-secondary);">-</span>';
+    }
+}
+
+
 // Load all secrets
 async function loadSecrets() {
     const loading = document.getElementById('secretsmanager-loading');
@@ -4792,6 +4844,11 @@ async function loadSecrets() {
             // Secret Name
             const nameCell = row.insertCell();
             nameCell.textContent = secret.Name;
+
+            // Type
+            const typeCell = row.insertCell();
+            typeCell.innerHTML = '<span style="color: var(--text-secondary); font-size: 0.9em;">Loading...</span>';
+            fetchSecretType(secret.Name, typeCell);
 
             // Description
             const descCell = row.insertCell();

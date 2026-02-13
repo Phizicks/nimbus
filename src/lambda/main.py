@@ -2671,7 +2671,7 @@ def update_function_configuration(function_name):
 
         # Update environment variables
         env_vars = data.get("Environment", {}).get("Variables")
-        if env_vars and isinstance(env_vars, dict):
+        if isinstance(env_vars, dict):
             function_config["Environment"] = env_vars
 
         if "LoggingConfig" in data:
