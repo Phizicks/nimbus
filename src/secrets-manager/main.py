@@ -15,6 +15,11 @@ import base64
 from contextlib import contextmanager
 from typing import Optional, Dict, List, Any
 from flask import Flask, request, jsonify, Response
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
+import secrets
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +74,8 @@ class SecretsManagerDatabase:
     def __init__(self):
         """Initialize Secrets Manager database"""
         self.db_path = DB_PATH
-        self._init_database()
+        self._init_database()  # Initialize database first
+        self.encryption_key = self._get_encryption_key()  # Then get encryption key
         logger.info(f"SecretsManagerDatabase initialized at {DB_PATH}")
 
     def _init_database(self):
@@ -84,6 +90,12 @@ class SecretsManagerDatabase:
                     secret_name TEXT PRIMARY KEY,
                     description TEXT,
                     kms_key_id TEXT,
+                    rotation_enabled BOOLEAN DEFAULT FALSE,
+                    rotation_lambda_arn TEXT,
+                    rotation_rules TEXT,
+                    last_rotated_date INTEGER,
+                    rotation_status TEXT,
+                    resource_policy TEXT,
                     created_date INTEGER NOT NULL,
                     last_updated_date INTEGER NOT NULL,
                     last_accessed_date INTEGER,
@@ -117,15 +129,17 @@ class SecretsManagerDatabase:
             """
             )
 
+            # Salt and secret table for encryption key. should only ever contain 1
             cursor.execute(
                 """
-                CREATE INDEX IF NOT EXISTS idx_secret_versions_stages
-                ON secret_versions(secret_name, version_stages)
+                CREATE TABLE IF NOT EXISTS salt_secret (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    salt BLOB NOT NULL,
+                    secret BLOB NOT NULL,
+                    created_date INTEGER NOT NULL
+                )
             """
             )
-
-            conn.commit()
-            logger.info("Secrets Manager database tables initialized")
 
     @contextmanager
     def _get_connection(self):
@@ -137,13 +151,76 @@ class SecretsManagerDatabase:
         finally:
             conn.close()
 
+    def _get_encryption_key(self) -> bytes:
+        """Generate or retrieve AES-256 existing encryption key from database"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Try to get existing salt and secret - should only ever have 1
+            cursor.execute("SELECT salt, secret FROM salt_secret WHERE id = 1")
+            existing_encryption = cursor.fetchone()
+
+            if existing_encryption:
+                # Use existing salt and secret
+                salt, secret = existing_encryption
+            else:
+                # Generate new random salt and secret
+                salt = secrets.token_bytes(16)  # 128-bit salt
+                secret = secrets.token_bytes(32)  # 256-bit secret
+                created_date = int(time.time())
+
+                # Store them in database
+                cursor.execute(
+                    "INSERT INTO salt_secret (id, salt, secret, created_date) VALUES (?, ?, ?, ?)",
+                    (1, salt, secret, created_date)
+                )
+                conn.commit()
+                logger.info("Generated and stored new encryption salt and secret")
+
+            # Create encryption key using PBKDF2
+            kdf = PBKDF2HMAC(
+                algorithm=hashes.SHA256(),
+                length=32,  # 256 bits / 8
+                salt=salt,
+                iterations=100000,
+                backend=default_backend()
+            )
+            return kdf.derive(secret)
+
     def _encode_secret(self, value: str) -> str:
-        """Encode secret value using base64"""
-        return base64.b64encode(value.encode("utf-8")).decode("utf-8")
+        """Encrypt secret value using AES-256"""
+        iv = secrets.token_bytes(16)  # 128-bit IV
+        cipher = Cipher(algorithms.AES(self.encryption_key), modes.CBC(iv), backend=default_backend())
+        encryptor = cipher.encryptor()
+
+        # Pad to block size
+        padded_data = value.encode('utf-8')
+        block_size = algorithms.AES.block_size // 8
+        padding_len = block_size - (len(padded_data) % block_size)
+        padded_data += bytes([padding_len]) * padding_len
+
+        encrypted = encryptor.update(padded_data) + encryptor.finalize()
+
+        # Combine IV and encrypted data, base64 encode
+        combined = iv + encrypted
+        return base64.b64encode(combined).decode('utf-8')
 
     def _decode_secret(self, encoded_value: str) -> str:
-        """Decode secret value from base64"""
-        return base64.b64decode(encoded_value.encode("utf-8")).decode("utf-8")
+        """Decrypt secret value using AES-256"""
+        combined = base64.b64decode(encoded_value.encode('utf-8'))
+        iv = combined[:16]
+        encrypted = combined[16:]
+
+        cipher = Cipher(algorithms.AES(self.encryption_key), modes.CBC(iv), backend=default_backend())
+        decryptor = cipher.decryptor()
+
+        padded_data = decryptor.update(encrypted) + decryptor.finalize()
+
+        # Remove padding
+        padding_len = padded_data[-1]
+        if padding_len > 16:  # Invalid padding
+            raise ValueError("Invalid padding")
+        return padded_data[:-padding_len].decode('utf-8')
 
     def create_secret(
         self,
@@ -995,6 +1072,16 @@ class SecretsManagerDatabase:
                 result["DeletedDate"] = secret["deleted_date"]
             if secret["tags"]:
                 result["Tags"] = json.loads(secret["tags"])
+            if secret["rotation_enabled"]:
+                result["RotationEnabled"] = secret["rotation_enabled"]
+            if secret["rotation_lambda_arn"]:
+                result["RotationLambdaARN"] = secret["rotation_lambda_arn"]
+            if secret["rotation_rules"]:
+                result["RotationRules"] = json.loads(secret["rotation_rules"])
+            if secret["last_rotated_date"]:
+                result["LastRotatedDate"] = secret["last_rotated_date"]
+            if secret["rotation_status"]:
+                result["RotationStatus"] = secret["rotation_status"]
 
             return result
 
@@ -1194,6 +1281,249 @@ class SecretsManagerDatabase:
                 "VersionStages": version_stages,
             }
 
+    def put_resource_policy(self, secret_name: str, resource_policy: str) -> Dict:
+        """Put resource policy for a secret"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Check if secret exists
+            cursor.execute(
+                "SELECT secret_name FROM secrets WHERE secret_name = ? AND deleted_date IS NULL",
+                (secret_name,),
+            )
+            if not cursor.fetchone():
+                raise ResourceNotFoundException(f"Secret '{secret_name}' not found.")
+
+            # For now, just store the policy (no validation)
+            cursor.execute(
+                "UPDATE secrets SET resource_policy = ? WHERE secret_name = ?",
+                (resource_policy, secret_name),
+            )
+            conn.commit()
+
+            arn = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT_ID}:secret:{secret_name}"
+            return {"ARN": arn, "Name": secret_name}
+
+    def get_resource_policy(self, secret_name: str) -> Dict:
+        """Get resource policy for a secret"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                "SELECT resource_policy FROM secrets WHERE secret_name = ? AND deleted_date IS NULL",
+                (secret_name,),
+            )
+            secret = cursor.fetchone()
+
+            if not secret:
+                raise ResourceNotFoundException(f"Secret '{secret_name}' not found.")
+
+            arn = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT_ID}:secret:{secret_name}"
+            result = {"ARN": arn, "Name": secret_name}
+
+            if secret["resource_policy"]:
+                result["ResourcePolicy"] = secret["resource_policy"]
+
+            return result
+
+    def delete_resource_policy(self, secret_name: str) -> Dict:
+        """Delete resource policy for a secret"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                "SELECT secret_name FROM secrets WHERE secret_name = ? AND deleted_date IS NULL",
+                (secret_name,),
+            )
+            if not cursor.fetchone():
+                raise ResourceNotFoundException(f"Secret '{secret_name}' not found.")
+
+            cursor.execute(
+                "UPDATE secrets SET resource_policy = NULL WHERE secret_name = ?",
+                (secret_name,),
+            )
+            conn.commit()
+
+            arn = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT_ID}:secret:{secret_name}"
+            return {"ARN": arn, "Name": secret_name}
+
+    def update_secret_rotation(self, secret_name: str, rotation_lambda_arn: str, rotation_rules: Dict) -> Dict:
+        """Enable rotation for a secret"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                "SELECT secret_name FROM secrets WHERE secret_name = ? AND deleted_date IS NULL",
+                (secret_name,),
+            )
+            if not cursor.fetchone():
+                raise ResourceNotFoundException(f"Secret '{secret_name}' not found.")
+
+            cursor.execute(
+                """
+                UPDATE secrets SET
+                    rotation_enabled = TRUE,
+                    rotation_lambda_arn = ?,
+                    rotation_rules = ?,
+                    rotation_status = 'Enabled'
+                WHERE secret_name = ?
+                """,
+                (rotation_lambda_arn, json.dumps(rotation_rules), secret_name),
+            )
+            conn.commit()
+
+            arn = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT_ID}:secret:{secret_name}"
+            return {"ARN": arn, "Name": secret_name, "VersionId": None}
+
+    def cancel_rotate_secret(self, secret_name: str) -> Dict:
+        """Cancel rotation for a secret"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                "SELECT secret_name FROM secrets WHERE secret_name = ? AND deleted_date IS NULL",
+                (secret_name,),
+            )
+            if not cursor.fetchone():
+                raise ResourceNotFoundException(f"Secret '{secret_name}' not found.")
+
+            cursor.execute(
+                """
+                UPDATE secrets SET
+                    rotation_enabled = FALSE,
+                    rotation_lambda_arn = NULL,
+                    rotation_rules = NULL,
+                    rotation_status = NULL
+                WHERE secret_name = ?
+                """,
+                (secret_name,),
+            )
+            conn.commit()
+
+            arn = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT_ID}:secret:{secret_name}"
+            return {"ARN": arn, "Name": secret_name}
+
+    def get_rotation_policy(self, secret_name: str) -> Dict:
+        """Get rotation policy for a secret"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                SELECT rotation_lambda_arn, rotation_rules
+                FROM secrets
+                WHERE secret_name = ? AND deleted_date IS NULL
+                """,
+                (secret_name,),
+            )
+            secret = cursor.fetchone()
+
+            if not secret:
+                raise ResourceNotFoundException(f"Secret '{secret_name}' not found.")
+
+            arn = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT_ID}:secret:{secret_name}"
+            result = {"ARN": arn, "Name": secret_name}
+
+            if secret["rotation_lambda_arn"]:
+                result["RotationLambdaARN"] = secret["rotation_lambda_arn"]
+            if secret["rotation_rules"]:
+                result["RotationRules"] = json.loads(secret["rotation_rules"])
+
+            return result
+
+    def rotate_secret(self, secret_name: str, client_request_token: Optional[str] = None) -> Dict:
+        """Rotate a secret immediately"""
+        # For now, just simulate rotation by creating a new version with rotated value
+        # In a real implementation, this would invoke the Lambda function
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Check if secret exists and rotation is enabled
+            cursor.execute(
+                """
+                SELECT rotation_lambda_arn, rotation_rules
+                FROM secrets
+                WHERE secret_name = ? AND deleted_date IS NULL AND rotation_enabled = TRUE
+                """,
+                (secret_name,),
+            )
+            secret = cursor.fetchone()
+
+            if not secret:
+                raise ResourceNotFoundException(f"Secret '{secret_name}' not found or rotation not enabled.")
+
+            # Get current secret value
+            cursor.execute(
+                """
+                SELECT secret_string FROM secret_versions
+                WHERE secret_name = ? AND version_stages LIKE ?
+                """,
+                (secret_name, '%"AWSCURRENT"%'),
+            )
+            current_version = cursor.fetchone()
+
+            if not current_version:
+                raise InvalidRequestException(f"No current version found for secret '{secret_name}'.")
+
+            # Decode current value
+            current_value = self._decode_secret(current_version["secret_string"])
+
+            # Simulate rotation: append timestamp to indicate rotation
+            # In reality, this would be done by the Lambda function
+            try:
+                secret_data = json.loads(current_value)
+                secret_data["_rotated_at"] = int(time.time())
+                new_value = json.dumps(secret_data)
+            except json.JSONDecodeError:
+                # If not JSON, just add a suffix
+                new_value = current_value + f"_rotated_{int(time.time())}"
+
+            # Create new version
+            now = int(time.time())
+            version_id = str(uuid.uuid4())
+
+            # Move AWSCURRENT to AWSPREVIOUS
+            cursor.execute(
+                """
+                UPDATE secret_versions
+                SET version_stages = ?
+                WHERE secret_name = ? AND version_stages LIKE ?
+                """,
+                (json.dumps(["AWSPREVIOUS"]), secret_name, '%"AWSCURRENT"%'),
+            )
+
+            # Create new AWSCURRENT version
+            encoded_value = self._encode_secret(new_value)
+            cursor.execute(
+                """
+                INSERT INTO secret_versions
+                (secret_name, version_id, secret_string, version_stages, created_date)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (secret_name, version_id, encoded_value, json.dumps(["AWSCURRENT"]), now),
+            )
+
+            # Update rotation metadata
+            cursor.execute(
+                """
+                UPDATE secrets SET
+                    last_rotated_date = ?,
+                    last_updated_date = ?
+                WHERE secret_name = ?
+                """,
+                (now, now, secret_name),
+            )
+
+            conn.commit()
+
+            arn = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT_ID}:secret:{secret_name}-{version_id[:6]}"
+            return {
+                "ARN": arn,
+                "Name": secret_name,
+                "VersionId": version_id,
+            }
+
 
 class SecretsManager:
     """Container for Secrets Manager operations"""
@@ -1327,9 +1657,88 @@ class SecretsManager:
             version_stages=params.get("VersionStages"),
         )
 
+    def put_resource_policy(self, params: Dict) -> Dict:
+        """Put resource policy"""
+        secret_id = params.get("SecretId")
+        if not secret_id:
+            raise InvalidParameterException("SecretId is required")
+
+        resource_policy = params.get("ResourcePolicy")
+        if not resource_policy:
+            raise InvalidParameterException("ResourcePolicy is required")
+
+        return self.db.put_resource_policy(secret_name=secret_id, resource_policy=resource_policy)
+
+    def get_resource_policy(self, params: Dict) -> Dict:
+        """Get resource policy"""
+        secret_id = params.get("SecretId")
+        if not secret_id:
+            raise InvalidParameterException("SecretId is required")
+
+        return self.db.get_resource_policy(secret_name=secret_id)
+
+    def delete_resource_policy(self, params: Dict) -> Dict:
+        """Delete resource policy"""
+        secret_id = params.get("SecretId")
+        if not secret_id:
+            raise InvalidParameterException("SecretId is required")
+
+        return self.db.delete_resource_policy(secret_name=secret_id)
+
+    def update_secret_rotation(self, params: Dict) -> Dict:
+        """Update secret rotation"""
+        secret_id = params.get("SecretId")
+        if not secret_id:
+            raise InvalidParameterException("SecretId is required")
+
+        rotation_lambda_arn = params.get("RotationLambdaARN")
+        if not rotation_lambda_arn:
+            raise InvalidParameterException("RotationLambdaARN is required")
+
+        rotation_rules = params.get("RotationRules", {})
+
+        return self.db.update_secret_rotation(
+            secret_name=secret_id,
+            rotation_lambda_arn=rotation_lambda_arn,
+            rotation_rules=rotation_rules
+        )
+
+    def cancel_rotate_secret(self, params: Dict) -> Dict:
+        """Cancel secret rotation"""
+        secret_id = params.get("SecretId")
+        if not secret_id:
+            raise InvalidParameterException("SecretId is required")
+
+        return self.db.cancel_rotate_secret(secret_name=secret_id)
+
+    def rotate_secret(self, params: Dict) -> Dict:
+        """Rotate secret"""
+        secret_id = params.get("SecretId")
+        if not secret_id:
+            raise InvalidParameterException("SecretId is required")
+
+        return self.db.rotate_secret(
+            secret_name=secret_id,
+            client_request_token=params.get("ClientRequestToken")
+        )
+
+    def get_rotation_policy(self, params: Dict) -> Dict:
+        """Get rotation policy"""
+        secret_id = params.get("SecretId")
+        if not secret_id:
+            raise InvalidParameterException("SecretId is required")
+
+        return self.db.get_rotation_policy(secret_name=secret_id)
+
 
 # Flask routes
-secrets_manager = SecretsManager()
+_secrets_manager = None
+
+def get_secrets_manager():
+    global _secrets_manager
+    if _secrets_manager is None:
+        _secrets_manager = SecretsManager()
+    return _secrets_manager
 
 
 def error_response(error_type: str, message: str) -> Dict:
@@ -1372,43 +1781,71 @@ def handle_request():
 
         # Route to appropriate handler
         if operation == "CreateSecret":
-            result = secrets_manager.create_secret(params)
+            result = get_secrets_manager().create_secret(params)
             return jsonify(result), 200
 
         elif operation == "GetSecretValue":
-            result = secrets_manager.get_secret_value(params)
+            result = get_secrets_manager().get_secret_value(params)
             return jsonify(result), 200
 
         elif operation == "UpdateSecret":
-            result = secrets_manager.update_secret(params)
+            result = get_secrets_manager().update_secret(params)
             return jsonify(result), 200
 
         elif operation == "UpdateSecretVersionStage":
-            result = secrets_manager.update_secret_version_stage(params)
+            result = get_secrets_manager().update_secret_version_stage(params)
             return jsonify(result), 200
 
         elif operation == "DeleteSecret":
-            result = secrets_manager.delete_secret(params)
+            result = get_secrets_manager().delete_secret(params)
             return jsonify(result), 200
 
         elif operation == "RestoreSecret":
-            result = secrets_manager.restore_secret(params)
+            result = get_secrets_manager().restore_secret(params)
             return jsonify(result), 200
 
         elif operation == "ListSecrets":
-            result = secrets_manager.list_secrets(params)
+            result = get_secrets_manager().list_secrets(params)
             return jsonify(result), 200
 
         elif operation == "DescribeSecret":
-            result = secrets_manager.describe_secret(params)
+            result = get_secrets_manager().describe_secret(params)
             return jsonify(result), 200
 
         elif operation == "ListSecretVersionIds":
-            result = secrets_manager.list_secret_version_ids(params)
+            result = get_secrets_manager().list_secret_version_ids(params)
             return jsonify(result), 200
 
         elif operation == "PutSecretValue":
-            result = secrets_manager.put_secret_value(params)
+            result = get_secrets_manager().put_secret_value(params)
+            return jsonify(result), 200
+
+        elif operation == "PutResourcePolicy":
+            result = get_secrets_manager().put_resource_policy(params)
+            return jsonify(result), 200
+
+        elif operation == "GetResourcePolicy":
+            result = get_secrets_manager().get_resource_policy(params)
+            return jsonify(result), 200
+
+        elif operation == "DeleteResourcePolicy":
+            result = get_secrets_manager().delete_resource_policy(params)
+            return jsonify(result), 200
+
+        elif operation == "UpdateSecretRotation":
+            result = get_secrets_manager().update_secret_rotation(params)
+            return jsonify(result), 200
+
+        elif operation == "CancelRotateSecret":
+            result = get_secrets_manager().cancel_rotate_secret(params)
+            return jsonify(result), 200
+
+        elif operation == "RotateSecret":
+            result = get_secrets_manager().rotate_secret(params)
+            return jsonify(result), 200
+
+        elif operation == "GetRotationPolicy":
+            result = get_secrets_manager().get_rotation_policy(params)
             return jsonify(result), 200
 
         else:
@@ -1439,4 +1876,5 @@ if __name__ == "__main__":
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
+    secrets_manager = SecretsManager()
     app.run(host="0.0.0.0", port=4566, debug=False)

@@ -1613,29 +1613,32 @@ def runtime_next_invocation():
             "GET", "/2018-06-01/runtime/invocation/next", headers=headers
         )
         if status == 200:
-            logger.info(f"Lambda response received: {status}:{raw} , headers:{raw.headers}")
+            logger.info(
+                f"Lambda response received: {status}:{raw} , headers:{raw.headers}"
+            )
             return Response(
                 raw.content,
                 status=200,
                 mimetype=raw.headers.get("Content-Type", "text/plain"),
-                headers=raw.headers #.get("lambda-runtime-aws-request-id"),
+                headers=raw.headers,  # .get("lambda-runtime-aws-request-id"),
             )
         if status == 204:
             return Response(
                 "",
                 status=204,
                 mimetype=raw.headers.get("Content-Type", "text/plain"),
-                headers=raw.headers #.get("lambda-runtime-aws-request-id"),
+                headers=raw.headers,  # .get("lambda-runtime-aws-request-id"),
             )
         if status == 410:
-            return Response("",
+            return Response(
+                "",
                 status=status,
                 mimetype=raw.headers.get("Content-Type", "text/plain"),
-                headers=raw.headers #.get("lambda-runtime-aws-request-id"),
+                headers=raw.headers,  # .get("lambda-runtime-aws-request-id"),
             )
         return (status, "", 500)
     except Exception as e:
-        logger.critical(f'Unhandled Exception - {e}', exc_info=True)
+        logger.critical(f"Unhandled Exception - {e}", exc_info=True)
         return (
             jsonify(
                 {
@@ -1645,6 +1648,7 @@ def runtime_next_invocation():
             ),
             500,
         )
+
 
 @app.route("/2018-06-01/runtime/invocation/<request_id>/response", methods=["POST"])
 def runtime_invocation_response(request_id):

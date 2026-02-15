@@ -4781,6 +4781,42 @@ async function fetchSecretType(secretName, typeCell) {
     }
 }
 
+async function fetchSecretRotation(secretName, rotationCell) {
+    try {
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.1',
+                'X-Amz-Target': 'secretsmanager.DescribeSecret'
+            },
+            body: JSON.stringify({
+                SecretId: secretName
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            rotationCell.innerHTML = '<span style="color: var(--text-secondary);">-</span>';
+            return;
+        }
+
+        let rotationStatus = 'Disabled';
+        let statusColor = 'var(--text-secondary)';
+
+        if (data.RotationEnabled) {
+            rotationStatus = data.RotationStatus || 'Enabled';
+            statusColor = 'var(--success)';
+        }
+
+        rotationCell.innerHTML = `<span style="color: ${statusColor};">${rotationStatus}</span>`;
+
+    } catch (error) {
+        console.error(`Error fetching rotation for ${secretName}:`, error);
+        rotationCell.innerHTML = '<span style="color: var(--text-secondary);">-</span>';
+    }
+}
+
 
 // Load all secrets
 async function loadSecrets() {
@@ -4857,6 +4893,11 @@ async function loadSecrets() {
             // Last Modified
             const modifiedCell = row.insertCell();
             modifiedCell.textContent = new Date(secret.LastChangedDate * 1000).toLocaleString();
+
+            // Rotation Status
+            const rotationCell = row.insertCell();
+            rotationCell.innerHTML = '<span style="color: var(--text-secondary); font-size: 0.9em;">Loading...</span>';
+            fetchSecretRotation(secret.Name, rotationCell);
 
             // Status
             const statusCell = row.insertCell();
@@ -5107,6 +5148,43 @@ async function viewSecret(secretName) {
             ? new Date(data.LastAccessedDate * 1000).toLocaleString()
             : '-';
 
+        // Add rotation information
+        let rotationHtml = '';
+        if (data.RotationEnabled) {
+            rotationHtml += `
+                <div class="detail-row">
+                    <div class="detail-label">Rotation Status:</div>
+                    <div class="detail-value"><span style="color: var(--success);">${data.RotationStatus || 'Enabled'}</span></div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Rotation Lambda:</div>
+                    <div class="detail-value"><code>${data.RotationLambdaARN || 'N/A'}</code></div>
+                </div>
+            `;
+            if (data.LastRotatedDate) {
+                rotationHtml += `
+                    <div class="detail-row">
+                        <div class="detail-label">Last Rotated:</div>
+                        <div class="detail-value">${new Date(data.LastRotatedDate * 1000).toLocaleString()}</div>
+                    </div>
+                `;
+            }
+        } else {
+            rotationHtml = `
+                <div class="detail-row">
+                    <div class="detail-label">Rotation Status:</div>
+                    <div class="detail-value"><span style="color: var(--text-secondary);">Disabled</span></div>
+                </div>
+            `;
+        }
+
+        // Insert rotation info after Last Accessed
+        const detailsContent = document.getElementById('secret-details-content');
+        const accessedRow = detailsContent.querySelector('.detail-row:nth-child(6)');
+        if (accessedRow) {
+            accessedRow.insertAdjacentHTML('afterend', rotationHtml);
+        }
+
         // Display version information
         const versionStages = data.VersionIdsToStages || {};
         const currentVersionId = Object.keys(versionStages).find(vid =>
@@ -5123,10 +5201,135 @@ async function viewSecret(secretName) {
         document.getElementById('restore-version-btn').style.display = 'none';
         document.getElementById('version-info-banner').style.display = 'none';
 
+        // Add rotation buttons to footer
+        const modalFooter = document.querySelector('#view-secret-modal .modal-footer');
+        modalFooter.innerHTML = '<button type="button" class="btn btn-secondary" onclick="closeModal(\'view-secret-modal\')">Close</button>';
+
+        if (data.RotationEnabled) {
+            modalFooter.insertAdjacentHTML('afterbegin', `
+                <button type="button" class="btn btn-primary" onclick="rotateSecret('${secretName}')">Rotate Now</button>
+                <button type="button" class="btn btn-warning" onclick="cancelRotation('${secretName}')">Cancel Rotation</button>
+            `);
+        } else {
+            modalFooter.insertAdjacentHTML('afterbegin', `
+                <button type="button" class="btn btn-primary" onclick="showEnableRotationModal('${secretName}')">Enable Rotation</button>
+            `);
+        }
+
         showModal('view-secret-modal');
     } catch (error) {
         console.error('Error viewing secret:', error);
         showNotification('Failed to view secret: ' + error.message, 'error');
+    }
+}
+
+async function rotateSecret(secretName) {
+    if (!confirm(`Are you sure you want to rotate the secret "${secretName}" now?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.1',
+                'X-Amz-Target': 'secretsmanager.RotateSecret'
+            },
+            body: JSON.stringify({
+                SecretId: secretName
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.message || 'Failed to rotate secret');
+        }
+
+        showNotification(`Secret "${secretName}" rotated successfully`, 'success');
+        closeModal('view-secret-modal');
+        loadSecrets();
+    } catch (error) {
+        console.error('Error rotating secret:', error);
+        showNotification('Failed to rotate secret: ' + error.message, 'error');
+    }
+}
+
+async function cancelRotation(secretName) {
+    if (!confirm(`Are you sure you want to cancel rotation for "${secretName}"?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.1',
+                'X-Amz-Target': 'secretsmanager.CancelRotateSecret'
+            },
+            body: JSON.stringify({
+                SecretId: secretName
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.message || 'Failed to cancel rotation');
+        }
+
+        showNotification(`Rotation cancelled for "${secretName}"`, 'success');
+        closeModal('view-secret-modal');
+        loadSecrets();
+    } catch (error) {
+        console.error('Error cancelling rotation:', error);
+        showNotification('Failed to cancel rotation: ' + error.message, 'error');
+    }
+}
+
+function showEnableRotationModal(secretName) {
+    // For simplicity, we'll use a prompt. In a real implementation, you'd have a proper modal
+    const lambdaArn = prompt('Enter Lambda ARN for rotation:');
+    if (!lambdaArn) return;
+
+    const rotationRules = prompt('Enter rotation rules as JSON (optional):', '{}');
+    if (rotationRules === null) return;
+
+    enableRotation(secretName, lambdaArn, rotationRules);
+}
+
+async function enableRotation(secretName, lambdaArn, rotationRules) {
+    try {
+        const payload = {
+            SecretId: secretName,
+            RotationLambdaARN: lambdaArn
+        };
+
+        if (rotationRules && rotationRules !== '{}') {
+            payload.RotationRules = JSON.parse(rotationRules);
+        }
+
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.1',
+                'X-Amz-Target': 'secretsmanager.UpdateSecretRotation'
+            },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.message || 'Failed to enable rotation');
+        }
+
+        showNotification(`Rotation enabled for "${secretName}"`, 'success');
+        closeModal('view-secret-modal');
+        loadSecrets();
+    } catch (error) {
+        console.error('Error enabling rotation:', error);
+        showNotification('Failed to enable rotation: ' + error.message, 'error');
     }
 }
 
