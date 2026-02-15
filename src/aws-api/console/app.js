@@ -6,6 +6,7 @@ const API_BASE = '/';
 let currentBucket = '';
 let currentPrefix = '';
 let currentSecretName = null;
+let currentRotationSecretName = '';
 
 // S3 credentials - adjust these for your environment
 const S3_CONFIG = {
@@ -5152,18 +5153,18 @@ async function viewSecret(secretName) {
         let rotationHtml = '';
         if (data.RotationEnabled) {
             rotationHtml += `
-                <div class="detail-row">
+                <div class="detail-row rotation-info">
                     <div class="detail-label">Rotation Status:</div>
                     <div class="detail-value"><span style="color: var(--success);">${data.RotationStatus || 'Enabled'}</span></div>
                 </div>
-                <div class="detail-row">
+                <div class="detail-row rotation-info">
                     <div class="detail-label">Rotation Lambda:</div>
                     <div class="detail-value"><code>${data.RotationLambdaARN || 'N/A'}</code></div>
                 </div>
             `;
             if (data.LastRotatedDate) {
                 rotationHtml += `
-                    <div class="detail-row">
+                    <div class="detail-row rotation-info">
                         <div class="detail-label">Last Rotated:</div>
                         <div class="detail-value">${new Date(data.LastRotatedDate * 1000).toLocaleString()}</div>
                     </div>
@@ -5171,7 +5172,7 @@ async function viewSecret(secretName) {
             }
         } else {
             rotationHtml = `
-                <div class="detail-row">
+                <div class="detail-row rotation-info">
                     <div class="detail-label">Rotation Status:</div>
                     <div class="detail-value"><span style="color: var(--text-secondary);">Disabled</span></div>
                 </div>
@@ -5180,6 +5181,11 @@ async function viewSecret(secretName) {
 
         // Insert rotation info after Last Accessed
         const detailsContent = document.getElementById('secret-details-content');
+
+        // CRITICAL FIX: Remove ALL existing rotation rows before inserting new ones
+        const existingRotationRows = detailsContent.querySelectorAll('.rotation-info');
+        existingRotationRows.forEach(row => row.remove());
+
         const accessedRow = detailsContent.querySelector('.detail-row:nth-child(6)');
         if (accessedRow) {
             accessedRow.insertAdjacentHTML('afterend', rotationHtml);
@@ -5207,8 +5213,8 @@ async function viewSecret(secretName) {
 
         if (data.RotationEnabled) {
             modalFooter.insertAdjacentHTML('afterbegin', `
-                <button type="button" class="btn btn-primary" onclick="rotateSecret('${secretName}')">Rotate Now</button>
-                <button type="button" class="btn btn-warning" onclick="cancelRotation('${secretName}')">Cancel Rotation</button>
+                <button type="button" class="btn btn-primary" onclick="showRotateSecretModal('${secretName}')">Rotate Now</button>
+                <button type="button" class="btn btn-warning" onclick="showCancelRotationModal('${secretName}')">Cancel Rotation</button>
             `);
         } else {
             modalFooter.insertAdjacentHTML('afterbegin', `
@@ -5223,10 +5229,69 @@ async function viewSecret(secretName) {
     }
 }
 
-async function rotateSecret(secretName) {
-    if (!confirm(`Are you sure you want to rotate the secret "${secretName}" now?`)) {
-        return;
+
+function showEnableRotationModal(secretName) {
+    currentRotationSecretName = secretName;
+    document.getElementById('enable-rotation-secret-name').value = secretName;
+    document.getElementById('enable-rotation-lambda-arn').value = '';
+    document.getElementById('enable-rotation-days').value = '30';
+    closeModal('view-secret-modal'); // Close the parent modal first otherwise rotation windows pops below. cheap fix
+    showModal('enable-rotation-modal');
+}
+
+// Handle enable rotation form submission
+async function confirmEnableRotation(event) {
+    event.preventDefault();
+
+    const secretName = currentRotationSecretName;
+    const lambdaArn = document.getElementById('enable-rotation-lambda-arn').value;
+    const days = parseInt(document.getElementById('enable-rotation-days').value);
+
+    try {
+        const payload = {
+            SecretId: secretName,
+            RotationLambdaARN: lambdaArn,
+            RotationRules: {
+                AutomaticallyAfterDays: days
+            }
+        };
+
+        const response = await fetch(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-amz-json-1.1',
+                'X-Amz-Target': 'secretsmanager.UpdateSecretRotation'
+            },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.message || 'Failed to enable rotation');
+        }
+
+        showNotification(`Rotation enabled for "${secretName}"`, 'success');
+        closeModal('enable-rotation-modal');
+        closeModal('view-secret-modal');
+        loadSecrets();
+    } catch (error) {
+        console.error('Error enabling rotation:', error);
+        showNotification('Failed to enable rotation: ' + error.message, 'error');
     }
+}
+
+// Show rotate secret confirmation modal
+function showRotateSecretModal(secretName) {
+    currentRotationSecretName = secretName;
+    document.getElementById('rotate-secret-name').textContent = secretName;
+    closeModal('view-secret-modal'); // Close the parent modal first otherwise rotation windows pops below. cheap fix
+    showModal('rotate-secret-modal');
+}
+
+// Confirm and rotate secret
+async function confirmRotateSecret() {
+    const secretName = currentRotationSecretName;
 
     try {
         const response = await fetch(API_BASE, {
@@ -5247,6 +5312,7 @@ async function rotateSecret(secretName) {
         }
 
         showNotification(`Secret "${secretName}" rotated successfully`, 'success');
+        closeModal('rotate-secret-modal');
         closeModal('view-secret-modal');
         loadSecrets();
     } catch (error) {
@@ -5255,10 +5321,17 @@ async function rotateSecret(secretName) {
     }
 }
 
-async function cancelRotation(secretName) {
-    if (!confirm(`Are you sure you want to cancel rotation for "${secretName}"?`)) {
-        return;
-    }
+// Show cancel rotation confirmation modal
+function showCancelRotationModal(secretName) {
+    currentRotationSecretName = secretName;
+    document.getElementById('cancel-rotation-secret-name').textContent = secretName;
+    closeModal('view-secret-modal'); // Close the parent modal first otherwise rotation windows pops below. cheap fix
+    showModal('cancel-rotation-modal');
+}
+
+// Confirm and cancel rotation
+async function confirmCancelRotation() {
+    const secretName = currentRotationSecretName;
 
     try {
         const response = await fetch(API_BASE, {
@@ -5278,24 +5351,14 @@ async function cancelRotation(secretName) {
             throw new Error(data.message || 'Failed to cancel rotation');
         }
 
-        showNotification(`Rotation cancelled for "${secretName}"`, 'success');
+        showNotification(`Rotation disabled for "${secretName}"`, 'success');
+        closeModal('cancel-rotation-modal');
         closeModal('view-secret-modal');
         loadSecrets();
     } catch (error) {
         console.error('Error cancelling rotation:', error);
         showNotification('Failed to cancel rotation: ' + error.message, 'error');
     }
-}
-
-function showEnableRotationModal(secretName) {
-    // For simplicity, we'll use a prompt. In a real implementation, you'd have a proper modal
-    const lambdaArn = prompt('Enter Lambda ARN for rotation:');
-    if (!lambdaArn) return;
-
-    const rotationRules = prompt('Enter rotation rules as JSON (optional):', '{}');
-    if (rotationRules === null) return;
-
-    enableRotation(secretName, lambdaArn, rotationRules);
 }
 
 async function enableRotation(secretName, lambdaArn, rotationRules) {

@@ -3042,6 +3042,13 @@ def handle_request():
         "ListSecrets": proxy_to_secretsmanager,
         "DeleteSecret": proxy_to_secretsmanager,
         "RestoreSecret": proxy_to_secretsmanager,
+        "RotateSecret": proxy_to_secretsmanager,
+        "CancelRotateSecret": proxy_to_secretsmanager,
+        "UpdateSecretRotation": proxy_to_secretsmanager,
+        "GetRotationPolicy": proxy_to_secretsmanager,
+        "PutResourcePolicy": proxy_to_secretsmanager,
+        "GetResourcePolicy": proxy_to_secretsmanager,
+        "DeleteResourcePolicy": proxy_to_secretsmanager,
     }
     if operation in secretsmanager_handlers:
         logger.info(f"Routing to SecretsManager handler: Operation={operation}")
