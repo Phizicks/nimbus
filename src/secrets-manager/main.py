@@ -403,7 +403,7 @@ class SecretsManagerDatabase:
 
             rotation_rules = (
                 json.loads(secret["rotation_rules"])
-                if secret.get("rotation_rules")
+                if "rotation_rules" in secret
                 else {}
             )
             days = rotation_rules.get("AutomaticallyAfterDays", 0)
@@ -1454,9 +1454,6 @@ class SecretsManagerDatabase:
         self, secret_name: str, rotation_lambda_arn: str, rotation_rules: Dict
     ) -> Dict:
         """Enable rotation for a secret"""
-        logger.critical(
-            f"DB.update_secret_rotation called: secret_name={secret_name}, lambda={rotation_lambda_arn}, rules={rotation_rules}"
-        )
         # Validate parameters
         if not secret_name:
             raise InvalidParameterException("Secret name is required")
@@ -1551,9 +1548,6 @@ class SecretsManagerDatabase:
         self, secret_name: str, client_request_token: Optional[str] = None
     ) -> Dict:
         """Rotate a secret immediately"""
-        # For now, just simulate rotation by creating a new version with rotated value
-        # In a real implementation, this would invoke the Lambda function
-
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
@@ -1573,13 +1567,13 @@ class SecretsManagerDatabase:
 
             # Check if rotation is configured before proceeding
             rotation_enabled = (
-                secret.get("rotation_enabled")
-                if "rotation_enabled" in secret
+                bool(secret["rotation_enabled"])
+                if "rotation_enabled" in secret.keys()
                 else False
             )
             rotation_lambda_arn = (
-                secret.get("rotation_lambda_arn")
-                if "rotation_lambda_arn" in secret
+                secret["rotation_lambda_arn"]
+                if "rotation_lambda_arn" in secret.keys()
                 else None
             )
 
@@ -1609,13 +1603,16 @@ class SecretsManagerDatabase:
 
             # Simulate rotation: append timestamp to indicate rotation
             # In reality, this would be done by the Lambda function
-            try:
-                secret_data = json.loads(current_value)
-                secret_data["_rotated_at"] = int(time.time())
-                new_value = json.dumps(secret_data)
-            except json.JSONDecodeError:
-                # If not JSON, just add a suffix
-                new_value = current_value + f"_rotated_{int(time.time())}"
+            #
+            # try:
+            #     secret_data = json.loads(current_value)
+            #     secret_data["_rotated_at"] = int(time.time())
+            #     new_value = json.dumps(secret_data)
+            # except json.JSONDecodeError:
+            #     # If not JSON, just add a suffix
+            #     new_value = current_value + f"_rotated_{int(time.time())}"
+
+            # lambda rotation function invocation
 
             # Create new version
             now = int(time.time())
@@ -1849,38 +1846,25 @@ class SecretsManager:
             rotation_rules=rotation_rules,
         )
 
-    def cancel_rotate_secret(self, params: Dict) -> Dict:
-        """Cancel secret rotation"""
-        secret_id = params.get("SecretId")
-        if not secret_id:
-            raise InvalidParameterException("SecretId is required")
-
-        return self.db.cancel_rotate_secret(secret_name=secret_id)
-
     def rotate_secret(self, params: Dict) -> Dict:
         """Rotate secret"""
         secret_id = params.get("SecretId")
         if not secret_id:
             raise InvalidParameterException("SecretId is required")
 
-        # Check if rotation configuration parameters are provided
-        rotation_lambda_arn = params.get("RotationLambdaARN")
-        rotation_rules = params.get("RotationRules")
+        # Safely extract optional AWS-style fields
+        rotation_lambda_arn = params.get("RotationLambdaARN", None)
+        rotation_rules = params.get("RotationRules", None)
 
-        logger.critical(f"params: {params}")
-        # If configuration parameters are provided, update rotation settings first
+        # If rotation configuration provided, update it before rotating
         if rotation_lambda_arn or rotation_rules:
-            self.update_secret_rotation(
-                {
-                    "SecretId": secret_id,
-                    "RotationLambdaARN": rotation_lambda_arn,
-                    "RotationRules": rotation_rules or {},
-                }
+            self.db.update_secret_rotation(
+                secret_name=secret_id,
+                rotation_lambda_arn=rotation_lambda_arn,
+                rotation_rules=rotation_rules or {},
             )
 
-        logger.info(
-            f"secret_id={secret_id} rotation_lambda_arn={rotation_lambda_arn} rotation_rules={rotation_rules}"
-        )
+        # Now we perform rotation as rotation is configured, we can proceed with the actual rotation process.
         return self.db.rotate_secret(
             secret_name=secret_id, client_request_token=params.get("ClientRequestToken")
         )
