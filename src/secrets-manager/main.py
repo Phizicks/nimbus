@@ -20,6 +20,8 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 import secrets
+import urllib.request
+import urllib.error
 
 logger = logging.getLogger(__name__)
 
@@ -1450,11 +1452,10 @@ class SecretsManagerDatabase:
             arn = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT_ID}:secret:{secret_name}"
             return {"ARN": arn, "Name": secret_name}
 
-    def update_secret_rotation(
+    def configure_rotation(
         self, secret_name: str, rotation_lambda_arn: str, rotation_rules: Dict
     ) -> Dict:
-        """Enable rotation for a secret"""
-        # Validate parameters
+        """Configure rotation for a secret"""
         if not secret_name:
             raise InvalidParameterException("Secret name is required")
         if not rotation_lambda_arn:
@@ -1486,7 +1487,7 @@ class SecretsManagerDatabase:
             conn.commit()
 
             arn = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT_ID}:secret:{secret_name}"
-            return {"ARN": arn, "Name": secret_name, "VersionId": None}
+            return {"ARN": arn, "Name": secret_name}
 
     def cancel_rotate_secret(self, secret_name: str) -> Dict:
         """Cancel rotation for a secret"""
@@ -1580,7 +1581,7 @@ class SecretsManagerDatabase:
             if not rotation_enabled or not rotation_lambda_arn:
                 raise InvalidRequestException(
                     f"Secret '{secret_name}' is not configured for rotation. "
-                    "Use UpdateSecretRotation to configure rotation first."
+                    "Use rotate-secret with RotationLambdaARN and RotationRules to configure rotation first."
                 )
 
             # Get current secret value
@@ -1601,18 +1602,33 @@ class SecretsManagerDatabase:
             # Decode current value
             current_value = self._decode_secret(current_version["secret_string"])
 
-            # Simulate rotation: append timestamp to indicate rotation
-            # In reality, this would be done by the Lambda function
-            #
-            # try:
-            #     secret_data = json.loads(current_value)
-            #     secret_data["_rotated_at"] = int(time.time())
-            #     new_value = json.dumps(secret_data)
-            # except json.JSONDecodeError:
-            #     # If not JSON, just add a suffix
-            #     new_value = current_value + f"_rotated_{int(time.time())}"
+            # Invoke Lambda rotation function
+            try:
+                client_request_token = self._invoke_rotation_lambda(
+                    rotation_lambda_arn, secret_name, current_value
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to invoke rotation Lambda for secret '{secret_name}': {e}"
+                )
+                raise InvalidRequestException(f"Rotation failed: {str(e)}")
 
-            # lambda rotation function invocation
+            # Get the AWSPENDING version created by the Lambda
+            cursor.execute(
+                """
+                SELECT secret_string FROM secret_versions
+                WHERE secret_name = ? AND version_id = ?
+                """,
+                (secret_name, client_request_token),
+            )
+            pending_version = cursor.fetchone()
+
+            if not pending_version:
+                raise InvalidRequestException(
+                    f"Rotation Lambda did not create AWSPENDING version with token '{client_request_token}'."
+                )
+
+            new_value = self._decode_secret(pending_version["secret_string"])
 
             # Create new version
             now = int(time.time())
@@ -1628,21 +1644,14 @@ class SecretsManagerDatabase:
                 (json.dumps(["AWSPREVIOUS"]), secret_name, '%"AWSCURRENT"%'),
             )
 
-            # Create new AWSCURRENT version
-            encoded_value = self._encode_secret(new_value)
+            # Move AWSPENDING to AWSCURRENT
             cursor.execute(
                 """
-                INSERT INTO secret_versions
-                (secret_name, version_id, secret_string, version_stages, created_date)
-                VALUES (?, ?, ?, ?, ?)
+                UPDATE secret_versions
+                SET version_stages = ?
+                WHERE secret_name = ? AND version_id = ?
                 """,
-                (
-                    secret_name,
-                    version_id,
-                    encoded_value,
-                    json.dumps(["AWSCURRENT"]),
-                    now,
-                ),
+                (json.dumps(["AWSCURRENT"]), secret_name, client_request_token),
             )
 
             # Update rotation metadata
@@ -1658,21 +1667,97 @@ class SecretsManagerDatabase:
 
             conn.commit()
 
-            arn = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT_ID}:secret:{secret_name}-{version_id[:6]}"
+            arn = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT_ID}:secret:{secret_name}-{client_request_token[:6]}"
             return {
                 "ARN": arn,
                 "Name": secret_name,
-                "VersionId": version_id,
+                "VersionId": client_request_token,
             }
+
+    def _invoke_rotation_lambda(
+        self, lambda_arn: str, secret_name: str, current_value: str
+    ) -> str:
+        """Invoke the rotation Lambda function and return the new secret value"""
+        # Extract function name from ARN
+        # ARN format: arn:aws:lambda:region:account:function:function-name
+        try:
+            arn_parts = lambda_arn.split(":")
+            if len(arn_parts) >= 6 and arn_parts[2] == "lambda": # lame, yeah I know
+                function_name = arn_parts[5]
+            else:
+                raise ValueError(f"Invalid Lambda ARN format: {lambda_arn}")
+        except (IndexError, ValueError) as e:
+            raise InvalidRequestException(f"Invalid rotation Lambda ARN: {lambda_arn}")
+
+        # Generate a client request token for this rotation
+        client_request_token = str(uuid.uuid4())
+
+        # Prepare the payload for the Lambda function following AWS rotation event format
+        payload = {
+            "SecretId": secret_name,
+            "ClientRequestToken": client_request_token,
+            "Step": "createSecret",
+        }
+
+        # Prepare the request
+        lambda_service_url = "http://api:4566"
+        url = f"{lambda_service_url}/2015-03-31/functions/{function_name}/invocations"
+        data = json.dumps(payload).encode("utf-8")
+
+        # Create request
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                "Content-Length": str(len(data)),
+            },
+            method="POST",
+        )
+
+        try:
+            # Make the HTTP request
+            with urllib.request.urlopen(req, timeout=30) as response:
+                response_data = response.read().decode("utf-8")
+                # The Lambda function doesn't return the secret value directly
+                # It creates an AWSPENDING version, so we return the token to identify it.. what a pain
+                return client_request_token
+        except urllib.error.HTTPError as e:
+            error_msg = f"Lambda invocation failed with HTTP {e.code}: {e.read().decode('utf-8')}"
+            logger.error(error_msg)
+            raise InvalidRequestException(
+                f"Rotation Lambda invocation failed: {error_msg}"
+            )
+        except urllib.error.URLError as e:
+            error_msg = f"Failed to connect to Lambda service: {str(e)}"
+            logger.error(error_msg)
+            raise InvalidRequestException(
+                f"Rotation Lambda invocation failed: {error_msg}"
+            )
+        except Exception as e:
+            error_msg = f"Unexpected error during Lambda invocation: {str(e)}"
+            logger.error(error_msg)
+            raise InvalidRequestException(
+                f"Rotation Lambda invocation failed: {error_msg}"
+            )
 
 
 class SecretsManager:
     """Container for Secrets Manager operations"""
 
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
     def __init__(self):
         """Initialize Secrets Manager container"""
-        self.db = SecretsManagerDatabase()
-        logger.info("SecretsManagerContainer initialized")
+        if not hasattr(self, "_initialized"):
+            self.db = SecretsManagerDatabase()
+            logger.info("SecretsManagerContainer initialized")
+            self._initialized = True
 
     def create_secret(self, params: Dict) -> Dict:
         """Create a new secret"""
@@ -1828,46 +1913,41 @@ class SecretsManager:
 
         return self.db.delete_resource_policy(secret_name=secret_id)
 
-    def update_secret_rotation(self, params: Dict) -> Dict:
-        """Update secret rotation"""
-        secret_id = params.get("SecretId")
-        if not secret_id:
-            raise InvalidParameterException("SecretId is required")
-
-        rotation_lambda_arn = params.get("RotationLambdaARN")
-        if not rotation_lambda_arn:
-            raise InvalidParameterException("RotationLambdaARN is required")
-
-        rotation_rules = params.get("RotationRules", {})
-
-        return self.db.update_secret_rotation(
-            secret_name=secret_id,
-            rotation_lambda_arn=rotation_lambda_arn,
-            rotation_rules=rotation_rules,
-        )
-
     def rotate_secret(self, params: Dict) -> Dict:
         """Rotate secret"""
         secret_id = params.get("SecretId")
         if not secret_id:
             raise InvalidParameterException("SecretId is required")
 
-        # Safely extract optional AWS-style fields
-        rotation_lambda_arn = params.get("RotationLambdaARN", None)
-        rotation_rules = params.get("RotationRules", None)
+        # Check if rotation configuration parameters are provided
+        rotation_lambda_arn = params.get("RotationLambdaARN")
+        rotation_rules = params.get("RotationRules")
 
-        # If rotation configuration provided, update it before rotating
+        # If rotation configuration is provided, configure it first
         if rotation_lambda_arn or rotation_rules:
-            self.db.update_secret_rotation(
+            if not rotation_lambda_arn:
+                raise InvalidParameterException(
+                    "RotationLambdaARN is required when configuring rotation"
+                )
+            if not rotation_rules:
+                rotation_rules = {}
+            self.db.configure_rotation(
                 secret_name=secret_id,
                 rotation_lambda_arn=rotation_lambda_arn,
-                rotation_rules=rotation_rules or {},
+                rotation_rules=rotation_rules,
             )
 
-        # Now we perform rotation as rotation is configured, we can proceed with the actual rotation process.
         return self.db.rotate_secret(
             secret_name=secret_id, client_request_token=params.get("ClientRequestToken")
         )
+
+    def cancel_rotate_secret(self, params: Dict) -> Dict:
+        """Cancel rotation for a secret"""
+        secret_id = params.get("SecretId")
+        if not secret_id:
+            raise InvalidParameterException("SecretId is required")
+
+        return self.db.cancel_rotate_secret(secret_name=secret_id)
 
     def get_rotation_policy(self, params: Dict) -> Dict:
         """Get rotation policy"""
@@ -1876,17 +1956,6 @@ class SecretsManager:
             raise InvalidParameterException("SecretId is required")
 
         return self.db.get_rotation_policy(secret_name=secret_id)
-
-
-# Flask routes
-_secrets_manager = None
-
-
-def get_secrets_manager():
-    global _secrets_manager
-    if _secrets_manager is None:
-        _secrets_manager = SecretsManager()
-    return _secrets_manager
 
 
 def error_response(error_type: str, message: str) -> Dict:
@@ -1926,74 +1995,70 @@ def handle_request():
             )
 
         logger.info(f"Secrets Manager operation: {operation}")
-
+        sm = SecretsManager()
         # Route to appropriate handler
         if operation == "CreateSecret":
-            result = get_secrets_manager().create_secret(params)
+            result = sm.create_secret(params)
             return jsonify(result), 200
 
         elif operation == "GetSecretValue":
-            result = get_secrets_manager().get_secret_value(params)
+            result = sm.get_secret_value(params)
             return jsonify(result), 200
 
         elif operation == "UpdateSecret":
-            result = get_secrets_manager().update_secret(params)
+            result = sm.update_secret(params)
             return jsonify(result), 200
 
         elif operation == "UpdateSecretVersionStage":
-            result = get_secrets_manager().update_secret_version_stage(params)
+            result = sm.update_secret_version_stage(params)
             return jsonify(result), 200
 
         elif operation == "DeleteSecret":
-            result = get_secrets_manager().delete_secret(params)
+            result = sm.delete_secret(params)
             return jsonify(result), 200
 
         elif operation == "RestoreSecret":
-            result = get_secrets_manager().restore_secret(params)
+            result = sm.restore_secret(params)
             return jsonify(result), 200
 
         elif operation == "ListSecrets":
-            result = get_secrets_manager().list_secrets(params)
+            result = sm.list_secrets(params)
             return jsonify(result), 200
 
         elif operation == "DescribeSecret":
-            result = get_secrets_manager().describe_secret(params)
+            result = sm.describe_secret(params)
             return jsonify(result), 200
 
         elif operation == "ListSecretVersionIds":
-            result = get_secrets_manager().list_secret_version_ids(params)
+            result = sm.list_secret_version_ids(params)
             return jsonify(result), 200
 
         elif operation == "PutSecretValue":
-            result = get_secrets_manager().put_secret_value(params)
+            result = sm.put_secret_value(params)
             return jsonify(result), 200
 
         elif operation == "PutResourcePolicy":
-            result = get_secrets_manager().put_resource_policy(params)
+            result = sm.put_resource_policy(params)
             return jsonify(result), 200
 
         elif operation == "GetResourcePolicy":
-            result = get_secrets_manager().get_resource_policy(params)
+            result = sm.get_resource_policy(params)
             return jsonify(result), 200
 
         elif operation == "DeleteResourcePolicy":
-            result = get_secrets_manager().delete_resource_policy(params)
-            return jsonify(result), 200
-
-        elif operation == "UpdateSecretRotation":
-            result = get_secrets_manager().update_secret_rotation(params)
+            result = sm.delete_resource_policy(params)
             return jsonify(result), 200
 
         elif operation == "CancelRotateSecret":
-            result = get_secrets_manager().cancel_rotate_secret(params)
+            result = sm.cancel_rotate_secret(params)
             return jsonify(result), 200
 
         elif operation == "RotateSecret":
-            result = get_secrets_manager().rotate_secret(params)
+            result = sm.rotate_secret(params)
             return jsonify(result), 200
 
         elif operation == "GetRotationPolicy":
-            result = get_secrets_manager().get_rotation_policy(params)
+            result = sm.get_rotation_policy(params)
             return jsonify(result), 200
 
         else:
