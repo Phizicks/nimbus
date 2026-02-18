@@ -1126,7 +1126,7 @@ class SecretsManagerDatabase:
             cursor = conn.cursor()
 
             cursor.execute(
-                "SELECT * FROM secrets WHERE secret_name = ? AND deleted_date IS NULL",
+                "SELECT * FROM secrets WHERE secret_name = ?", # um, deleted should be visible: AND deleted_date IS NULL",
                 (secret_name,),
             )
             secret = cursor.fetchone()
