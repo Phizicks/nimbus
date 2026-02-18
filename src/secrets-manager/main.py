@@ -1270,6 +1270,7 @@ class SecretsManagerDatabase:
         secret_string: Optional[str] = None,
         secret_binary: Optional[bytes] = None,
         version_stages: Optional[List[str]] = None,
+        client_request_token: Optional[str] = None,
     ) -> Dict:
         """
         Create a new version of a secret or restore a previous version to current.
@@ -1317,9 +1318,11 @@ class SecretsManagerDatabase:
             if not version_stages:
                 version_stages = ["AWSCURRENT"]
 
-            # If AWSCURRENT is in the stages, move it from the old version
+            now = int(time.time())
+            version_id = client_request_token or str(uuid.uuid4())
+
+            # If AWSCURRENT is in the stages, demote the old current version
             if "AWSCURRENT" in version_stages:
-                # Find current AWSCURRENT version
                 cursor.execute(
                     "SELECT version_id, version_stages FROM secret_versions WHERE secret_name = ?",
                     (secret_name,),
@@ -1327,7 +1330,6 @@ class SecretsManagerDatabase:
                 for row in cursor.fetchall():
                     stages = json.loads(row["version_stages"])
                     if "AWSCURRENT" in stages:
-                        # Remove AWSCURRENT and add AWSPREVIOUS
                         stages.remove("AWSCURRENT")
                         if "AWSPREVIOUS" not in stages:
                             stages.append("AWSPREVIOUS")
@@ -1337,10 +1339,6 @@ class SecretsManagerDatabase:
                         )
                         break
 
-            # Create new version
-            now = int(time.time())
-            version_id = str(uuid.uuid4())
-
             # Encode the secret value
             encoded_string = None
             encoded_binary = None
@@ -1349,21 +1347,31 @@ class SecretsManagerDatabase:
             if secret_binary:
                 encoded_binary = secret_binary
 
+            # Upsert — overwrite pre-seeded version if token matches, otherwise insert
             cursor.execute(
-                """
-                INSERT INTO secret_versions
-                (secret_name, version_id, secret_string, secret_binary, version_stages, created_date)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """,
-                (
-                    secret_name,
-                    version_id,
-                    encoded_string,
-                    encoded_binary,
-                    json.dumps(version_stages),
-                    now,
-                ),
+                "SELECT version_id FROM secret_versions WHERE secret_name = ? AND version_id = ?",
+                (secret_name, version_id),
             )
+            existing = cursor.fetchone()
+
+            if existing:
+                cursor.execute(
+                    """
+                    UPDATE secret_versions
+                    SET secret_string = ?, secret_binary = ?, version_stages = ?
+                    WHERE secret_name = ? AND version_id = ?
+                    """,
+                    (encoded_string, encoded_binary, json.dumps(version_stages), secret_name, version_id),
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO secret_versions
+                    (secret_name, version_id, secret_string, secret_binary, version_stages, created_date)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (secret_name, version_id, encoded_string, encoded_binary, json.dumps(version_stages), now),
+                )
 
             # Update last_updated_date
             cursor.execute(
@@ -1679,32 +1687,51 @@ class SecretsManagerDatabase:
     ) -> str:
         """Invoke the rotation Lambda function and return the new secret value"""
         # Extract function name from ARN
-        # ARN format: arn:aws:lambda:region:account:function:function-name
         try:
             arn_parts = lambda_arn.split(":")
-            if len(arn_parts) >= 6 and arn_parts[2] == "lambda": # lame, yeah I know
-                function_name = arn_parts[5]
+            if len(arn_parts) >= 7 and arn_parts[2] == "lambda":
+                function_name = arn_parts[6]
             else:
                 raise ValueError(f"Invalid Lambda ARN format: {lambda_arn}")
-        except (IndexError, ValueError) as e:
+        except (IndexError, ValueError):
             raise InvalidRequestException(f"Invalid rotation Lambda ARN: {lambda_arn}")
 
         # Generate a client request token for this rotation
         client_request_token = str(uuid.uuid4())
 
-        # Prepare the payload for the Lambda function following AWS rotation event format
+        # pre-create the AWSPENDING version in the DB
+        encoded_current_value = self._encode_secret(current_value)
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO secret_versions
+                (secret_name, version_id, secret_string, secret_binary, version_stages, created_date)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    secret_name,
+                    client_request_token,
+                    encoded_current_value,
+                    None,
+                    json.dumps(["AWSPENDING"]),
+                    int(time.time()),
+                ),
+            )
+            conn.commit()
+
+        # Prepare payload for the Lambda rotation event
         payload = {
             "SecretId": secret_name,
             "ClientRequestToken": client_request_token,
             "Step": "createSecret",
         }
 
-        # Prepare the request
         lambda_service_url = "http://api:4566"
         url = f"{lambda_service_url}/2015-03-31/functions/{function_name}/invocations"
         data = json.dumps(payload).encode("utf-8")
 
-        # Create request
         req = urllib.request.Request(
             url,
             data=data,
@@ -1716,30 +1743,22 @@ class SecretsManagerDatabase:
         )
 
         try:
-            # Make the HTTP request
             with urllib.request.urlopen(req, timeout=30) as response:
-                response_data = response.read().decode("utf-8")
-                # The Lambda function doesn't return the secret value directly
-                # It creates an AWSPENDING version, so we return the token to identify it.. what a pain
-                return client_request_token
+                response.read()
+            # The Lambda itself handles updating the pending secret’s value.
+            return client_request_token
         except urllib.error.HTTPError as e:
-            error_msg = f"Lambda invocation failed with HTTP {e.code}: {e.read().decode('utf-8')}"
-            logger.error(error_msg)
-            raise InvalidRequestException(
-                f"Rotation Lambda invocation failed: {error_msg}"
-            )
+            msg = f"Lambda invocation failed with HTTP {e.code}: {e.read().decode('utf-8')}"
+            logger.error(msg)
+            raise InvalidRequestException(msg)
         except urllib.error.URLError as e:
-            error_msg = f"Failed to connect to Lambda service: {str(e)}"
-            logger.error(error_msg)
-            raise InvalidRequestException(
-                f"Rotation Lambda invocation failed: {error_msg}"
-            )
+            msg = f"Failed to connect to Lambda service: {e}"
+            logger.error(msg)
+            raise InvalidRequestException(msg)
         except Exception as e:
-            error_msg = f"Unexpected error during Lambda invocation: {str(e)}"
-            logger.error(error_msg)
-            raise InvalidRequestException(
-                f"Rotation Lambda invocation failed: {error_msg}"
-            )
+            msg = f"Unexpected error during Lambda invocation: {e}"
+            logger.error(msg)
+            raise InvalidRequestException(msg)
 
 
 class SecretsManager:
@@ -1881,6 +1900,7 @@ class SecretsManager:
             secret_string=params.get("SecretString"),
             secret_binary=params.get("SecretBinary"),
             version_stages=params.get("VersionStages"),
+            client_request_token=params.get("ClientRequestToken"),
         )
 
     def put_resource_policy(self, params: Dict) -> Dict:
