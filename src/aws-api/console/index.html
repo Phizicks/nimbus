@@ -246,6 +246,7 @@
                                 <th>Type</th>
                                 <th>Description</th>
                                 <th>Last Modified</th>
+                                <th>Rotation Status</th>
                                 <th>Status</th>
                                 <th>Actions</th>
                             </tr>
@@ -257,6 +258,76 @@
                     <div class="empty-state-icon">🔐</div>
                     <h3>No secrets found</h3>
                     <p>Create your first secret to get started</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Enable Rotation Modal -->
+        <div id="enable-rotation-modal" class="modal">
+            <div class="modal-content" style="max-width: 600px;">
+                <div class="modal-header">Enable Secret Rotation</div>
+                <div class="modal-body">
+                    <form id="enable-rotation-form" onsubmit="confirmEnableRotation(event)">
+                        <div class="form-group">
+                            <label>Secret Name</label>
+                            <input type="text" id="enable-rotation-secret-name" readonly style="background: var(--bg-secondary);">
+                        </div>
+
+                        <div class="form-group">
+                            <label>Lambda Function ARN *</label>
+                            <input type="text" id="enable-rotation-lambda-arn" required
+                                placeholder="arn:aws:lambda:region:account:function:name">
+                            <small style="color: var(--text-secondary); font-size: 12px;">
+                                The Lambda function that will rotate this secret
+                            </small>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Automatically Rotate After (Days) *</label>
+                            <input type="number" id="enable-rotation-days" value="30" min="1" max="365" required>
+                            <small style="color: var(--text-secondary); font-size: 12px;">
+                                How often to automatically rotate this secret (1-365 days)
+                            </small>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="submit" form="enable-rotation-form" class="btn btn-primary">Enable Rotation</button>
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('enable-rotation-modal')">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Rotate Secret Confirmation Modal -->
+        <div id="rotate-secret-modal" class="modal">
+            <div class="modal-content" style="max-width: 500px;">
+                <div class="modal-header">Rotate Secret Now</div>
+                <div class="modal-body">
+                    <p>Are you sure you want to rotate <strong id="rotate-secret-name"></strong> now?</p>
+                    <p style="color: var(--text-secondary); margin-top: 10px;">
+                        This will immediately create a new version of the secret by invoking the rotation Lambda function.
+                    </p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-primary" onclick="confirmRotateSecret()">Rotate Now</button>
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('rotate-secret-modal')">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Cancel Rotation Confirmation Modal -->
+        <div id="cancel-rotation-modal" class="modal">
+            <div class="modal-content" style="max-width: 500px;">
+                <div class="modal-header">Cancel Rotation</div>
+                <div class="modal-body">
+                    <p>Are you sure you want to disable rotation for <strong id="cancel-rotation-secret-name"></strong>?</p>
+                    <p style="color: var(--text-secondary); margin-top: 10px;">
+                        This will turn off automatic rotation. The secret will not be rotated unless you manually enable rotation again.
+                    </p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-danger" onclick="confirmCancelRotation()">Disable Rotation</button>
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('cancel-rotation-modal')">Cancel</button>
                 </div>
             </div>
         </div>

@@ -1226,19 +1226,6 @@ class LogManager:
             resp = requests.post(
                 f"{AWS_API_ENDPOINT}/", json=payload, headers=headers, timeout=5
             )
-
-            # Always append a short record so operator can inspect forward attempts
-            try:
-                logpath = os.path.join(
-                    os.getenv("STORAGE_PATH", "/data"), "aws_api_forward.log"
-                )
-                with open(logpath, "a") as f:
-                    f.write(
-                        f"{datetime.now(timezone.utc).isoformat()} POST -> {AWS_API_ENDPOINT} status={resp.status_code} group={group_name} stream={stream_name} events={len(events)}\n"
-                    )
-            except Exception:
-                pass
-
             if resp.status_code in [200, 201]:
                 try:
                     j = resp.json()
