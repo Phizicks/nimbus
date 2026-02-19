@@ -3579,7 +3579,7 @@ def runtime_next():
             f"Dispatched invocation - Container:{C.MAGENTA}{container_id}{C.RESET} "
             f"Function:{function_name} RequestID:{request_id}"
         )
-        logger.critical(f'Response for invocation/next: {response}')
+        logger.debug(f'Response for invocation/next: {response}')
         return response, 200
     except Exception as e:
         logger.critical(f'Unhandled Exception - {e}', exc_info=True)

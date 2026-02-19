@@ -2762,19 +2762,19 @@ def handle_request():
 
     # If this is an SQS API call (via X-Amz-Target or Action), proxy it to the SQS container
     SQS_ACTIONS = {
-        "CreateQueue",
-        "DeleteQueue",
-        "GetQueueUrl",
-        "ListQueues",
-        "SendMessage",
-        "SendMessageBatch",
-        "ReceiveMessage",
-        "DeleteMessage",
-        "DeleteMessageBatch",
-        "ChangeMessageVisibility",
-        "GetQueueAttributes",
-        "SetQueueAttributes",
-        "PurgeQueue",
+        "AmazonSQS.CreateQueue",
+        "AmazonSQS.DeleteQueue",
+        "AmazonSQS.GetQueueUrl",
+        "AmazonSQS.ListQueues",
+        "AmazonSQS.SendMessage",
+        "AmazonSQS.SendMessageBatch",
+        "AmazonSQS.ReceiveMessage",
+        "AmazonSQS.DeleteMessage",
+        "AmazonSQS.DeleteMessageBatch",
+        "AmazonSQS.ChangeMessageVisibility",
+        "AmazonSQS.GetQueueAttributes",
+        "AmazonSQS.SetQueueAttributes",
+        "AmazonSQS.PurgeQueue",
     }
 
     if action in SQS_ACTIONS:
@@ -2846,41 +2846,41 @@ def handle_request():
 
     # DynamoDB operations
     DYNAMODB_ACTIONS = {
-        "CreateTable",
-        "DescribeTable",
-        "ListTables",
-        "DeleteTable",
-        "UpdateTable",
-        "PutItem",
-        "GetItem",
-        "UpdateItem",
-        "DeleteItem",
-        "BatchWriteItem",
-        "BatchGetItem",
-        "Query",
-        "Scan",
-        "CreateGlobalSecondaryIndex",
-        "UpdateGlobalSecondaryIndex",
-        "DescribeTimeToLive",
-        "UpdateTimeToLive",
-        "TagResource",
-        "UntagResource",
-        "ListTagsOfResource",
-        "CreateBackup",
-        "DescribeBackup",
-        "ListBackups",
-        "DeleteBackup",
-        "DescribeContinuousBackups",
-        "UpdateContinuousBackups",
-        "ListStreams",
-        "DescribeStream",
-        "GetShardIterator",
-        "GetRecords",
-        "TransactWriteItems",
-        "TransactGetItems",
+        "DynamoDB_20120810.CreateTable",
+        "DynamoDB_20120810.DescribeTable",
+        "DynamoDB_20120810.ListTables",
+        "DynamoDB_20120810.DeleteTable",
+        "DynamoDB_20120810.UpdateTable",
+        "DynamoDB_20120810.PutItem",
+        "DynamoDB_20120810.GetItem",
+        "DynamoDB_20120810.UpdateItem",
+        "DynamoDB_20120810.DeleteItem",
+        "DynamoDB_20120810.BatchWriteItem",
+        "DynamoDB_20120810.BatchGetItem",
+        "DynamoDB_20120810.Query",
+        "DynamoDB_20120810.Scan",
+        "DynamoDB_20120810.CreateGlobalSecondaryIndex",
+        "DynamoDB_20120810.UpdateGlobalSecondaryIndex",
+        "DynamoDB_20120810.DescribeTimeToLive",
+        "DynamoDB_20120810.UpdateTimeToLive",
+        "DynamoDB_20120810.TagResource",
+        "DynamoDB_20120810.UntagResource",
+        "DynamoDB_20120810.ListTagsOfResource",
+        "DynamoDB_20120810.CreateBackup",
+        "DynamoDB_20120810.DescribeBackup",
+        "DynamoDB_20120810.ListBackups",
+        "DynamoDB_20120810.DeleteBackup",
+        "DynamoDB_20120810.DescribeContinuousBackups",
+        "DynamoDB_20120810.UpdateContinuousBackups",
+        "DynamoDB_20120810.ListStreams",
+        "DynamoDB_20120810.DescribeStream",
+        "DynamoDB_20120810.GetShardIterator",
+        "DynamoDB_20120810.GetRecords",
+        "DynamoDB_20120810.TransactWriteItems",
+        "DynamoDB_20120810.TransactGetItems",
     }
 
-    if operation in DYNAMODB_ACTIONS:
+    if action in DYNAMODB_ACTIONS:
         # Special-case CreateTable to enforce vnode-based table
         if operation == "CreateTable":
             data = get_request_data()
@@ -2922,7 +2922,7 @@ def handle_request():
 
     # SSM Parameter
     try:
-        if operation == "PutParameter":
+        if action == "AmazonSSM.PutParameter":
             result = ssm.put_parameter(
                 name=str(data["Name"]),
                 value=str(data["Value"]),
@@ -2936,21 +2936,21 @@ def handle_request():
             )
             return jsonify(result)
 
-        elif operation == "GetParameter":
+        elif action == "AmazonSSM.GetParameter":
             result = ssm.get_parameter(
                 name=str(data["Name"]),
                 with_decryption=bool(data.get("WithDecryption", False)),
             )
             return jsonify(result)
 
-        elif operation == "GetParameters":
+        elif action == "AmazonSSM.GetParameters":
             result = ssm.get_parameters(
                 names=data["Names"],
                 with_decryption=bool(data.get("WithDecryption", False)),
             )
             return jsonify(result)
 
-        elif operation == "GetParametersByPath":
+        elif action == "AmazonSSM.GetParametersByPath":
             result = ssm.get_parameters_by_path(
                 path=str(data["Path"]),
                 recursive=bool(data.get("Recursive", False)),
@@ -2959,21 +2959,21 @@ def handle_request():
             )
             return jsonify(result)
 
-        elif operation == "DeleteParameter":
+        elif action == "AmazonSSM.DeleteParameter":
             result = ssm.delete_parameter(name=str(data["Name"]))
             return jsonify(result)
 
-        elif operation == "DescribeParameters":
+        elif action == "AmazonSSM.DescribeParameters":
             result = ssm.describe_parameters(
                 filters=data.get("Filters"), max_results=int(data.get("MaxResults", 50))
             )
             return jsonify(result)
 
-        elif operation == "ListTagsForResource":
+        elif action == "AmazonSSM.ListTagsForResource":
             result = ssm.get_parameter_tags(parameter_name=data["ResourceId"])
             return jsonify(result)
 
-        elif operation == "GetParameterHistory":
+        elif action == "AmazonSSM.GetParameterHistory":
             result = ssm.get_parameter_history(
                 name=str(data["Name"]),
                 with_decryption=bool(data.get("WithDecryption", False)),
@@ -2981,7 +2981,7 @@ def handle_request():
             )
             return jsonify(result)
     except ValueError as e:
-        logger.critical(f"SSM ValueError: {data} Exception:{e}")
+        logger.info(f"SSM ValueError: {data} Exception:{e}")
         return (
             jsonify(
                 {
@@ -3000,24 +3000,24 @@ def handle_request():
         return jsonify({"__type": "InternalServerError", "message": str(e)}), 500
 
     ecr_handlers = {
-        "CreateRepository": create_repository,
-        "DeleteRepository": delete_repository,
-        "DescribeRepositories": describe_repositories,
-        "ListImages": list_images,
-        "BatchGetImage": batch_get_image,
-        "PutImage": put_image,
-        "BatchDeleteImage": batch_delete_image,
-        "GetAuthorizationToken": get_authorization_token,
-        "DescribeImages": describe_images,
-        "InitiateLayerUpload": initiate_layer_upload,
-        "UploadLayerPart": upload_layer_part,
-        "CompleteLayerUpload": complete_layer_upload,
+        "AmazonEC2ContainerRegistry_V20150921.CreateRepository": create_repository,
+        "AmazonEC2ContainerRegistry_V20150921.DeleteRepository": delete_repository,
+        "AmazonEC2ContainerRegistry_V20150921.DescribeRepositories": describe_repositories,
+        "AmazonEC2ContainerRegistry_V20150921.ListImages": list_images,
+        "AmazonEC2ContainerRegistry_V20150921.BatchGetImage": batch_get_image,
+        "AmazonEC2ContainerRegistry_V20150921.PutImage": put_image,
+        "AmazonEC2ContainerRegistry_V20150921.BatchDeleteImage": batch_delete_image,
+        "AmazonEC2ContainerRegistry_V20150921.GetAuthorizationToken": get_authorization_token,
+        "AmazonEC2ContainerRegistry_V20150921.DescribeImages": describe_images,
+        "AmazonEC2ContainerRegistry_V20150921.InitiateLayerUpload": initiate_layer_upload,
+        "AmazonEC2ContainerRegistry_V20150921.UploadLayerPart": upload_layer_part,
+        "AmazonEC2ContainerRegistry_V20150921.CompleteLayerUpload": complete_layer_upload,
     }
-    if operation in ecr_handlers:
+    if action in ecr_handlers:
         # This is an ECR operation
         logger.info(f"Routing to ECR handler: Operation={operation}")
 
-        handler = ecr_handlers.get(operation)
+        handler = ecr_handlers.get(action)
         if handler:
             return handler()
 
@@ -3032,25 +3032,25 @@ def handle_request():
         )
 
     secretsmanager_handlers = {
-        "CreateSecret": proxy_to_secretsmanager,
-        "DescribeSecret": proxy_to_secretsmanager,
-        "UpdateSecret": proxy_to_secretsmanager,
-        "UpdateSecretVersionStage": proxy_to_secretsmanager,
-        "ListSecretVersionIds": proxy_to_secretsmanager,
-        "GetSecretValue": proxy_to_secretsmanager,
-        "PutSecretValue": proxy_to_secretsmanager,
-        "ListSecrets": proxy_to_secretsmanager,
-        "DeleteSecret": proxy_to_secretsmanager,
-        "RestoreSecret": proxy_to_secretsmanager,
-        "RotateSecret": proxy_to_secretsmanager,
-        "CancelRotateSecret": proxy_to_secretsmanager,
-        "UpdateSecretRotation": proxy_to_secretsmanager,
-        "GetRotationPolicy": proxy_to_secretsmanager,
-        "PutResourcePolicy": proxy_to_secretsmanager,
-        "GetResourcePolicy": proxy_to_secretsmanager,
-        "DeleteResourcePolicy": proxy_to_secretsmanager,
+        "secretsmanager.CreateSecret": proxy_to_secretsmanager,
+        "secretsmanager.DescribeSecret": proxy_to_secretsmanager,
+        "secretsmanager.UpdateSecret": proxy_to_secretsmanager,
+        "secretsmanager.UpdateSecretVersionStage": proxy_to_secretsmanager,
+        "secretsmanager.ListSecretVersionIds": proxy_to_secretsmanager,
+        "secretsmanager.GetSecretValue": proxy_to_secretsmanager,
+        "secretsmanager.PutSecretValue": proxy_to_secretsmanager,
+        "secretsmanager.ListSecrets": proxy_to_secretsmanager,
+        "secretsmanager.DeleteSecret": proxy_to_secretsmanager,
+        "secretsmanager.RestoreSecret": proxy_to_secretsmanager,
+        "secretsmanager.RotateSecret": proxy_to_secretsmanager,
+        "secretsmanager.CancelRotateSecret": proxy_to_secretsmanager,
+        "secretsmanager.UpdateSecretRotation": proxy_to_secretsmanager,
+        "secretsmanager.GetRotationPolicy": proxy_to_secretsmanager,
+        "secretsmanager.PutResourcePolicy": proxy_to_secretsmanager,
+        "secretsmanager.GetResourcePolicy": proxy_to_secretsmanager,
+        "secretsmanager.DeleteResourcePolicy": proxy_to_secretsmanager,
     }
-    if operation in secretsmanager_handlers:
+    if action in secretsmanager_handlers:
         logger.info(f"Routing to SecretsManager handler: Operation={operation}")
         return proxy_to_secretsmanager()
 
@@ -3084,21 +3084,21 @@ def handle_request():
     #     }), 400
 
     logs_handlers = {
-        "CreateLogGroup": proxy_logs_to_lambda,
-        "CreateLogStream": proxy_logs_to_lambda,
-        "PutLogEvents": proxy_logs_to_lambda,
-        "GetLogEvents": proxy_logs_to_lambda,
-        "DescribeLogGroups": proxy_logs_to_lambda,
-        "DescribeLogStreams": proxy_logs_to_lambda,
-        "FilterLogEvents": proxy_logs_to_lambda,
-        "DeleteLogGroup": proxy_logs_to_lambda,
-        "DeleteLogStream": proxy_logs_to_lambda,
+        "Logs_20140328.CreateLogGroup": proxy_logs_to_lambda,
+        "Logs_20140328.CreateLogStream": proxy_logs_to_lambda,
+        "Logs_20140328.PutLogEvents": proxy_logs_to_lambda,
+        "Logs_20140328.GetLogEvents": proxy_logs_to_lambda,
+        "Logs_20140328.DescribeLogGroups": proxy_logs_to_lambda,
+        "Logs_20140328.DescribeLogStreams": proxy_logs_to_lambda,
+        "Logs_20140328.FilterLogEvents": proxy_logs_to_lambda,
+        "Logs_20140328.DeleteLogGroup": proxy_logs_to_lambda,
+        "Logs_20140328.DeleteLogStream": proxy_logs_to_lambda,
     }
-    if operation in logs_handlers:
+    if action in logs_handlers:
         # This is an S3 operation
         logger.info(f"Routing to Log handler: Operation={operation}")
 
-        handler = logs_handlers.get(operation)
+        handler = logs_handlers.get(action)
         if handler:
             return handler(data=data, operation=operation)
 
@@ -3179,12 +3179,12 @@ def get_action_from_request():
     # Format: "AmazonSQS.CreateQueue" or "CreateQueue"
     target = request.headers.get("X-Amz-Target", "")
     if target:
-        if "." in target:
-            action = target.split(".")[-1]  # "AmazonSQS.CreateQueue" → "CreateQueue"
-        else:
-            action = target
-        logger.debug(f"Action from X-Amz-Target: {action}")
-        return action
+        # if "." in target:
+        #     action = target.split(".")[-1]  # "AmazonSQS.CreateQueue" → "CreateQueue"
+        # else:
+        #     action = target
+        logger.warning(f"Action from X-Amz-Target: {target}")
+        return target
 
     # Method 2: Check query string
     action = request.args.get("Action")

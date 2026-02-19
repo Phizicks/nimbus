@@ -43,7 +43,7 @@ cleanup() {
     aws secretsmanager delete-secret --secret-id "${SECRET_NAME}-rotation" --force-delete >/dev/null 2>&1 || true
     aws secretsmanager delete-secret --secret-id "${SECRET_NAME}-policy" --force-delete >/dev/null 2>&1 || true
     aws secretsmanager delete-secret --secret-id "duplicate-test" --force-delete >/dev/null 2>&1 || true
-
+    aws secretsmanager delete-secret --secret-id "my-test-password-123" --force-delete >/dev/null 2>&1 || true
     rm -f response.json lambda-function.zip 2>/dev/null || true
 }
 # trap cleanup EXIT
