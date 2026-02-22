@@ -3019,9 +3019,37 @@ def get_provisioned_concurrency(function_name):
         return jsonify({"__type": "ServiceException:", "message": str(e)}), 500
 
 
-@app.route(
-    "/2017-10-31/functions/<function_name>/concurrency", methods=["PUT"]
-)  # aws lambda put-function-concurrency
+@app.route("/2017-10-31/functions/<function_name>/concurrency", methods=["DELETE"])
+def delete_function_concurrency(function_name):
+    """Remove reserved concurrency for a function, restoring it to the unreserved pool"""
+    try:
+        function_config = lifecycle_manager.db.get_function_from_db(function_name)
+        if not function_config:
+            return (
+                jsonify(
+                    {
+                        "__type": "ResourceNotFoundException",
+                        "message": f"Function not found: {function_name}",
+                    }
+                ),
+                404,
+            )
+
+        # Reset reserved concurrency to default (unreserved) — account default of 100
+        function_config["ReservedConcurrency"] = 100
+
+        logger.info(f"Deleted reserved concurrency for Function:{function_name}, reset to account default")
+        lifecycle_manager.db.save_function_to_db(function_config)
+
+        # AWS returns 204 No Content on success
+        return Response(status=204)
+
+    except Exception as e:
+        logger.error(f"Error deleting concurrency: {e}", exc_info=True)
+        return jsonify({"__type": "ServiceException", "message": str(e)}), 500
+
+
+@app.route("/2017-10-31/functions/<function_name>/concurrency", methods=["PUT"])  # aws lambda put-function-concurrency
 def put_function_concurrency(function_name):
     """Set reserved concurrent executions"""
     try:

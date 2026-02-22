@@ -2497,6 +2497,29 @@ def put_function_concurrency(function_name):
 
 
 @app.route(
+    "/2017-10-31/functions/<function_name>/concurrency", methods=["DELETE"]
+)  # aws lambda put-function-concurrency
+def delete_function_concurrency(function_name):
+    """Removes reserved concurrent executions for a function - proxy to lambda endpoint"""
+    try:
+        logger.info(f"Deleting reserved concurrency for: {function_name}")
+
+        status, resp, raw = lambda_request("DELETE", request.path)
+        if status >= 400:
+            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
+
+        return jsonify(resp), status
+
+    except Exception as e:
+        logger.error(
+            f"Error setting concurrency for {function_name}: {e}", exc_info=True
+        )
+        error_response = {"__type": "ServiceException:", "message": str(e)}
+        return error_response, 500
+
+
+@app.route(
     "/2015-03-31/functions/<function_name>", methods=["GET"], strict_slashes=False
 )
 def get_function(function_name):
