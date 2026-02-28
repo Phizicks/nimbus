@@ -14,6 +14,7 @@ import os
 import sys
 import json
 import docker
+from docker import errors
 import base64
 import sqlite3
 from datetime import datetime, timezone
@@ -624,7 +625,7 @@ class ContainerLifecycleManager:
                 logger.info(f"Successfully built image: {image_tag}")
                 return image_tag, None, None
 
-            except docker.errors.BuildError as e:
+            except errors.BuildError as e:
                 logger.error(f"Build error: {e}")
                 return (
                     None,
@@ -677,7 +678,7 @@ class ContainerLifecycleManager:
 
             return self._invocation_queues[function_name]
 
-    def get_invocation_queue_task(self, function_name, timeout=5) -> Dict:
+    def get_invocation_queue_task(self, function_name: str, timeout=5.0) -> Dict:
         """Get next invocation task for a function, blocking."""
         queue_obj = self.get_invocation_queue(function_name)
 
@@ -687,13 +688,13 @@ class ContainerLifecycleManager:
                 f"Retrieved task from queue for Function:{function_name} Queue:{queue_task}"
             )
             return queue_task
-        except Exception as e:
-            raise
         except Empty:
             logger.debug(
                 f"No tasks available for {function_name} after {timeout}s timeout"
             )
             # Re-raise so caller can distinguish from other errors
+            raise
+        except Exception as e:
             raise
 
     def start(self):
@@ -850,7 +851,7 @@ class ContainerLifecycleManager:
                             container_id
                         )
                         docker_container.reload()
-                    except docker.errors.NotFound:
+                    except errors.NotFound:
                         # Container was removed, skip it
                         logger.debug(
                             f"Container {C.MAGENTA}{container_id}{C.RESET} not found in Docker during IP lookup fallback (may have been removed)"
@@ -994,7 +995,7 @@ class ContainerLifecycleManager:
                         f"Failed to stop {container_metadata.container_name} gracefully, will retry next cycle"
                     )
 
-            except docker.errors.NotFound:
+            except errors.NotFound:
                 logger.info(
                     f"Container {container_metadata.container_name} already removed"
                 )
@@ -1064,7 +1065,7 @@ class ContainerLifecycleManager:
             # Get container exit info before removing for logging
             # try:
             #     container.reload()
-            # except docker.errors.NotFound:
+            # except errors.NotFound:
             #     logger.warning(f"Container {C.YELLOW}{container.name}{C.RESET} not found during cleanup")
             #     continue
             # exit_code = container.attrs.get('State', {}).get('ExitCode', 0)
@@ -1080,7 +1081,7 @@ class ContainerLifecycleManager:
 
             try:
                 container.remove()
-            except docker.errors.NotFound:
+            except errors.NotFound:
                 logger.warning(
                     f"Container {C.YELLOW}{container.name}{C.RESET} already removed"
                 )
@@ -1575,7 +1576,7 @@ class ContainerLifecycleManager:
             if container.status:
                 container.kill()
                 logger.info(f"Killed container {C.YELLOW}{container.name}{C.RESET}")
-        except docker.errors.NotFound:
+        except errors.NotFound:
             pass
 
         try:
@@ -1672,7 +1673,7 @@ class ContainerLifecycleManager:
                     for log in logs:
                         if "stream" in log:
                             logger.info(log["stream"].strip())
-                except docker.errors.BuildError as e:
+                except errors.BuildError as e:
                     logger.error(f"Build error: {e}")
                     return (
                         None,
@@ -1814,7 +1815,7 @@ class ContainerLifecycleManager:
 
                 try:
                     container.reload()
-                except docker.errors.NotFound:
+                except errors.NotFound:
                     # Container was removed or died
                     logger.error(
                         f"Container {C.MAGENTA}{C.MAGENTA}{container.id}{C.RESET}{C.RESET} was removed or crashed before IP retrieval"
@@ -1863,7 +1864,7 @@ class ContainerLifecycleManager:
                             time.sleep(0.1)
                             try:
                                 container.reload()
-                            except docker.errors.NotFound:
+                            except errors.NotFound:
                                 logger.warning(
                                     f"Container {C.MAGENTA}{C.MAGENTA}{container.id}{C.RESET}{C.RESET} was removed during IP retrieval retry"
                                 )
@@ -1883,7 +1884,7 @@ class ContainerLifecycleManager:
                         logger.error(
                             f"Failed to get IP address after {max_retries} retries: {e}"
                         )
-                    except docker.errors.NotFound:
+                    except errors.NotFound:
                         logger.warning(
                             f"Container {C.MAGENTA}{container.id}{C.RESET} was removed during IP retrieval"
                         )
@@ -1995,7 +1996,7 @@ class ContainerLifecycleManager:
 
                     try:
                         container.reload()
-                    except docker.errors.NotFound:
+                    except errors.NotFound:
                         # Container was removed (possibly by scaling logic)
                         logger.warning(
                             f"Container {C.MAGENTA}{container.id}{C.RESET} was removed before readiness check"
@@ -2047,7 +2048,7 @@ class ContainerLifecycleManager:
                 endpoint = f"http://{LOCALCLOUD_API_HOSTNAME}:4566/2015-03-31/functions/{function_name}/invocations"
                 return endpoint, container_name, None, None, None
 
-            except docker.errors.ImageNotFound as e:
+            except errors.ImageNotFound as e:
                 logger.error(f"Image not found: {e}")
                 return (
                     None,
@@ -2059,7 +2060,7 @@ class ContainerLifecycleManager:
                     },
                     400,
                 )
-            except docker.errors.APIError as e:
+            except errors.APIError as e:
                 logger.error(f"API error: {e}")
                 return (
                     None,
@@ -2162,7 +2163,7 @@ CMD [ "{handler}" ]
                         )
                         return False
 
-            except docker.errors.NotFound:
+            except errors.NotFound:
                 logger.error(f"Container disappeared during readiness check")
                 return False
             except Exception as e:
@@ -3578,7 +3579,7 @@ def runtime_next():
             return "", 410
 
         # We have a task - prepare invocation response
-        request_id = task.get("request_id")
+        request_id: str = task.get("request_id") or ""
         event = task.get("event")
 
         # Set container
@@ -3638,7 +3639,7 @@ def _wait_for_task(client_ip, function_name):
     Periodically checks if container still exists.
     Returns task dict or None if container was killed.
     """
-    poll_interval = 0.1  # Check container state every 100ms
+    poll_interval: float = 0.1  # Check container state every 100ms
 
     while True:
         # Check if container still exists and is in LEASED state
@@ -3732,7 +3733,7 @@ def runtime_response(request_id):
 
     client_ip = _get_client_ip()
     metadata = lifecycle_manager.get_container_metadata_by_ip(client_ip)
-    container_id = metadata.container_id if metadata else None
+    container_id = metadata.container_id if metadata else ""
 
     # After marking invocation complete
     lifecycle_manager.log_manager.clear_active_request(container_id)
@@ -3786,7 +3787,7 @@ def runtime_request_error(request_id):
 
     client_ip = _get_client_ip()
     metadata = lifecycle_manager.get_container_metadata_by_ip(client_ip)
-    container_id = metadata.container_id if metadata else None
+    container_id = metadata.container_id if metadata else ""
 
     # After marking invocation complete
     lifecycle_manager.log_manager.clear_active_request(container_id)

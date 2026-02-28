@@ -650,6 +650,96 @@ class SecretsManagerDatabase:
                 "VersionId": new_version_id,
             }
 
+    def tag_resource(
+        self,
+        secret_name: str,
+        tags: dict,
+        ) -> None:
+        """Tag a resource in Secrets Manager
+        Args:
+            secret_name: Name of the secret
+            tags: The tags to modify
+
+        Returns:
+            None
+
+        Raises:
+            ResourceNotFoundException: If secret or version not found
+            InvalidParameterException: If invalid parameters provided
+            InvalidRequestException: If operation would violate constraints
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Check if secret exists
+            cursor.execute(
+                "SELECT secret_name FROM secrets WHERE secret_name = ? AND deleted_date IS NULL",
+                (secret_name,),
+            )
+            if not cursor.fetchone():
+                raise ResourceNotFoundException(f"Secret '{secret_name}' not found.")
+
+            # Update secret metadata
+            cursor.execute(
+                """
+                UPDATE secrets
+                SET tags = ?, last_updated_date = ?
+                WHERE secret_name = ? AND deleted_date IS NULL
+                """,
+                (
+                    secret_name,
+                    json.dumps(tags),
+                    int(time.time())
+                ),
+            )
+            conn.commit()
+
+            return
+
+    def untag_resource(
+        self,
+        secret_name: str,
+    ) -> None:
+        """Untag a resource in Secrets Manager
+        Args:
+            secret_name: Name of the secret
+
+        Returns:
+            None
+
+        Raises:
+            ResourceNotFoundException: If secret or version not found
+            InvalidParameterException: If invalid parameters provided
+            InvalidRequestException: If operation would violate constraints
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Check if secret exists
+            cursor.execute(
+                "SELECT secret_name FROM secrets WHERE secret_name = ? AND deleted_date IS NULL",
+                (secret_name,),
+            )
+            if not cursor.fetchone():
+                raise ResourceNotFoundException(f"Secret '{secret_name}' not found.")
+
+            # Update secret metadata
+            cursor.execute(
+                """
+                UPDATE secrets
+                SET tags = ?, last_updated_date = ?
+                WHERE secret_name = ? AND deleted_date IS NULL
+                """,
+                (
+                    secret_name,
+                    json.dumps({}),
+                    int(time.time())
+                ),
+            )
+            conn.commit()
+
+            return
+
     def update_secret_version_stage(
         self,
         secret_name: str,
@@ -1977,6 +2067,25 @@ class SecretsManager:
 
         return self.db.get_rotation_policy(secret_name=secret_id)
 
+    def tag_resource(self, params: Dict) -> None:
+        """Set Tags on resource"""
+        secret_id = params.get("SecretId")
+        tags = params.get("Tags")
+        if not tags:
+            raise InvalidParameterException("Tags is required")
+        if not secret_id:
+            raise InvalidParameterException("SecretId is required")
+
+        return self.db.tag_resource(secret_name=secret_id, tags=tags)
+
+    def untag_resource(self, params: Dict) -> Dict:
+        """Remove Tags from resource"""
+        secret_id = params.get("SecretId")
+        if not secret_id:
+            raise InvalidParameterException("SecretId is required")
+
+        return self.db.untag_resource(secret_name=secret_id)
+
 
 def error_response(error_type: str, message: str) -> Dict:
     """Format error response in AWS format"""
@@ -2079,6 +2188,10 @@ def handle_request():
 
         elif operation == "GetRotationPolicy":
             result = sm.get_rotation_policy(params)
+            return jsonify(result), 200
+
+        elif operation == "TagResource":
+            result = sm.tag_resource(params)
             return jsonify(result), 200
 
         else:
