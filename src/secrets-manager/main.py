@@ -666,7 +666,6 @@ class SecretsManagerDatabase:
         Raises:
             ResourceNotFoundException: If secret or version not found
             InvalidParameterException: If invalid parameters provided
-            InvalidRequestException: If operation would violate constraints
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -687,22 +686,25 @@ class SecretsManagerDatabase:
                 WHERE secret_name = ? AND deleted_date IS NULL
                 """,
                 (
-                    secret_name,
                     json.dumps(tags),
-                    int(time.time())
+                    int(time.time()),
+                    secret_name
                 ),
             )
             conn.commit()
 
             return
 
+
     def untag_resource(
         self,
         secret_name: str,
+        tag_keys: List[str]
     ) -> None:
-        """Untag a resource in Secrets Manager
+        """Untag a resource in Secrets Manager with specified tag keys
         Args:
             secret_name: Name of the secret
+            tag_keys: List of tag keys to remove from the secret (if not provided, removes all tags)
 
         Returns:
             None
@@ -724,6 +726,22 @@ class SecretsManagerDatabase:
                 raise ResourceNotFoundException(f"Secret '{secret_name}' not found.")
 
             # Update secret metadata
+            tags = {}
+            if tag_keys:
+                cursor.execute(
+                    "SELECT tags FROM secrets WHERE secret_name = ? AND deleted_date IS NULL",
+                    (secret_name,),
+                )
+                row = cursor.fetchone()
+                raw = row[0] if row and row[0] else "[]"
+                existing_tags = json.loads(raw)
+                if isinstance(existing_tags, str):
+                    existing_tags = json.loads(existing_tags)
+                tags = [tag for tag in existing_tags if tag["Key"] not in tag_keys]
+            else:
+                # empty tags, noop
+                return
+
             cursor.execute(
                 """
                 UPDATE secrets
@@ -731,9 +749,9 @@ class SecretsManagerDatabase:
                 WHERE secret_name = ? AND deleted_date IS NULL
                 """,
                 (
+                    json.dumps(tags),
+                    int(time.time()),
                     secret_name,
-                    json.dumps({}),
-                    int(time.time())
                 ),
             )
             conn.commit()
@@ -2078,13 +2096,16 @@ class SecretsManager:
 
         return self.db.tag_resource(secret_name=secret_id, tags=tags)
 
-    def untag_resource(self, params: Dict) -> Dict:
+    def untag_resource(self, params: Dict):
         """Remove Tags from resource"""
         secret_id = params.get("SecretId")
+        tag_keys = params.get("TagKeys") or []
         if not secret_id:
             raise InvalidParameterException("SecretId is required")
+        # if not tag_keys:
+        #     raise InvalidParameterException("TagKeys is required")
 
-        return self.db.untag_resource(secret_name=secret_id)
+        return self.db.untag_resource(secret_name=secret_id, tag_keys=tag_keys)
 
 
 def error_response(error_type: str, message: str) -> Dict:
@@ -2123,7 +2144,7 @@ def handle_request():
                 400,
             )
 
-        logger.info(f"Secrets Manager operation: {operation}")
+        logger.info(f"Secrets Manager operation: {operation} , Parameters: {params}")
         sm = SecretsManager()
         # Route to appropriate handler
         if operation == "CreateSecret":
@@ -2192,6 +2213,10 @@ def handle_request():
 
         elif operation == "TagResource":
             result = sm.tag_resource(params)
+            return jsonify(result), 200
+
+        elif operation == "UntagResource":
+            result = sm.untag_resource(params)
             return jsonify(result), 200
 
         else:

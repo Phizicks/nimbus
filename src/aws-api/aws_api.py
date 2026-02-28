@@ -3073,6 +3073,7 @@ def handle_request():
         "secretsmanager.GetResourcePolicy": proxy_to_secretsmanager,
         "secretsmanager.DeleteResourcePolicy": proxy_to_secretsmanager,
         "secretsmanager.TagResource": proxy_to_secretsmanager,
+        "secretsmanager.UntagResource": proxy_to_secretsmanager,
     }
     if action in secretsmanager_handlers:
         logger.info(f"Routing to SecretsManager handler: Operation={operation}")
