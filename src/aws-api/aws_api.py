@@ -1346,9 +1346,9 @@ def batch_get_image():
 
 
 # S3 API Functions
-@aws_response("ListBuckets")
-def list_buckets():
-    return proxy_to_s3()
+# @aws_response("ListBuckets")
+# def list_buckets():
+#     return proxy_to_s3()
 
 
 # SigV4 Authentication (LocalStack-style)
@@ -3084,6 +3084,7 @@ def handle_request():
         "Cp": proxy_to_s3,
         "Mv": proxy_to_s3,
         "ListBuckets": proxy_to_s3,
+        "HeadObject": proxy_to_s3,
         # 'CreateBucket': create_bucket,
         # 'DeleteBucket': delete_bucket,
         # 'PutObject': put_object,
@@ -3272,19 +3273,19 @@ def proxy_to_s3():
         stream=True,
     )
 
-    logger.debug(f"S3 response: {response.status_code}")
-    logger.debug(f"S3 Content-Type: {response.headers.get('Content-Type')}")
-
     # Build response with proper headers
     excluded = {"transfer-encoding", "connection"}
     response_headers = [
         (k, v) for k, v in response.headers.items() if k.lower() not in excluded
     ]
-    logger.debug(f"{response_headers}")
-    return Response(
+
+    flask_response = Response(
         response.content, status=response.status_code, headers=response_headers
     )
-
+    # Need to override the content-length as Response recaclculates the length with empty body to 0 for HEAD requests
+    if "Content-Length" in response.headers:
+        flask_response.headers["Content-Length"] = response.headers["Content-Length"]
+    return flask_response
 
 # Handles aws cli s3 commands
 @app.route("/<bucket_name>", methods=["PUT"])
@@ -4026,13 +4027,14 @@ def copy_s3_object(bucket_name):
 
 
 # Also add a catch-all to see what URLs are being hit
-@app.route("/<path:path>", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+@app.route("/<path:path>", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"])
 def catch_all(path):
     # Then in handle_request():
     service, operation = get_service_from_user_agent()
     if service and service.lower() in ("s3", "s3api"):
+        response = proxy_to_s3()
         logger.info(f"Routing to S3: service={service}, operation={operation}")
-        return proxy_to_s3()
+        return response
 
     """Catch-all route for debugging"""
     logger.warning(f"Unhandled route: {request.method} /{path}")
