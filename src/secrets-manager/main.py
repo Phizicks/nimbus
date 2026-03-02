@@ -2069,6 +2069,32 @@ class SecretsManager:
             secret_name=secret_id, client_request_token=params.get("ClientRequestToken")
         )
 
+    def update_secret_rotation(self, params: Dict) -> Dict:
+        """Update rotation for a secret"""
+        secret_id = params.get("SecretId")
+        if not secret_id:
+            raise InvalidParameterException("SecretId is required")
+
+        # Get current rotation configuration
+        current_rotation = self.db.get_rotation_policy(secret_name=secret_id)
+
+        # Update rotation configuration with new values from request parameters
+        rotation_lambda_arn = params.get("RotationLambdaARN", current_rotation["ARN"])
+        rotation_rules = params.get("RotationRules", current_rotation.get("RotationRules", {}))
+
+        # Configure rotation for secret
+        self.db.configure_rotation(
+            secret_name=secret_id,
+            rotation_lambda_arn=rotation_lambda_arn,
+            rotation_rules=rotation_rules,
+        )
+
+        return {
+            "SecretId": secret_id,
+            "RotationLambdaARN": rotation_lambda_arn,
+            "RotationRules": rotation_rules,
+        }
+
     def cancel_rotate_secret(self, params: Dict) -> Dict:
         """Cancel rotation for a secret"""
         secret_id = params.get("SecretId")
@@ -2217,6 +2243,10 @@ def handle_request():
 
         elif operation == "UntagResource":
             result = sm.untag_resource(params)
+            return jsonify(result), 200
+
+        elif operation == "UpdateSecretRotation":
+            result = sm.update_secret_rotation(params)
             return jsonify(result), 200
 
         else:
