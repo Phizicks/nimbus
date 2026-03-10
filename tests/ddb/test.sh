@@ -47,7 +47,7 @@ cleanup() {
 
     rm -f response.json item.json 2>/dev/null || true
 }
-trap cleanup EXIT
+#trap cleanup EXIT
 
 # Function to print colored messages
 log_info() {

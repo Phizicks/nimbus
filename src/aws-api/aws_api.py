@@ -17,7 +17,7 @@ import custom_logger
 import logging
 import docker
 from datetime import datetime, timezone, timedelta
-import zipfile
+import xmltodict
 import shutil
 import time
 import hashlib
@@ -328,8 +328,9 @@ def aws_response(operation):
 
 
 def get_request_data():
-    """Get data from request, handling both JSON and form-encoded protocols"""
+    """Get data from request, handling JSON, form-encoded, and XML (AWS S3) protocols"""
     content_type = request.headers.get("Content-Type", "").lower()
+    raw_data = request.get_data(as_text=True)
 
     # JSON protocol (application/x-amz-json-1.0)
     if "json" in content_type or "x-amz-json" in content_type:
@@ -343,10 +344,8 @@ def get_request_data():
     # Form-encoded protocol (application/x-www-form-urlencoded)
     if "urlencoded" in content_type:
         try:
-            raw_data = request.get_data(as_text=True)
             if raw_data:
                 parsed = parse_qs(raw_data, keep_blank_values=True)
-                # Convert lists to single values
                 data = {
                     k: v[0] if isinstance(v, list) and len(v) > 0 else v
                     for k, v in parsed.items()
@@ -361,15 +360,25 @@ def get_request_data():
         logger.debug(f"Using request.form: {list(request.form.keys())}")
         return dict(request.form)
 
+    # XML protocol (AWS S3 and MinIO use application/xml)
+    if "xml" in content_type or raw_data.strip().startswith("<"):
+        try:
+            data = xmltodict.parse(raw_data)
+            logger.debug(f"Parsed XML data: top-level keys = {list(data.keys())}")
+            return data
+        except Exception as e:
+            logger.error(f"Error parsing XML: {e}\nRAW:\n{raw_data}")
+
     # Try JSON without checking content-type (last resort)
     try:
         data = request.get_json(force=True, silent=True)
         if data:
             logger.debug(f"Parsed JSON (no content-type check): {list(data.keys())}")
             return data
-    except:
-        pass
+    except Exception as e:
+        logger.error(f"Error parsing JSON (no content-type check): {e}")
 
+    # Final fallback: empty dict
     return {}
 
 
@@ -707,59 +716,6 @@ def list_images():
             "repositoryName": repository_name,
             "registryId": ACCOUNT_ID,
         }
-
-
-@aws_response("BatchGetImage")
-def batch_get_image():
-    """Fetch image manifest from the Docker registry backend"""
-    data = get_request_data()
-    repository_name = data.get("repositoryName")
-    image_ids = data.get("imageIds", [])
-    repo_path = f"{ACCOUNT_ID}/{repository_name}"
-
-    if not ecr_repository_exists(repository_name):
-        raise ValueError(f"Repository {repository_name} does not exist")
-
-    images, failures = [], []
-
-    for img_id in image_ids:
-        image_tag = img_id.get("imageTag", "latest")
-        full_ref = f"{BACKEND_REGISTRY_HOST}/{repo_path}:{image_tag}"
-        try:
-            image = docker_client.images.pull(full_ref)
-            inspect = docker_client.api.inspect_image(image.id)
-            digest = (
-                inspect["RepoDigests"][0].split("@")[1]
-                if inspect.get("RepoDigests")
-                else "sha256:unknown"
-            )
-            manifest = {
-                "schemaVersion": 2,
-                "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
-                "config": {
-                    "mediaType": "application/vnd.docker.container.image.v1+json",
-                    "digest": digest,
-                    "size": inspect.get("Size", 0),
-                },
-            }
-            images.append(
-                {
-                    "registryId": ACCOUNT_ID,
-                    "repositoryName": repository_name,
-                    "imageId": {"imageTag": image_tag, "imageDigest": digest},
-                    "imageManifest": json.dumps(manifest),
-                }
-            )
-        except Exception as e:
-            failures.append(
-                {
-                    "imageId": img_id,
-                    "failureCode": "ImageNotFound",
-                    "failureReason": str(e),
-                }
-            )
-
-    return {"images": images, "failures": failures}
 
 
 @aws_response("DescribeImages")
@@ -3256,12 +3212,11 @@ def check_s3_service_from_user_agent():
 
 def proxy_to_s3():
     """Proxy S3 requests to S3 backend - preserve signature by keeping original host"""
-    S3_ENDPOINT = os.getenv("S3_ENDPOINT", "http://s3:9000")
-
     s3_url = f"{S3_ENDPOINT}{request.path}"
     if request.query_string:
         s3_url += f"?{request.query_string.decode()}"
-
+    headers = dict(request.headers)
+    client_ip = headers.get("X-Forwarded-For") or request.host
     # Keep ALL headers INCLUDING the original Host (critical for signature validation)
     headers = {k: v for k, v in request.headers}
     request_data = request.get_data()
@@ -3272,7 +3227,7 @@ def proxy_to_s3():
         data=request_data,
         stream=True,
     )
-
+    logger.critical(f"Client: {client_ip} S3URL: {s3_url} S3Response: {response.content}")
     # Build response with proper headers
     excluded = {"transfer-encoding", "connection"}
     response_headers = [
@@ -3287,42 +3242,119 @@ def proxy_to_s3():
         flask_response.headers["Content-Length"] = response.headers["Content-Length"]
     return flask_response
 
+
+def set_bucket_webhook_notification(bucket_name, target_name):
+    """Configure MinIO webhook — only relevant for SQS/SNS targets, not Lambda."""
+    config_payload = {
+        "key_values": {
+            "notify_webhook:1": f"endpoint=http://api:4566/webhook/sqs/{target_name} queue_limit=1000 enable=on"
+        }
+    }
+
+    creds = Credentials("localcloud", "localcloud")
+    aws_req = AWSRequest(
+        method="PUT",
+        url=f"{S3_ENDPOINT}/minio/admin/v3/set-config-kv",
+        data=json.dumps(config_payload),
+        headers={"Content-Type": "application/json"},
+    )
+    SigV4Auth(creds, "s3", "us-east-1").add_auth(aws_req)
+    auth_headers = dict(aws_req.headers.items())
+
+    resp = requests.put(
+        f"{S3_ENDPOINT}/minio/admin/v3/set-config-kv",
+        headers=auth_headers,
+        data=json.dumps(config_payload),
+    )
+    logger.debug(f"MinIO webhook config status={resp.status_code} body={resp.text}")
+
+
 # Handles aws cli s3 commands
 @app.route("/<bucket_name>", methods=["PUT"])
 def handle_bucket_operations(bucket_name):
-    """Handle bucket-level operations like notification configuration"""
+    """Handle bucket-level PUT operations (notifications, ACLs, etc.)."""
 
-    # Check if this is a notification configuration request
-    if "notification" in request.args:
-        # Extract from request body (JSON or form-encoded)
-        data = get_request_data()
+    if "notification" not in request.args:
+        return proxy_to_s3()
 
-        # The actual MinIO config is already set globally via webhook in Dockerfile
-        notification_id = data.get(
-            "Id", f"notification-{int(time.time() * 1000)}"
-        )  # TODO use this if notification not set
-        queue_arn = data.get("QueueArn") or data.get("Queue")
-        events = data.get("Events", [])
+    data = get_request_data()
 
-        logger.debug(f"--DATA-- {data}")
+    if "NotificationConfiguration" in data:
+        data = data["NotificationConfiguration"]
 
-        # Handle both direct events list or nested in QueueConfiguration
-        if "QueueConfigurations" in data:
-            set_bucket_webhook_notication(bucket_name, queue_arn.split(":")[-1])
+    logger.debug(f"Notification PUT data: {data}")
 
-            # Batch config
-            for config in data["QueueConfigurations"]:
-                save_single_notification_config(bucket_name, config)
-        else:
-            # Single config
-            save_single_notification_config(bucket_name, data)
+    notification_types = {
+        # Modern names (boto3 / JSON API)
+        "QueueConfigurations":            ("QueueArn",            "sqs"),
+        "TopicConfigurations":            ("TopicArn",            "sns"),
+        "LambdaFunctionConfigurations":   ("LambdaFunctionArn",   "lambda"),
+        # Legacy AWS CLI XML element names
+        "QueueConfiguration":             ("Queue",               "sqs"),
+        "TopicConfiguration":             ("Topic",               "sns"),
+        "CloudFunctionConfiguration":     ("CloudFunction",       "lambda"),
+    }
 
-        # Return success (don't proxy to MinIO)
-        return Response("", status=200)
+    configs_found = False
+    logger.critical(f'DATA: {data}')
+    for config_key, (arn_field, target_type) in notification_types.items():
+        if config_key not in data:
+            continue
 
-    # Otherwise, proxy to S3 normally
-    return proxy_to_s3()
+        configs = data[config_key]
+        if isinstance(configs, dict):
+            configs = [configs]
 
+        for config in configs:
+            arn = config.get(arn_field)
+            if not arn:
+                logger.warning(f"Missing {arn_field} in {config_key} config: {config}")
+                continue
+
+            events = config.get("Events") or config.get("Event")
+            if isinstance(events, str):
+                events = [events]
+            events = events or []
+
+            target_name = arn.split(":")[-1]
+
+            if target_type == "sqs":
+                target_url = f"http://sqs:4566/{ACCOUNT_ID}/{target_name}"
+                set_bucket_webhook_notification(bucket_name, target_name)
+            elif target_type == "sns":
+                target_url = f"http://sns:4566/{ACCOUNT_ID}/{target_name}" # yet another TODO
+                set_bucket_webhook_notification(bucket_name, target_name)
+            else:
+                # Lambda — store ARN directly; webhook is triggered by the webhook handler
+                target_url = arn
+
+            # Extract filter rules
+            filter_rules = []
+            filter_config = config.get("Filter", {})
+            if filter_config:
+                key_filters = filter_config.get("Key", {})
+                filter_rules = key_filters.get("FilterRules", [])
+
+            notification_id = config.get("Id", f"{config_key}-{int(time.time() * 1000)}")
+
+            db.save_notification_config(
+                bucket_name=bucket_name,
+                notification_id=notification_id,
+                queue_arn=arn,
+                queue_url=target_url,
+                event_patterns=events,
+                filter_rules=filter_rules,
+            )
+
+            logger.info(
+                f"Saved {target_type} notification {notification_id} for bucket {bucket_name} -> {arn}"
+            )
+            configs_found = True
+
+    if not configs_found:
+        logger.warning(f"No notification configs found in payload for {bucket_name}: {data}")
+
+    return Response("", status=200)
 
 def set_bucket_webhook_notication(bucket_name, queue_name):
     config_payload = {
@@ -3335,7 +3367,7 @@ def set_bucket_webhook_notication(bucket_name, queue_name):
     creds = Credentials("localcloud", "localcloud")
     request = AWSRequest(
         method="PUT",
-        url=f"http://s3:9000/minio/admin/v3/set-config-kv",
+        url=f"{S3_ENDPOINT}/minio/admin/v3/set-config-kv",
         data=json.dumps(config_payload),
         headers={"Content-Type": "application/json"},
     )
@@ -3348,7 +3380,7 @@ def set_bucket_webhook_notication(bucket_name, queue_name):
     data = json.dumps(config_payload)
 
     resp = requests.put(
-        f"http://s3:9000/minio/admin/v3/set-config-kv", headers=auth_headers, data=data
+        f"{S3_ENDPOINT}/minio/admin/v3/set-config-kv", headers=auth_headers, data=data
     )
 
     logger.critical(f"STATUS: {resp.status_code}")
@@ -3356,124 +3388,146 @@ def set_bucket_webhook_notication(bucket_name, queue_name):
 
 
 def save_single_notification_config(bucket_name, config):
-    """Helper to save a single notification configuration"""
+    """Helper to save a single notification configuration (Queue, Topic, or Lambda)."""
     notification_id = config.get("Id", f"notification-{int(time.time() * 1000)}")
-    queue_arn = config.get("QueueArn") or config.get("Queue")
-    events = config.get("Events", [])
 
-    # Extract filter rules
+    # Identify notification target type and ARN
+    queue_arn = config.get("QueueArn") or config.get("Queue")
+    topic_arn = config.get("TopicArn") or config.get("Topic")
+    lambda_arn = (
+        config.get("LambdaFunctionArn")
+        or config.get("CloudFunction")
+        or config.get("LambdaFunction")
+    )
+
+    arn = queue_arn or topic_arn or lambda_arn
+    if not arn:
+        logger.warning(f"No ARN found in config for bucket {bucket_name}: {config}")
+        return
+
+    # Determine type for URL building or logging
+    if queue_arn:
+        target_type = "sqs"
+        target_name = queue_arn.split(":")[-1]
+        target_url = f"http://sqs:4566/{ACCOUNT_ID}/{target_name}"
+    elif topic_arn:
+        target_type = "sns"
+        target_name = topic_arn.split(":")[-1]
+        target_url = f"http://sns:4566/{ACCOUNT_ID}/{target_name}"
+    else:
+        target_type = "lambda"
+        target_name = lambda_arn.split(":")[-1]
+        target_url = lambda_arn  # just store the ARN directly for Lambda
+
+    # Normalize events
+    events = config.get("Events") or config.get("Event")
+    if isinstance(events, str):
+        events = [events]
+    events = events or []
+
+    # Extract filter rules (optional)
     filter_rules = []
     filter_config = config.get("Filter", {})
     if filter_config:
         key_filters = filter_config.get("Key", {})
         filter_rules = key_filters.get("FilterRules", [])
 
-    # Convert queue ARN to queue URL
-    queue_name = queue_arn.split(":")[-1]
-    queue_url = f"http://sqs:4566/{ACCOUNT_ID}/{queue_name}"
-
-    # Save to database
     db.save_notification_config(
         bucket_name=bucket_name,
         notification_id=notification_id,
-        queue_arn=queue_arn,
-        queue_url=queue_url,
+        queue_arn=arn,
+        queue_url=target_url,
         event_patterns=events,
         filter_rules=filter_rules,
     )
 
-    logger.info(f"Saved notification config {notification_id} for bucket {bucket_name}")
-
-
-# TODO try make api dynamically create bucket->queue webhooks for each bucket event
-def configure_bucket_notification_webhook(
-    bucket_name, notification_id, queue_arn, events=[], filters=[]
-):
-    # Extract queue name from ARN
-    queue_name = queue_arn.split(":")[-1]
-
-    # Create unique webhook ID
-    webhook_id = f"webhook-{notification_id}"
-
-    s3 = boto3.client(
-        "s3",
-        endpoint_url="http://s3:9000",
-        aws_access_key_id="localcloud",
-        aws_secret_access_key="localcloud",
-        config=Config(signature_version="s3v4"),
-        region_name="us-east-1",
+    logger.info(
+        f"Saved {target_type} notification config {notification_id} for bucket {bucket_name}"
     )
-
-    notification_config = {
-        "QueueConfigurations": [
-            {
-                "Id": "webhook-config",
-                "QueueArn": "arn:minio:sqs::1:webhook",
-                "Events": ["s3:ObjectCreated:*"],  # Change to whatever events you want
-            }
-        ]
-    }
-
-    s3.put_bucket_notification_configuration(
-        Bucket=bucket_name, NotificationConfiguration=notification_config
-    )
-
 
 @app.route("/<bucket_name>", methods=["GET"])
 def handle_bucket_get_operations(bucket_name):
     """Handle GET operations on buckets"""
 
-    # Check if this is a notification configuration request
-    if "notification" in request.args:
-        # Return configs from database in S3 API format
-        configs = db.get_bucket_notification_configs(bucket_name)
+    if "notification" not in request.args:
+        return proxy_to_s3()
 
-        queue_configurations = []
-        for config in configs:
-            events = (
-                json.loads(config["event_patterns"])
-                if isinstance(config["event_patterns"], str)
-                else config["event_patterns"]
+    configs = db.get_bucket_notification_configs(bucket_name)
+
+    # Group configs by type based on ARN prefix
+    queue_configs = []
+    topic_configs = []
+    lambda_configs = []
+
+    for config in configs:
+        events = (
+            json.loads(config["event_patterns"])
+            if isinstance(config["event_patterns"], str)
+            else config["event_patterns"]
+        )
+        filter_rules = (
+            json.loads(config["filter_rules"])
+            if config.get("filter_rules") and isinstance(config["filter_rules"], str)
+            else []
+        )
+
+        arn = config["queue_arn"]  # stored generically regardless of type
+        notification_id = config["notification_id"]
+
+        filter_xml = ""
+        if filter_rules:
+            rules_xml = "".join(
+                f"<FilterRule><Name>{r['Name']}</Name><Value>{r['Value']}</Value></FilterRule>"
+                for r in filter_rules
             )
-            filter_rules = (
-                json.loads(config["filter_rules"])
-                if config.get("filter_rules")
-                and isinstance(config["filter_rules"], str)
-                else []
+            filter_xml = f"<Filter><S3Key>{rules_xml}</S3Key></Filter>"
+
+        events_xml = "".join(f"<Event>{e}</Event>" for e in events)
+
+        if ":sqs:" in arn:
+            queue_configs.append(
+                f"<QueueConfiguration>"
+                f"<Id>{notification_id}</Id>"
+                f"<Queue>{arn}</Queue>"
+                f"{events_xml}{filter_xml}"
+                f"</QueueConfiguration>"
+            )
+        elif ":sns:" in arn:
+            topic_configs.append(
+                f"<TopicConfiguration>"
+                f"<Id>{notification_id}</Id>"
+                f"<Topic>{arn}</Topic>"
+                f"{events_xml}{filter_xml}"
+                f"</TopicConfiguration>"
+            )
+        elif ":lambda:" in arn or ":function:" in arn:
+            lambda_configs.append(
+                f"<CloudFunctionConfiguration>"
+                f"<Id>{notification_id}</Id>"
+                f"<CloudFunction>{arn}</CloudFunction>"
+                f"{events_xml}{filter_xml}"
+                f"</CloudFunctionConfiguration>"
+            )
+        else:
+            # Fallback: treat as queue (legacy)
+            queue_configs.append(
+                f"<QueueConfiguration>"
+                f"<Id>{notification_id}</Id>"
+                f"<Queue>{arn}</Queue>"
+                f"{events_xml}{filter_xml}"
+                f"</QueueConfiguration>"
             )
 
-            queue_config = {
-                "Id": config["notification_id"],
-                "QueueArn": config["queue_arn"],
-                "Events": events,
-            }
+    xml_body = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<NotificationConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">'
+        + "".join(queue_configs)
+        + "".join(topic_configs)
+        + "".join(lambda_configs)
+        + "</NotificationConfiguration>"
+    )
 
-            if filter_rules:
-                queue_config["Filter"] = {"Key": {"FilterRules": filter_rules}}
-
-            queue_configurations.append(queue_config)
-
-        # Return JSON response
-        # return jsonify({
-        #     'QueueConfigurations': queue_configurations
-        # }), 200
-        # Build XML string - some reason this one requies xml???
-        xml_body = "<NotificationConfiguration>\n"
-        for q in queue_configurations:
-            xml_body += f"""
-            <QueueConfiguration>
-                <Id>{q['Id']}</Id>
-                <Queue>{q['QueueArn']}</Queue>
-                <Event>{q['Event']}</Event>
-            </QueueConfiguration>
-            """
-        xml_body += "\n</NotificationConfiguration>"
-        # Future - TopicConfigurations
-        # TODO - LambdaFunctionConfigurations
-        return Response(xml_body, status=200, mimetype="application/xml")
-
-    # Otherwise, proxy to S3 normally
-    return proxy_to_s3()
+    return Response(xml_body, status=200, mimetype="application/xml")
 
 
 @app.route("/s3/buckets/<bucket_name>/notification", methods=["GET"])
@@ -3515,38 +3569,48 @@ def get_bucket_notifications(bucket_name):
         return jsonify({"__type": "ServiceException", "message": str(e)}), 500
 
 
-def put_bucket_notification_configuration(bucket_name, configuration):
-    # bucket_name, queue_arn
-    session = get_boto3_session()
-    s3_client = session.client("s3", endpoint_url=S3_ENDPOINT)
-    logger.critical(f"Put Configuration: {configuration}")
-    # TODO mapping SQS to minio webhook
-    # if 'QueueArn' in configuration:
-    #     queue_arn = configuration['QueueArn']
-    #     self._writing_sqs_mapping(queue_arn, webhook_arn)
+def configure_bucket_notification_webhook(
+    bucket_name, notification_id, queue_arn, events=[], filters=[]
+):
+    queue_name = queue_arn.split(":")[-1]
 
-    configure_bucket_notification_webhook(
-        bucket_name, time.time(), configuration["QueueArn"].split(":")[-1]
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=S3_ENDPOINT,
+        aws_access_key_id="localcloud",
+        aws_secret_access_key="localcloud",
+        config=Config(signature_version="s3v4"),
+        region_name="us-east-1",
     )
 
-    configuration["QueueArn"] = "arn:minio:sqs::1:webhook"
-    try:
-        return (
-            jsonify(
-                {
-                    "__type": "ServiceException",
-                    "message": s3_client.put_bucket_notification_configuration(
-                        Bucket=bucket_name,
-                        NotificationConfiguration={
-                            "QueueConfigurations": [configuration]
-                        },
-                    ),
-                }
-            ),
-            200,
-        )
-    except Exception as e:
-        return jsonify({"__type": "ServiceException", "message": str(e)}), 500
+    config_id = f"webhook-{notification_id}"
+
+    new_config = {
+        "Id": config_id,
+        "QueueArn": f"arn:minio:sqs::{queue_name}:webhook",
+        "Events": events or ["s3:ObjectCreated:*"],
+    }
+
+    current = s3.get_bucket_notification_configuration(Bucket=bucket_name)
+
+    queue_configs = current.get("QueueConfigurations", [])
+
+    replaced = False
+    for i, cfg in enumerate(queue_configs):
+        if cfg.get("Id") == config_id or cfg.get("QueueArn") == new_config["QueueArn"]:
+            queue_configs[i] = new_config
+            replaced = True
+            break
+
+    if not replaced:
+        queue_configs.append(new_config)
+
+    current["QueueConfigurations"] = queue_configs
+
+    s3.put_bucket_notification_configuration(
+        Bucket=bucket_name,
+        NotificationConfiguration=current,
+    )
 
 
 # TODO Handles web console s3 commands
@@ -3868,7 +3932,6 @@ def get_s3_object_metadata(bucket_name, key):
         response = s3_client.head_object(Bucket=bucket_name, Key=key)
 
         # Build object URL
-        S3_ENDPOINT = os.getenv("S3_ENDPOINT_URL", "http://s3:9000")
         object_url = f"{S3_ENDPOINT}/{bucket_name}/{key}"
 
         metadata = {
@@ -4029,12 +4092,22 @@ def copy_s3_object(bucket_name):
 # Also add a catch-all to see what URLs are being hit
 @app.route("/<path:path>", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"])
 def catch_all(path):
-    # Then in handle_request():
+
+    auth = request.headers.get("Authorization", "")
     service, operation = get_service_from_user_agent()
     if service and service.lower() in ("s3", "s3api"):
         response = proxy_to_s3()
         logger.info(f"Routing to S3: service={service}, operation={operation}")
         return response
+    elif "Credential=" in auth:
+        cred = auth.split("Credential=")[1].split(",")[0]
+        parts = cred.split("/")
+        if len(parts) >= 4:
+            service = parts[3]
+            if service == "s3":
+                logger.info(f"Fallback routing to S3: service={service}, operation={operation}")
+                response = proxy_to_s3()
+                return response
 
     """Catch-all route for debugging"""
     logger.warning(f"Unhandled route: {request.method} /{path}")
