@@ -3243,32 +3243,6 @@ def proxy_to_s3():
     return flask_response
 
 
-def set_bucket_webhook_notification(bucket_name, target_name):
-    """Configure MinIO webhook — only relevant for SQS/SNS targets, not Lambda."""
-    config_payload = {
-        "key_values": {
-            "notify_webhook:1": f"endpoint=http://api:4566/webhook/sqs/{target_name} queue_limit=1000 enable=on"
-        }
-    }
-
-    creds = Credentials("localcloud", "localcloud")
-    aws_req = AWSRequest(
-        method="PUT",
-        url=f"{S3_ENDPOINT}/minio/admin/v3/set-config-kv",
-        data=json.dumps(config_payload),
-        headers={"Content-Type": "application/json"},
-    )
-    SigV4Auth(creds, "s3", "us-east-1").add_auth(aws_req)
-    auth_headers = dict(aws_req.headers.items())
-
-    resp = requests.put(
-        f"{S3_ENDPOINT}/minio/admin/v3/set-config-kv",
-        headers=auth_headers,
-        data=json.dumps(config_payload),
-    )
-    logger.debug(f"MinIO webhook config status={resp.status_code} body={resp.text}")
-
-
 # Handles aws cli s3 commands
 @app.route("/<bucket_name>", methods=["PUT"])
 def handle_bucket_operations(bucket_name):
@@ -3317,16 +3291,16 @@ def handle_bucket_operations(bucket_name):
             events = events or []
 
             target_name = arn.split(":")[-1]
-
-            if target_type == "sqs":
-                target_url = f"http://sqs:4566/{ACCOUNT_ID}/{target_name}"
-                set_bucket_webhook_notification(bucket_name, target_name)
-            elif target_type == "sns":
-                target_url = f"http://sns:4566/{ACCOUNT_ID}/{target_name}" # yet another TODO
-                set_bucket_webhook_notification(bucket_name, target_name)
-            else:
+            target_url = arn
+            # if target_type == "sqs":
+            #     target_url = f"http://sqs:4566/{ACCOUNT_ID}/{target_name}"
+            #     set_bucket_webhook_notification(bucket_name, target_name)
+            # elif target_type == "sns":
+            #     target_url = f"http://sns:4566/{ACCOUNT_ID}/{target_name}" # yet another TODO
+            #     set_bucket_webhook_notification(bucket_name, target_name)
+            # else:
                 # Lambda — store ARN directly; webhook is triggered by the webhook handler
-                target_url = arn
+
 
             # Extract filter rules
             filter_rules = []
