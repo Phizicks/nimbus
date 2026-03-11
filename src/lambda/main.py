@@ -2096,32 +2096,32 @@ class ContainerLifecycleManager:
 
         if runtime.startswith("python"):
             return f"""FROM {RUNTIME_BASE_IMAGES.get(runtime, 'public.ecr.aws/lambda/python:3.12')}
-COPY . ${{LAMBDA_TASK_ROOT}}
+COPY src/ ${{LAMBDA_TASK_ROOT}}
 CMD [ "{handler}" ]
 """
         elif runtime.startswith("nodejs"):
             return f"""FROM {RUNTIME_BASE_IMAGES.get(runtime, 'public.ecr.aws/lambda/nodejs:22')}
-COPY . ${{LAMBDA_TASK_ROOT}}
+COPY src/ ${{LAMBDA_TASK_ROOT}}
 CMD [ "{handler}" ]
 """
         elif runtime.startswith("java"):
             # Custom runtime - requires bootstrap file
             return f"""FROM {RUNTIME_BASE_IMAGES.get(runtime, 'public.ecr.aws/lambda/java25')}
-COPY . ${{LAMBDA_TASK_ROOT}}
+COPY src/ ${{LAMBDA_TASK_ROOT}}
 RUN chmod +x ${{LAMBDA_TASK_ROOT}}/bootstrap || true
 CMD [ "{handler}" ]
-"""
+    """
         elif runtime.startswith("go"):
             # Custom runtime - requires bootstrap file
             return f"""FROM {RUNTIME_BASE_IMAGES.get(runtime, 'public.ecr.aws/lambda/go:1')}
-COPY . ${{LAMBDA_TASK_ROOT}}
+COPY src/ ${{LAMBDA_TASK_ROOT}}
 RUN chmod +x ${{LAMBDA_TASK_ROOT}}/bootstrap || true
 CMD [ "{handler}" ]
 """
         elif runtime.startswith("provided"):
             # Custom runtime - requires bootstrap file
             return f"""FROM {RUNTIME_BASE_IMAGES.get(runtime, 'public.ecr.aws/lambda/provided:al2023')}
-COPY . ${{LAMBDA_TASK_ROOT}}
+COPY src/ ${{LAMBDA_TASK_ROOT}}
 RUN chmod +x ${{LAMBDA_TASK_ROOT}}/bootstrap || true
 CMD [ "{handler}" ]
 """
@@ -2793,9 +2793,10 @@ def update_function_code(function_name):
 
             zip_path = function_dir / "function.zip"
             zip_path.write_bytes(zip_data)
-
+            src_dir = function_dir / "src"
+            src_dir.mkdir(exist_ok=True)
             with zipfile.ZipFile(zip_path, "r") as zip_ref:
-                zip_ref.extractall(function_dir)
+                zip_ref.extractall(src_dir)
 
             endpoint, container_name, host_port, err_resp, err_code = (
                 lifecycle_manager.start_lambda_container(
@@ -3454,9 +3455,11 @@ def create_function():
             except:
                 pass
             zip_path.write_bytes(zip_data)
-            # TODO Feel like this should be a subdir of ./src, the image ends up with the zip, source and dockerfile otherwise.
+
+            src_dir = function_dir / "src"
+            src_dir.mkdir(exist_ok=True)
             with zipfile.ZipFile(zip_path, "r") as zip_ref:
-                zip_ref.extractall(function_dir)
+                zip_ref.extractall(src_dir)
 
             # Build the image (but don't start container)
             built_image, err_resp, err_code = lifecycle_manager.build_function_image(
