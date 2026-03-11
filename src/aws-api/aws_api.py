@@ -4029,17 +4029,30 @@ def copy_s3_object(bucket_name):
 # Also add a catch-all to see what URLs are being hit
 @app.route("/<path:path>", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"])
 def catch_all(path):
-    # Then in handle_request():
+    # Yes, getting desperately crude
+    auth = request.headers.get("Authorization", "")
     service, operation = get_service_from_user_agent()
     if service and service.lower() in ("s3", "s3api"):
         response = proxy_to_s3()
         logger.info(f"Routing to S3: service={service}, operation={operation}")
         return response
+    elif "Credential=" in auth:
+        cred = auth.split("Credential=")[1].split(",")[0]
+        parts = cred.split("/")
+        if len(parts) >= 4:
+            service = parts[3]
+            if service == "s3":
+                logger.info(f"Fallback routing to S3: service={service}, operation={operation}")
+                response = proxy_to_s3()
+                return response
 
     """Catch-all route for debugging"""
     logger.warning(f"Unhandled route: {request.method} /{path}")
     logger.warning(f"Operation detected: {operation}")
     logger.warning(f"Query params: {vars(request.args)}")
+    logger.warning(f"Headers: {list(request.headers.keys())}")
+    for header in list(request.headers.keys()):
+        logger.warning(f"Header: {header}={request.headers[header]}")
     logger.warning(
         f"Available routes: {[str(rule) for rule in app.url_map.iter_rules()]}"
     )
