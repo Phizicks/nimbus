@@ -1994,7 +1994,7 @@ async function testFunction(event) {
                 </div>
                 <div class="detail-row">
                     <div class="detail-label">Error</div>
-                    <div class="detail-value"><pre class="code-block" style="color: var(--danger);">${error}</pre></div>
+                    <div class="detail-value"><pre class="code-block" style="color: var(--danger);">${(() => { try { return JSON.stringify(JSON.parse(error), null, 2); } catch { return error; } })()}</pre></div>
                 </div>
             `;
         }
@@ -2009,7 +2009,7 @@ async function testFunction(event) {
             </div>
             <div class="detail-row">
                 <div class="detail-label">Error</div>
-                <div class="detail-value"><pre class="code-block" style="color: var(--danger);">${error.message}</pre></div>
+                <div class="detail-value"><pre class="code-block" style="color: var(--danger);">${(() => { try { return JSON.stringify(JSON.parse(error.message), null, 2); } catch { return error.message; } })()}</pre></div>
             </div>
         `;
     }
