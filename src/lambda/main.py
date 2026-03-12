@@ -1739,7 +1739,6 @@ class ContainerLifecycleManager:
                     "LAMBDA_RUNTIME_DIR": "/var/runtime",
                     "AWS_ACCESS_KEY_ID": "localcloud",
                     "AWS_SECRET_ACCESS_KEY": "localcloud",
-                    "AWS_SESSION_TOKEN": "",
                     "LANG": "en_US.UTF-8",
                     "TZ": ":UTC",
                     "PATH": "/var/lang/bin:/usr/local/bin:/usr/bin/:/bin:/opt/bin",
@@ -2107,22 +2106,22 @@ CMD [ "{handler}" ]
         elif runtime.startswith("java"):
             # Custom runtime - requires bootstrap file
             return f"""FROM {RUNTIME_BASE_IMAGES.get(runtime, 'public.ecr.aws/lambda/java25')}
-COPY src/ ${{LAMBDA_TASK_ROOT}}
-RUN chmod +x ${{LAMBDA_TASK_ROOT}}/bootstrap || true
+COPY src/ ${{LAMBDA_RUNTIME_DIR}}
+RUN chmod +x ${{LAMBDA_RUNTIME_DIR}}/bootstrap || true
 CMD [ "{handler}" ]
     """
         elif runtime.startswith("go"):
             # Custom runtime - requires bootstrap file
             return f"""FROM {RUNTIME_BASE_IMAGES.get(runtime, 'public.ecr.aws/lambda/go:1')}
-COPY src/ ${{LAMBDA_TASK_ROOT}}
-RUN chmod +x ${{LAMBDA_TASK_ROOT}}/bootstrap || true
+COPY src/ ${{LAMBDA_RUNTIME_DIR}}
+RUN chmod +x ${{LAMBDA_RUNTIME_DIR}}/bootstrap || true
 CMD [ "{handler}" ]
 """
-        elif runtime.startswith("provided"):
+        elif runtime.startswith("provided.al2"):
             # Custom runtime - requires bootstrap file
             return f"""FROM {RUNTIME_BASE_IMAGES.get(runtime, 'public.ecr.aws/lambda/provided:al2023')}
-COPY src/ ${{LAMBDA_TASK_ROOT}}
-RUN chmod +x ${{LAMBDA_TASK_ROOT}}/bootstrap || true
+COPY src/ ${{LAMBDA_RUNTIME_DIR}}
+RUN chmod +x ${{LAMBDA_RUNTIME_DIR}}/bootstrap || true
 CMD [ "{handler}" ]
 """
         else:
