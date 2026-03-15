@@ -1931,11 +1931,15 @@ def webhook_s3():
             # Find which configs match this event
             matched_queues = []
             for config in configs:
+                queue_url = config.get("queue_url", "")
+                # Skip Lambda configs — handled by /webhook/lambda
+                if ":lambda:" in queue_url or "function:" in queue_url:
+                    continue
                 if event_matches_config(event_name, object_key, config):
-                    matched_queues.append(config["queue_url"])
-                    send_event_to_queue(config["queue_url"], record)
+                    matched_queues.append(queue_url)
+                    send_event_to_queue(queue_url, record)
                     logger.info(
-                        f"Routed {event_name} on {object_key} to queue {config['queue_url']}"
+                        f"Routed {event_name} on {object_key} to queue {queue_url}"
                     )
 
             if not matched_queues:
@@ -3304,7 +3308,6 @@ def proxy_to_s3():
         data=request_data,
         stream=True,
     )
-    logger.critical(f"Client: {client_ip} S3URL: {s3_url} S3Response: {response.content}")
     # Build response with proper headers
     excluded = {"transfer-encoding", "connection"}
     response_headers = [

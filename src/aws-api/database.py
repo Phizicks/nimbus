@@ -424,11 +424,6 @@ class Database:
         if isinstance(filter_rules, list):
             filter_rules = json.dumps(filter_rules)
 
-        conn.execute("BEGIN")
-        cursor.execute(
-            "DELETE FROM s3_notification_configs WHERE bucket_name = ?",
-            (bucket_name,),
-        )
         cursor.execute(
             """
             INSERT OR REPLACE INTO s3_notification_configs

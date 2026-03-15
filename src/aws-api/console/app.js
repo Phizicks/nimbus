@@ -3440,12 +3440,109 @@ async function deleteRepository(repositoryName, hasImages) {
 // S3 FUNCTIONS
 // ============================================================================
 
-function showConfigureNotificationsModal(bucketName) {
+async function showConfigureNotificationsModal(bucketName) {
     document.getElementById('notification-bucket-name').textContent = bucketName;
+    hideNotificationForm();
+    showModal('configure-notifications-modal');
+    await refreshNotificationsList(bucketName);
+}
+
+function showNotificationForm(cfg = null) {
+    document.getElementById('notifications-list-section').style.display = 'none';
+    document.getElementById('notification-form-section').style.display = 'block';
+
     document.getElementById('configure-notifications-form').reset();
     document.getElementById('notification-destination-group').style.display = 'none';
     document.getElementById('prefix-filter-section').style.display = 'none';
-    showModal('configure-notifications-modal');
+
+    if (cfg) {
+        document.getElementById('notification-form-title').textContent = 'Edit Notification';
+        document.getElementById('notification-submit-btn').textContent = 'Save Changes';
+
+        const type = cfg._type || (cfg.QueueArn ? 'Queue' : cfg.LambdaFunctionArn ? 'Lambda' : 'Topic');
+        const arn  = cfg.QueueArn || cfg.LambdaFunctionArn || cfg.TopicArn || '';
+
+        document.getElementById('notification-type').value = type;
+        updateNotificationDestination();
+        document.getElementById('notification-destination').value = arn;
+        document.getElementById('notification-id').value = cfg.Id || '';
+
+        const events = cfg.Events || [];
+        document.querySelectorAll('.event-checkbox').forEach(cb => { cb.checked = events.includes(cb.value); });
+
+        const rules = cfg.Filter?.Key?.FilterRules || [];
+        if (rules.length) {
+            document.getElementById('use-prefix-filter').checked = true;
+            document.getElementById('prefix-filter-section').style.display = 'block';
+            const prefix = rules.find(r => r.Name === 'prefix');
+            const suffix = rules.find(r => r.Name === 'suffix');
+            if (prefix) document.getElementById('notification-prefix').value = prefix.Value;
+            if (suffix) document.getElementById('notification-suffix').value = suffix.Value;
+        }
+    } else {
+        document.getElementById('notification-form-title').textContent = 'Add Notification';
+        document.getElementById('notification-submit-btn').textContent = 'Add Notification';
+    }
+}
+
+function hideNotificationForm() {
+    document.getElementById('notifications-list-section').style.display = 'block';
+    document.getElementById('notification-form-section').style.display = 'none';
+}
+
+async function refreshNotificationsList(bucketName) {
+    const container = document.getElementById('notifications-list-content');
+    container.innerHTML = '<div class="loading"><div class="spinner"></div><div>Loading...</div></div>';
+
+    let configs = [];
+    try {
+        const resp = await fetch(`${API_BASE}s3/buckets/${bucketName}/notification`);
+        if (resp.ok) {
+            const data = await resp.json();
+            configs = [
+                ...(data.QueueConfigurations || []).map(c => ({ ...c, _type: 'Queue' })),
+                ...(data.LambdaFunctionConfigurations || []).map(c => ({ ...c, _type: 'Lambda' })),
+                ...(data.TopicConfigurations || []).map(c => ({ ...c, _type: 'Topic' })),
+            ];
+        }
+    } catch (e) { console.log('Error fetching notifications:', e); }
+
+    if (configs.length === 0) {
+        container.innerHTML = `<p style="color: var(--text-primary); font-style: italic;">No event notifications configured</p>`;
+        return;
+    }
+
+    let html = `<table style="width: 100%;">
+        <thead><tr><th>ID</th><th>Type</th><th>Destination</th><th>Events</th><th>Filter</th><th>Actions</th></tr></thead>
+        <tbody>`;
+
+    for (const cfg of configs) {
+        const arn = cfg.QueueArn || cfg.LambdaFunctionArn || cfg.TopicArn || '';
+        const name = arn.split(':').pop();
+        const events = (cfg.Events || []).join(', ') || 'None';
+        const rules = cfg.Filter?.Key?.FilterRules || [];
+        const filterText = rules.length ? rules.map(r => `${r.Name}: ${r.Value}`).join(', ') : '—';
+        const cfgJson = encodeURIComponent(JSON.stringify(cfg));
+
+        html += `<tr>
+            <td><code>${cfg.Id || '—'}</code></td>
+            <td>${cfg._type}</td>
+            <td>
+                <div><strong>${name}</strong></div>
+                <div style="font-size: 11px; color: var(--text-secondary);"><code>${arn}</code></div>
+            </td>
+            <td style="font-size: 13px;">${events}</td>
+            <td style="font-size: 13px;">${filterText}</td>
+            <td style="white-space: nowrap;">
+                <button class="btn btn-secondary" style="margin-right: 4px;"
+                    onclick="showNotificationForm(JSON.parse(decodeURIComponent('${cfgJson}')))">Edit</button>
+                <button class="btn btn-danger"
+                    onclick="deleteNotificationFromModal('${bucketName}', '${cfg.Id}')">Delete</button>
+            </td>
+        </tr>`;
+    }
+    html += `</tbody></table>`;
+    container.innerHTML = html;
 }
 
 function updateNotificationDestination() {
@@ -3456,13 +3553,9 @@ function updateNotificationDestination() {
 
     if (type) {
         group.style.display = 'block';
-
         if (type === 'Queue') {
             label.textContent = 'SQS Queue ARN *';
             input.placeholder = 'arn:aws:sqs:us-east-1:000000000000:my-queue';
-            // } else if (type === 'Topic') {
-            //     label.textContent = 'SNS Topic ARN *';
-            //     input.placeholder = 'arn:aws:sns:us-east-1:000000000000:my-topic';
         } else if (type === 'Lambda') {
             label.textContent = 'Lambda Function ARN *';
             input.placeholder = 'arn:aws:lambda:us-east-1:000000000000:function:my-function';
@@ -3485,56 +3578,25 @@ async function configureNotifications(event) {
     const destination = document.getElementById('notification-destination').value;
     const notificationId = document.getElementById('notification-id').value || `notification-${Date.now()}`;
 
-    // Get selected events
-    const eventCheckboxes = document.querySelectorAll('.event-checkbox:checked');
-    const events = Array.from(eventCheckboxes).map(cb => cb.value);
-
+    const events = Array.from(document.querySelectorAll('.event-checkbox:checked')).map(cb => cb.value);
     if (events.length === 0) {
         showNotification('Please select at least one event type', 'error');
         return;
     }
 
-    // Build notification configuration
-    const config = {
-        Id: notificationId,
-        Events: events
-    };
+    const config = { Id: notificationId, Events: events };
+    if (type === 'Queue') config.QueueArn = destination;
+    else if (type === 'Topic') config.TopicArn = destination;
+    else if (type === 'Lambda') config.LambdaFunctionArn = destination;
 
-    // Add destination based on type
-    if (type === 'Queue') {
-        config.QueueArn = destination;
-    } else if (type === 'Topic') {
-        config.TopicArn = destination;
-    } else if (type === 'Lambda') {
-        config.LambdaFunctionArn = destination;
-    }
-
-    // Add filters if specified
     const useFilter = document.getElementById('use-prefix-filter').checked;
     if (useFilter) {
         const prefix = document.getElementById('notification-prefix').value;
         const suffix = document.getElementById('notification-suffix').value;
-
         if (prefix || suffix) {
-            config.Filter = {
-                Key: {
-                    FilterRules: []
-                }
-            };
-
-            if (prefix) {
-                config.Filter.Key.FilterRules.push({
-                    Name: 'prefix',
-                    Value: prefix
-                });
-            }
-
-            if (suffix) {
-                config.Filter.Key.FilterRules.push({
-                    Name: 'suffix',
-                    Value: suffix
-                });
-            }
+            config.Filter = { Key: { FilterRules: [] } };
+            if (prefix) config.Filter.Key.FilterRules.push({ Name: 'prefix', Value: prefix });
+            if (suffix) config.Filter.Key.FilterRules.push({ Name: 'suffix', Value: suffix });
         }
     }
 
@@ -3542,26 +3604,36 @@ async function configureNotifications(event) {
         const response = await fetch(`${API_BASE}s3/buckets/${bucketName}/notification`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                type: type,
-                configuration: config
-            })
+            body: JSON.stringify({ type, configuration: config })
         });
-
         if (!response.ok) {
             const error = await response.json();
             throw new Error(error.message || 'Failed to configure notification');
         }
-
-        closeModal('configure-notifications-modal');
-        showNotification('Event notification configured successfully', 'success');
-
-        // Refresh bucket details
+        showNotification('Event notification saved successfully', 'success');
+        hideNotificationForm();
+        await refreshNotificationsList(bucketName);
         viewBucketDetails(bucketName);
     } catch (error) {
         console.error('Error configuring notification:', error);
         showNotification('Error configuring notification: ' + error.message, 'error');
     }
+}
+
+async function deleteNotificationFromModal(bucketName, notificationId) {
+    showConfirmModal(`Delete notification: ${notificationId}?`, async () => {
+        try {
+            const response = await fetch(`${API_BASE}s3/buckets/${bucketName}/notification/${notificationId}`, {
+                method: 'DELETE'
+            });
+            if (!response.ok) throw new Error('Failed to delete');
+            showNotification('Notification deleted', 'success');
+            await refreshNotificationsList(bucketName);
+            viewBucketDetails(bucketName);
+        } catch (error) {
+            showNotification('Error deleting notification: ' + error.message, 'error');
+        }
+    });
 }
 
 // let transitionCounter = 0;
@@ -4012,140 +4084,66 @@ async function viewBucketDetails(bucketName) {
 
         // Notification Configuration Section
         html += `
-            <h3 style="margin-top: 30px; margin-bottom: 15px; color: var(--text-primary);">Event Notifications</h3>
-        `;
-
-        html += `
-            <div style="margin: 20px 0;">
-                <button class="btn btn-primary" onclick="showConfigureNotificationsModal('${bucketName}')">
-                    Configure Event Notifications
-                </button>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 30px; margin-bottom: 15px;">
+                <h3 style="margin: 0; color: var(--text-primary);">Event Notifications</h3>
+                <button class="btn btn-primary" onclick="showAddNotificationFromDetails('${bucketName}')">+ Add Notification</button>
             </div>
         `;
         let hasNotifications = false;
 
+        const renderNotificationFilter = (config) => {
+            const rules = config.Filter?.Key?.FilterRules || [];
+            const prefix = rules.find(r => r.Name === 'prefix');
+            const suffix = rules.find(r => r.Name === 'suffix');
+            const parts = [];
+            if (prefix) parts.push(`prefix: ${prefix.Value}`);
+            if (suffix) parts.push(`suffix: ${suffix.Value}`);
+            return parts.length ? parts.join(', ') : '—';
+        };
+
+        const renderNotificationRow = (arn, arnField, config) => {
+            const name = arn.split(':').pop();
+            const events = config.Events ? config.Events.join(', ') : 'None';
+            const filter = renderNotificationFilter(config);
+            const configJson = encodeURIComponent(JSON.stringify({...config, _arnField: arnField}));
+            return `
+                <tr>
+                    <td>
+                        <div><strong>${name}</strong></div>
+                        <div style="font-size: 11px; color: var(--text-secondary); margin-top: 4px;"><code>${arn}</code></div>
+                    </td>
+                    <td style="font-size: 13px;">${config.Id || '—'}</td>
+                    <td style="font-size: 13px;">${events}</td>
+                    <td style="font-size: 13px;">${filter}</td>
+                    <td style="white-space: nowrap;">
+                        <button class="btn btn-secondary" style="margin-right: 4px;"
+                            onclick="showEditNotificationFromDetails('${bucketName}', JSON.parse(decodeURIComponent('${configJson}')))">Edit</button>
+                        <button class="btn btn-danger"
+                            onclick="deleteNotification('${bucketName}', '${config.Id}')">Delete</button>
+                    </td>
+                </tr>`;
+        };
+
+        const notificationTableWrap = (title, rows) => `
+            <h4 style="margin-top: 20px; margin-bottom: 10px; font-size: 16px;">${title}</h4>
+            <table style="width: 100%; margin-bottom: 20px;">
+                <thead><tr><th>Destination</th><th>ID</th><th>Events</th><th>Filter</th><th>Actions</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table>`;
+
         if (notificationConfig) {
-            // SQS Queue Configurations
-            if (notificationConfig.QueueConfigurations && notificationConfig.QueueConfigurations.length > 0) {
+            if (notificationConfig.QueueConfigurations?.length > 0) {
                 hasNotifications = true;
-                html += `
-                    <h4 style="margin-top: 20px; margin-bottom: 10px; font-size: 16px;">SQS Queue Notifications</h4>
-                    <table style="width: 100%; margin-bottom: 20px;">
-                        <thead>
-                            <tr>
-                                <th>Queue ARN</th>
-                                <th>Events</th>
-                                <th>Filter</th>
-                                <th>Suffix</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>`;
-
-                for (const config of notificationConfig.QueueConfigurations) {
-                    const queueArn = config.QueueArn || 'N/A';
-                    const queueName = queueArn.split(':').pop();
-                    const events = config.Events ? config.Events.join(', ') : 'None';
-                    const filter = config.Filter?.Key?.FilterRules?.[0] ?
-                        `${config.Filter.Key.FilterRules[0].Name}: ${config.Filter.Key.FilterRules[0].Value}` :
-                        'All objects';
-                    const suffix = config.Filter?.Key?.FilterRules?.[0] ?
-                        `${config.Filter.Key.FilterRules[1].Name}: ${config.Filter.Key.FilterRules[1].Value}` :
-                        'All objects';
-                    html += `
-                        <tr>
-                            <td>
-                                <div><strong>${queueName}</strong></div>
-                                <div style="font-size: 11px; color: var(--text-primary); margin-top: 4px;"><code>${queueArn}</code></div>
-                            </td>
-                            <td style="font-size: 13px;">${events}</td>
-                            <td style="font-size: 13px;">${filter}</td>
-                            <td style="font-size: 13px;">${suffix}</td>
-                            <td>
-                                <button class="btn btn-danger" onclick="deleteNotification('${bucketName}', '${config.Id}')">Delete</button>
-                            </td>
-                        </tr>
-                    `;
-                }
-
-                html += `</tbody></table>`;
+                const rows = notificationConfig.QueueConfigurations
+                    .map(c => renderNotificationRow(c.QueueArn || 'N/A', 'QueueArn', c)).join('');
+                html += notificationTableWrap('SQS Queue Notifications', rows);
             }
-
-            // Lambda Function Configurations
-            if (notificationConfig.LambdaFunctionConfigurations && notificationConfig.LambdaFunctionConfigurations.length > 0) {
+            if (notificationConfig.LambdaFunctionConfigurations?.length > 0) {
                 hasNotifications = true;
-                html += `
-                    <h4 style="margin-top: 20px; margin-bottom: 10px; font-size: 16px;">Lambda Function Notifications</h4>
-                    <table style="width: 100%; margin-bottom: 20px;">
-                        <thead>
-                            <tr>
-                                <th>Function ARN</th>
-                                <th>Events</th>
-                                <th>Filter</th>
-                            </tr>
-                        </thead>
-                        <tbody>`;
-
-                for (const config of notificationConfig.LambdaFunctionConfigurations) {
-                    const functionArn = config.LambdaFunctionArn || 'N/A';
-                    const functionName = functionArn.split(':').pop();
-                    const events = config.Events ? config.Events.join(', ') : 'None';
-                    const filter = config.Filter?.Key?.FilterRules?.[0] ?
-                        `${config.Filter.Key.FilterRules[0].Name}: ${config.Filter.Key.FilterRules[0].Value}` :
-                        'All objects';
-
-                    html += `
-                        <tr>
-                            <td>
-                                <div><strong>${functionName}</strong></div>
-                                <div style="font-size: 11px; color: #545B64; margin-top: 4px;"><code>${functionArn}</code></div>
-                            </td>
-                            <td style="font-size: 13px;">${events}</td>
-                            <td style="font-size: 13px;">${filter}</td>
-                        </tr>
-                    `;
-                }
-
-                html += `</tbody></table>`;
+                const rows = notificationConfig.LambdaFunctionConfigurations
+                    .map(c => renderNotificationRow(c.LambdaFunctionArn || 'N/A', 'LambdaFunctionArn', c)).join('');
+                html += notificationTableWrap('Lambda Function Notifications', rows);
             }
-
-            // SNS Topic Configurations
-            // if (notificationConfig.TopicConfigurations && notificationConfig.TopicConfigurations.length > 0) {
-            //     hasNotifications = true;
-            //     html += `
-            //         <h4 style="margin-top: 20px; margin-bottom: 10px; font-size: 16px;">SNS Topic Notifications</h4>
-            //         <table style="width: 100%; margin-bottom: 20px;">
-            //             <thead>
-            //                 <tr>
-            //                     <th>Topic ARN</th>
-            //                     <th>Events</th>
-            //                     <th>Filter</th>
-            //                 </tr>
-            //             </thead>
-            //             <tbody>`;
-
-            //     for (const config of notificationConfig.TopicConfigurations) {
-            //         const topicArn = config.TopicArn || 'N/A';
-            //         const topicName = topicArn.split(':').pop();
-            //         const events = config.Events ? config.Events.join(', ') : 'None';
-            //         const filter = config.Filter?.Key?.FilterRules?.[0] ?
-            //             `${config.Filter.Key.FilterRules[0].Name}: ${config.Filter.Key.FilterRules[0].Value}` :
-            //             'All objects';
-
-            //         html += `
-            //             <tr>
-            //                 <td>
-            //                     <div><strong>${topicName}</strong></div>
-            //                     <div style="font-size: 11px; color: #545B64; margin-top: 4px;"><code>${topicArn}</code></div>
-            //                 </td>
-            //                 <td style="font-size: 13px;">${events}</td>
-            //                 <td style="font-size: 13px;">${filter}</td>
-            //             </tr>
-            //         `;
-            //     }
-
-            //     html += `</tbody></table>`;
-            // }
         }
 
         if (!hasNotifications) {
@@ -4185,6 +4183,18 @@ async function deleteNotification(bucketName, notificationId) {
             }
         }
     );
+}
+
+function showAddNotificationFromDetails(bucketName) {
+    showConfigureNotificationsModal(bucketName).then(() => showNotificationForm());
+}
+
+function showEditNotificationFromDetails(bucketName, config) {
+    // Map _arnField back to the type the form expects
+    const arnFieldToType = { QueueArn: 'Queue', LambdaFunctionArn: 'Lambda', TopicArn: 'Topic' };
+    const type = arnFieldToType[config._arnField] || 'Queue';
+    const normalised = { ...config, _type: type };
+    showConfigureNotificationsModal(bucketName).then(() => showNotificationForm(normalised));
 }
 
 // delete function:
@@ -5182,7 +5192,7 @@ async function viewSecret(secretName) {
         // Insert rotation info after Last Accessed
         const detailsContent = document.getElementById('secret-details-content');
 
-        // CRITICAL FIX: Remove ALL existing rotation rows before inserting new ones
+        // Remove ALL existing rotation rows before inserting new ones
         const existingRotationRows = detailsContent.querySelectorAll('.rotation-info');
         existingRotationRows.forEach(row => row.remove());
 

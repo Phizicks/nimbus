@@ -923,87 +923,111 @@
 
     <div id="configure-notifications-modal" class="modal">
         <div class="modal-content" style="max-width: 900px;">
-            <div class="modal-header">Configure Event Notifications: <span id="notification-bucket-name"></span></div>
+            <div class="modal-header">Event Notifications: <span id="notification-bucket-name"></span></div>
             <div class="modal-body">
-                <form id="configure-notifications-form" onsubmit="configureNotifications(event)">
-                    <div class="form-group">
-                        <label>Notification Type *</label>
-                        <select id="notification-type" required onchange="updateNotificationDestination()">
-                            <option value="">-- Select Type --</option>
-                            <option value="Queue">SQS Queue</option>
-                            <!-- <option value="Topic">SNS Topic</option> -->
-                            <option value="Lambda">Lambda Function</option>
-                        </select>
-                    </div>
 
-                    <div class="form-group" id="notification-destination-group" style="display: none;">
-                        <label id="notification-destination-label">Destination ARN *</label>
-                        <input type="text" id="notification-destination" placeholder="arn:aws:sqs:region:account:queue-name">
-                        <small style="color: #545B64; font-size: 12px;">
-                            Format: arn:aws:sqs:region:account:queue-name (or sns/lambda)
-                        </small>
+                <!-- Existing notifications list -->
+                <div id="notifications-list-section">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                        <h3 style="margin: 0; color: var(--text-primary);">Configured Notifications</h3>
+                        <button class="btn btn-primary" onclick="showNotificationForm()">+ Add Notification</button>
                     </div>
+                    <div id="notifications-list-content">
+                        <div class="loading"><div class="spinner"></div><div>Loading...</div></div>
+                    </div>
+                </div>
 
-                    <div class="form-group">
-                        <label>Events *</label>
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px;">
-                            <label style="display: flex; align-items: center; gap: 8px;">
-                                <input type="checkbox" class="event-checkbox" value="s3:ObjectCreated:*">
-                                All Object Created Events
-                            </label>
-                            <label style="display: flex; align-items: center; gap: 8px;">
-                                <input type="checkbox" class="event-checkbox" value="s3:ObjectCreated:Put">
-                                Object Created (Put)
-                            </label>
-                            <label style="display: flex; align-items: center; gap: 8px;">
-                                <input type="checkbox" class="event-checkbox" value="s3:ObjectCreated:Post">
-                                Object Created (Post)
-                            </label>
-                            <label style="display: flex; align-items: center; gap: 8px;">
-                                <input type="checkbox" class="event-checkbox" value="s3:ObjectCreated:Copy">
-                                Object Created (Copy)
-                            </label>
-                            <label style="display: flex; align-items: center; gap: 8px;">
-                                <input type="checkbox" class="event-checkbox" value="s3:ObjectRemoved:*">
-                                All Object Removed Events
-                            </label>
-                            <label style="display: flex; align-items: center; gap: 8px;">
-                                <input type="checkbox" class="event-checkbox" value="s3:ObjectRemoved:Delete">
-                                Object Removed (Delete)
+                <!-- Add / Edit form (hidden by default) -->
+                <div id="notification-form-section" style="display: none;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                        <h3 id="notification-form-title" style="margin: 0; color: var(--text-primary);">Add Notification</h3>
+                        <button class="btn btn-secondary" onclick="hideNotificationForm()">← Back to list</button>
+                    </div>
+                    <form id="configure-notifications-form" onsubmit="configureNotifications(event)">
+                        <div class="form-group">
+                            <label>Notification Type *</label>
+                            <select id="notification-type" required onchange="updateNotificationDestination()">
+                                <option value="">-- Select Type --</option>
+                                <option value="Queue">SQS Queue</option>
+                                <!-- <option value="Topic">SNS Topic</option> -->
+                                <option value="Lambda">Lambda Function</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" id="notification-destination-group" style="display: none;">
+                            <label id="notification-destination-label">Destination ARN *</label>
+                            <input type="text" id="notification-destination" placeholder="arn:aws:sqs:region:account:queue-name">
+                            <small style="color: #545B64; font-size: 12px;">
+                                Format: arn:aws:sqs:region:account:queue-name (or lambda)
+                            </small>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Events *</label>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px;">
+                                <label style="display: flex; align-items: center; gap: 8px;">
+                                    <input type="checkbox" class="event-checkbox" value="s3:ObjectCreated:*">
+                                    All Object Created Events
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 8px;">
+                                    <input type="checkbox" class="event-checkbox" value="s3:ObjectCreated:Put">
+                                    Object Created (Put)
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 8px;">
+                                    <input type="checkbox" class="event-checkbox" value="s3:ObjectCreated:Post">
+                                    Object Created (Post)
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 8px;">
+                                    <input type="checkbox" class="event-checkbox" value="s3:ObjectCreated:Copy">
+                                    Object Created (Copy)
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 8px;">
+                                    <input type="checkbox" class="event-checkbox" value="s3:ObjectRemoved:*">
+                                    All Object Removed Events
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 8px;">
+                                    <input type="checkbox" class="event-checkbox" value="s3:ObjectRemoved:Delete">
+                                    Object Removed (Delete)
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="use-prefix-filter" style="width: auto; margin-right: 8px;" onchange="togglePrefixFilter()">
+                                Filter by prefix/suffix
                             </label>
                         </div>
-                    </div>
 
-                    <div class="form-group">
-                        <label>
-                            <input type="checkbox" id="use-prefix-filter" style="width: auto; margin-right: 8px;" onchange="togglePrefixFilter()">
-                            Filter by prefix/suffix
-                        </label>
-                    </div>
-
-                    <div id="prefix-filter-section" style="display: none;">
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-                            <div class="form-group">
-                                <label>Prefix (optional)</label>
-                                <input type="text" id="notification-prefix" placeholder="images/">
-                            </div>
-                            <div class="form-group">
-                                <label>Suffix (optional)</label>
-                                <input type="text" id="notification-suffix" placeholder=".jpg">
+                        <div id="prefix-filter-section" style="display: none;">
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                                <div class="form-group">
+                                    <label>Prefix (optional)</label>
+                                    <input type="text" id="notification-prefix" placeholder="images/">
+                                </div>
+                                <div class="form-group">
+                                    <label>Suffix (optional)</label>
+                                    <input type="text" id="notification-suffix" placeholder=".jpg">
+                                </div>
                             </div>
                         </div>
-                    </div>
 
-                    <div class="form-group">
-                        <label>Notification ID (optional)</label>
-                        <input type="text" id="notification-id" placeholder="MyNotificationRule">
-                        <small style="color: #545B64; font-size: 12px;">Leave empty for auto-generated ID</small>
-                    </div>
-                </form>
+                        <div class="form-group">
+                            <label>Notification ID (optional)</label>
+                            <input type="text" id="notification-id" placeholder="MyNotificationRule">
+                            <small style="color: #545B64; font-size: 12px;">Leave empty for auto-generated ID</small>
+                        </div>
+
+                        <div style="display: flex; gap: 10px; margin-top: 10px;">
+                            <button type="submit" class="btn btn-primary" id="notification-submit-btn">Add Notification</button>
+                            <button type="button" class="btn btn-secondary" onclick="hideNotificationForm()">Cancel</button>
+                        </div>
+                    </form>
+                </div>
+
             </div>
             <div class="modal-footer">
-                <button type="submit" form="configure-notifications-form" class="btn btn-primary">Add Notification</button>
-                <button type="button" class="btn btn-secondary" onclick="closeModal('configure-notifications-modal')">Cancel</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('configure-notifications-modal')">Close</button>
             </div>
         </div>
     </div>
