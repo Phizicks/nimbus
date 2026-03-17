@@ -440,7 +440,6 @@ class Database:
                 datetime.now(timezone.utc).isoformat(),
             ),
         )
-
         conn.commit()
         conn.close()
 

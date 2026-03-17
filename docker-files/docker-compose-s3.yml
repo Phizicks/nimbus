@@ -10,6 +10,12 @@ services:
     environment:
       MINIO_ROOT_USER: localcloud
       MINIO_ROOT_PASSWORD: localcloud
+      MINIO_NOTIFY_WEBHOOK_ENABLE_LAMBDA: "on"
+      MINIO_NOTIFY_WEBHOOK_ENDPOINT_LAMBDA: "http://api:4566/webhook/lambda"
+      MINIO_NOTIFY_WEBHOOK_ENABLE_SQS: "on"
+      MINIO_NOTIFY_WEBHOOK_ENDPOINT_SQS: "http://api:4566/webhook/sqs"
+      MINIO_NOTIFY_WEBHOOK_ENABLE_SNS: "on"
+      MINIO_NOTIFY_WEBHOOK_ENDPOINT_SNS: "http://api:4566/webhook/sns"
       AWS_ENDPOINT_URL: http://api:4566
       LOG_LEVEL: DEBUG
     volumes:

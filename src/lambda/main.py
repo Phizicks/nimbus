@@ -2319,7 +2319,7 @@ def invoke_function(function_name):
     running_containers = lifecycle_manager._get_function_containers(
         function_name, status="running"
     )
-    container_id = None
+    container_id = ""
     is_cold = False
 
     # Build queue message
@@ -2379,7 +2379,7 @@ def invoke_function(function_name):
             c = docker_client.containers.get(container_name)
             container_id = c.id
         except Exception:
-            container_id = None
+            container_id = ""
         is_cold = True
     else:
         container_id = running_containers[0].id
