@@ -4242,13 +4242,13 @@ def copy_s3_object(bucket_name):
         s3_client = get_s3_client()
 
         # Copy object
-        copy_source = {"Bucket": view_args["bucket_name"], "Key": source_key}
+        copy_source = {"Bucket": request.view_args["bucket_name"], "Key": source_key}
         s3_client.copy_object(CopySource=copy_source, Bucket=dest_bucket, Key=dest_key)
 
         # Delete source if moving
         if delete_source:
             s3_client.delete_object(
-                Bucket=view_args["bucket_name"], Key=source_key
+                Bucket=request.view_args["bucket_name"], Key=source_key
             )
 
         return jsonify({"success": True}), 200

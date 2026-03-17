@@ -1077,7 +1077,7 @@ def handle_create_queue():
         return success_response({"QueueUrl": result["QueueUrl"]}), 200
 
     except Exception as e:
-        logger.error(f"Error in CreateQueue: {e}")
+        logger.error(f"Error in CreateQueue [{queue_name}]: {e}")
         return error_response("InternalError", str(e)), 500
 
 
