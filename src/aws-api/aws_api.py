@@ -6,7 +6,7 @@ Provides a local endpoint that handles the AWS API calls
 import re
 from typing import Dict
 import boto3
-from flask import Flask, request, jsonify, Response, send_file
+from flask import Flask, request, jsonify, Response, send_file, stream_with_context
 import requests
 import json
 import base64
@@ -3292,35 +3292,104 @@ def check_s3_service_from_user_agent():
 
 
 def proxy_to_s3():
-    """Proxy S3 requests to S3 backend - preserve signature by keeping original host"""
-    s3_url = f"{S3_ENDPOINT}{request.path}"
+    """
+    Proxy S3 requests to the MinIO backend.
+    
+    Handles the complex task of:
+    1. Filtering problematic headers (Host, Connection, etc.)
+    2. Re-signing the request for the MinIO endpoint since the original
+       signature was calculated for localhost:4566, not s3:9000
+    """
+    # Build full URL for MinIO
+    path = request.path
+    s3_url = f"{S3_ENDPOINT}{path}"
     if request.query_string:
         s3_url += f"?{request.query_string.decode()}"
-    headers = dict(request.headers)
-    client_ip = headers.get("X-Forwarded-For") or request.host
-    # Keep ALL headers INCLUDING the original Host (critical for signature validation)
-    headers = {k: v for k, v in request.headers}
-    request_data = request.get_data()
-    response = requests.request(
+
+    # Get request body
+    request_body = request.get_data()
+    
+    # Create an AWSRequest for MinIO endpoint
+    # This will be used to calculate a new signature
+    parsed_url = urlparse(s3_url)
+    
+    aws_request = AWSRequest(
         method=request.method,
         url=s3_url,
-        headers=headers,
-        data=request_data,
+        data=request_body,
+        headers={},
+    )
+    
+    # Copy over relevant headers from original request
+    # Exclude headers that shouldn't be forwarded
+    excluded_headers = {
+        "host",
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailers",
+        "transfer-encoding",
+        "upgrade",
+        "content-length",  # Will be recalculated
+        "authorization",   # Will be recalculated with new signature
+        "x-amz-date",      # Will be updated
+    }
+    
+    for k, v in request.headers.items():
+        if k.lower() not in excluded_headers:
+            # Keep x-amz-* headers except x-amz-date which changes
+            if k.lower().startswith("x-amz-"):
+                # Keep x-amz-content-sha256 but let AWS SDK set x-amz-date
+                if k.lower() != "x-amz-date":
+                    aws_request.headers[k] = v
+            else:
+                aws_request.headers[k] = v
+    
+    # Re-sign the request for the MinIO endpoint
+    # Extract credentials from the original request's Authorization header
+    auth_header = request.headers.get("Authorization", "")
+    credentials = Credentials(
+        access_key=os.getenv("AWS_ACCESS_KEY_ID", "localcloud"),
+        secret_key=os.getenv("AWS_SECRET_ACCESS_KEY", "localcloud"),
+    )
+    
+    # Sign the request for S3 service
+    SigV4Auth(credentials, "s3", os.getenv("AWS_REGION", "ap-southeast-2")).add_auth(aws_request)
+    
+    # Extract signed headers from the aws_request
+    signed_headers = dict(aws_request.headers)
+    
+    # Add X-Forwarded-For for request tracing
+    signed_headers["X-Forwarded-For"] = request.remote_addr
+
+    # Make request to upstream S3/MinIO with the re-signed headers
+    resp = requests.request(
+        method=request.method,
+        url=s3_url,
+        headers=signed_headers,
+        data=request_body,
         stream=True,
     )
-    # Build response with proper headers
-    excluded = {"transfer-encoding", "connection"}
+
+    # Ensure gzip is decoded so AWS SDK sees plain XML
+    resp.raw.decode_content = True
+
+    # Exclude headers that would confuse AWS SDK in response
+    excluded_response = {"transfer-encoding", "connection", "content-encoding"}
     response_headers = [
-        (k, v) for k, v in response.headers.items() if k.lower() not in excluded
+        (k, v) for k, v in resp.headers.items() if k.lower() not in excluded_response
     ]
 
-    flask_response = Response(
-        response.content, status=response.status_code, headers=response_headers
+    # Return raw bytes without Flask re-encoding
+    return Response(
+        stream_with_context(resp.raw),
+        status=resp.status_code,
+        headers=response_headers,
+        mimetype="application/xml",
+        direct_passthrough=True,
     )
-    # Need to override the content-length as Response recaclculates the length with empty body to 0 for HEAD requests
-    if "Content-Length" in response.headers:
-        flask_response.headers["Content-Length"] = response.headers["Content-Length"]
-    return flask_response
 
 
 # Handles aws cli s3 commands
