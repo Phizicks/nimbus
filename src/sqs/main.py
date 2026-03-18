@@ -484,6 +484,11 @@ class QueueManager:
                     attributes.get("ReceiveMessageWaitTimeSeconds", 0)
                 ),
             }
+            is_fifo = attributes.get("FifoQueue", "false").lower() == "true" or queue_name.endswith(".fifo")
+            if is_fifo:
+                queue_attrs["FifoQueue"] = "true"
+                if attributes.get("ContentBasedDeduplication", "false").lower() == "true":
+                    queue_attrs["ContentBasedDeduplication"] = "true"
 
             # Add redrive policy if DLQ exists
             if dlq_url:
@@ -510,7 +515,9 @@ class QueueManager:
                     queue_attrs["ReceiveMessageWaitTimeSeconds"]
                 ),
             }
-
+            if is_fifo:
+                metadata["FifoQueue"] = "true"
+                metadata["ContentBasedDeduplication"] = queue_attrs.get("ContentBasedDeduplication", "false")
             if dlq_url:
                 metadata["RedrivePolicy"] = {
                     "deadLetterTargetArn": redrive_policy["deadLetterTargetArn"],
@@ -1056,16 +1063,21 @@ def handle_create_queue():
 
         # Extract attributes
         attributes = {}
-        for key in [
-            "VisibilityTimeout",
-            "MessageRetentionPeriod",
-            "DelaySeconds",
-            "ReceiveMessageWaitTimeSeconds",
-            "maxReceiveCount",
-        ]:
-            value = get_request_param(f"Attribute.Name.{key}") or get_request_param(key)
-            if value:
-                attributes[key] = int(value) if value.isdigit() else value
+        if request.is_json:
+            attributes = request.json.get("Attributes", {})
+        else:
+            for key in [
+                "VisibilityTimeout",
+                "MessageRetentionPeriod",
+                "DelaySeconds",
+                "ReceiveMessageWaitTimeSeconds",
+                "maxReceiveCount",
+                "FifoQueue",
+                "ContentBasedDeduplication",
+            ]:
+                value = get_request_param(f"Attribute.Name.{key}") or get_request_param(key)
+                if value:
+                    attributes[key] = int(value) if value.isdigit() else value
 
         # Check for RedrivePolicy
         redrive_policy = get_request_param("RedrivePolicy")
