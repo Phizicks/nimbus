@@ -134,7 +134,9 @@ class Database:
                 provisioned_concurrency INTEGER DEFAULT 0,
                 reserved_concurrency INTEGER DEFAULT 100,
                 logging_config TEXT,
-                image_config TEXT
+                image_config TEXT,
+                memory_size INTEGER DEFAULT 128,
+                timeout INTEGER DEFAULT 3
             )
         """
         )
@@ -260,6 +262,17 @@ class Database:
         """
         )
 
+        # Migrate existing databases: add columns if missing
+        for col, definition in [
+            ("memory_size", "INTEGER DEFAULT 128"),
+            ("timeout",     "INTEGER DEFAULT 3"),
+        ]:
+            try:
+                cursor.execute(f"ALTER TABLE lambda_functions ADD COLUMN {col} {definition}")
+                logger.info(f"Migrated lambda_functions: added column '{col}'")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
         conn.commit()
         conn.close()
         logger.info("Database initialized successfully")
@@ -317,6 +330,8 @@ class Database:
             "ProvisionedConcurrency": row["provisioned_concurrency"],
             "ReservedConcurrency": row["reserved_concurrency"],
             "LoggingConfig": row["logging_config"],
+            "MemorySize": row["memory_size"] if "memory_size" in row.keys() else 128,
+            "Timeout": row["timeout"] if "timeout" in row.keys() else 3,
         }
 
         if logging_config:
@@ -368,7 +383,9 @@ class Database:
                 provisioned_concurrency,
                 reserved_concurrency,
                 logging_config,
-                image_config
+                image_config,
+                memory_size,
+                timeout
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 ?,  -- host_port
@@ -378,7 +395,9 @@ class Database:
                 ?,  -- provisioned_concurrency
                 ?,  -- reserved_concurrency
                 ?,  -- logging_config
-                ?   -- image_config
+                ?,  -- image_config
+                ?,  -- memory_size
+                ?   -- timeout
             )
         """,
             (
@@ -404,6 +423,8 @@ class Database:
                 function_config.get("ReservedConcurrency", 0),
                 logging_config_json,
                 image_config_json,
+                function_config.get("MemorySize", 128),
+                function_config.get("Timeout", 3),
             ),
         )
 
@@ -483,19 +504,19 @@ class Database:
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        
+
         cursor.execute(
-            """SELECT * FROM lambda_function_versions 
-               WHERE function_name = ? 
+            """SELECT * FROM lambda_function_versions
+               WHERE function_name = ?
                ORDER BY version DESC""",
             (function_name,)
         )
         rows = cursor.fetchall()
         conn.close()
-        
+
         if not rows:
             return []
-        
+
         versions = []
         for row in rows:
             # Parse environment if present
@@ -506,7 +527,7 @@ class Database:
                 except (json.JSONDecodeError, TypeError):
                     logger.warning(f"Failed to parse environment for version {row['version']}")
                     environment = {}
-            
+
             # Parse logging_config if present
             logging_config = None
             if row["logging_config"]:
@@ -515,7 +536,7 @@ class Database:
                 except (json.JSONDecodeError, TypeError):
                     logger.warning(f"Failed to parse logging_config for version {row['version']}")
                     logging_config = None
-            
+
             version_data = {
                 "FunctionName": row["function_name"],
                 "FunctionArn": row["function_arn"],
@@ -530,7 +551,7 @@ class Database:
                 "LastUpdateStatus": row["last_update_status"],
                 "PackageType": row["package_type"],
             }
-            
+
             # Add optional fields if present
             if row["description"]:
                 version_data["Description"] = row["description"]
@@ -540,9 +561,9 @@ class Database:
                 version_data["Environment"] = environment
             if logging_config:
                 version_data["LoggingConfig"] = logging_config
-            
+
             versions.append(version_data)
-        
+
         return versions
 
     def __init__(self):
@@ -3487,6 +3508,8 @@ def create_function():
         handler = data.get("Handler", "lambda_function.handler")
         role = data.get("Role", f"arn:aws:iam::{ACCOUNT_ID}:role/lambda-role")
         environment = data.get("Environment", {}).get("Variables", {})
+        memory_size = int(data.get("MemorySize", 128))
+        timeout = int(data.get("Timeout", 3))
 
         # Get image config if present
         image_config = data.get("ImageConfig", {})
@@ -3604,6 +3627,8 @@ def create_function():
             ).decode(),
             "Environment": environment,
             "LoggingConfig": logging_config,
+            "MemorySize": memory_size,
+            "Timeout": timeout,
         }
         function_config["ImageConfig"] = {
             "Command": command,
@@ -4540,14 +4565,14 @@ def cloudwatch_logs_api():
 def list_versions_by_function(function_name):
     """AWS Lambda ListVersionsByFunction API
     GET /2015-03-31/functions/{FunctionName}/versions
-    
+
     Returns all versions (including $LATEST) of a function
     """
     try:
         logger.info(f"ListVersionsByFunction: {function_name}")
-        
+
         db = Database()
-        
+
         # Check function exists
         func = db.get_function_from_db(function_name)
         if not func:
@@ -4555,7 +4580,7 @@ def list_versions_by_function(function_name):
                 "__type": "ResourceNotFoundException",
                 "message": f"Function not found: {function_name}"
             }), 404
-        
+
         # Build $LATEST version from current function
         versions = [{
             "FunctionName": function_name,
@@ -4571,13 +4596,13 @@ def list_versions_by_function(function_name):
             "LastUpdateStatus": func.get("LastUpdateStatus", "Successful"),
             "PackageType": func.get("PackageType", "Zip")
         }]
-        
+
         # Add published versions from database
         published = db.list_versions(function_name)
         versions.extend(published)
-        
+
         return jsonify({"Versions": versions}), 200
-        
+
     except Exception as e:
         logger.error(f"Error listing versions: {e}", exc_info=True)
         return jsonify({
@@ -4592,14 +4617,14 @@ def get_function_code_signing_config(function_name):
     """AWS Lambda GetFunctionCodeSigningConfig API
     GET /2015-03-31/functions/{FunctionName}/code-signing-config
     GET /2020-06-30/functions/{FunctionName}/code-signing-config
-    
+
     Returns code signing config for a function (returns empty if not configured)
     """
     try:
         logger.info(f"GetFunctionCodeSigningConfig: {function_name}")
-        
+
         db = Database()
-        
+
         # Check function exists
         func = db.get_function_from_db(function_name)
         if not func:
@@ -4607,7 +4632,7 @@ def get_function_code_signing_config(function_name):
                 "__type": "ResourceNotFoundException",
                 "message": f"Function not found: {function_name}"
             }), 404
-        
+
         # Code signing config is optional - when not configured, return 200 with empty/minimal structure
         # This allows Terraform to proceed without error
         return jsonify({
@@ -4616,7 +4641,7 @@ def get_function_code_signing_config(function_name):
                 "UntrustedArtifactOnDeployment": "Warn"
             }
         }), 200
-        
+
     except Exception as e:
         logger.error(f"Error getting code signing config: {e}", exc_info=True)
         return (

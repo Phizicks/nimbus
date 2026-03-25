@@ -1739,6 +1739,8 @@ def create_function():
             "LoggingConfig": created.get(
                 "LoggingConfig", data.get("LoggingConfig", {})
             ),
+            "MemorySize": created.get("MemorySize", int(data.get("MemorySize", 128))),
+            "Timeout": created.get("Timeout", int(data.get("Timeout", 3))),
         }
 
         db.save_function_to_db(function_config)
@@ -3488,7 +3490,6 @@ def handle_bucket_operations(bucket_name):
     }
 
     configs_found = False
-    logger.critical(f'DATA: {data}')
     for config_key, (arn_field, target_type) in notification_types.items():
         if config_key not in data:
             continue
