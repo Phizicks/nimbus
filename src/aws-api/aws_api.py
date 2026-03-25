@@ -3490,6 +3490,7 @@ def handle_bucket_operations(bucket_name):
     }
 
     configs_found = False
+    logger.debug(f'DATA: {data}')
     for config_key, (arn_field, target_type) in notification_types.items():
         if config_key not in data:
             continue
