@@ -2610,6 +2610,75 @@ def list_functions():
         )
 
 
+@app.route(
+    "/2015-03-31/functions/<function_name>/versions",
+    methods=["GET"],
+    strict_slashes=False,
+)
+def list_versions_by_function(function_name):
+    """AWS Lambda ListVersionsByFunction API - proxy to lambda endpoint"""
+    try:
+        logger.info(f"ListVersionsByFunction: {function_name}")
+
+        # Proxy to lambda service endpoint
+        status, resp, raw = lambda_request("GET", f"/2015-03-31/functions/{function_name}/versions")
+
+        if status >= 400:
+            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
+
+        return jsonify(resp), status
+
+    except Exception as e:
+        logger.error(f"Error listing versions for {function_name}: {e}", exc_info=True)
+        return (
+            jsonify(
+                {
+                    "__type": "ServiceException:",
+                    "message": f"Error listing versions for {function_name} - {e}",
+                }
+            ),
+            500,
+        )
+
+
+@app.route(
+    "/2015-03-31/functions/<function_name>/code-signing-config",
+    methods=["GET"],
+    strict_slashes=False,
+)
+@app.route(
+    "/2020-06-30/functions/<function_name>/code-signing-config",
+    methods=["GET"],
+    strict_slashes=False,
+)
+def get_function_code_signing_config(function_name):
+    """AWS Lambda GetFunctionCodeSigningConfig API - proxy to lambda endpoint"""
+    try:
+        logger.info(f"GetFunctionCodeSigningConfig: {function_name}")
+
+        # Proxy to lambda service endpoint (using latest API version)
+        status, resp, raw = lambda_request("GET", f"/2015-03-31/functions/{function_name}/code-signing-config")
+
+        if status >= 400:
+            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
+
+        return jsonify(resp), status
+
+    except Exception as e:
+        logger.error(f"Error getting code signing config for {function_name}: {e}", exc_info=True)
+        return (
+            jsonify(
+                {
+                    "__type": "ServiceException:",
+                    "message": f"Error getting code signing config for {function_name} - {e}",
+                }
+            ),
+            500,
+        )
+
+
 @app.route("/health", methods=["GET"], strict_slashes=False)
 def health():
     """Health check endpoint"""

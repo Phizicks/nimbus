@@ -223,6 +223,43 @@ class Database:
         """
         )
 
+        # Lambda function versions table
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS lambda_function_versions (
+                function_name TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                function_arn TEXT NOT NULL,
+                code_sha256 TEXT NOT NULL,
+                code_size INTEGER DEFAULT 0,
+                description TEXT,
+                environment TEXT,
+                handler TEXT,
+                role TEXT NOT NULL,
+                runtime TEXT,
+                package_type TEXT NOT NULL,
+                image_uri TEXT,
+                state TEXT DEFAULT 'Active',
+                last_update_status TEXT DEFAULT 'Successful',
+                provisioned_concurrency INTEGER DEFAULT 0,
+                reserved_concurrency INTEGER DEFAULT 100,
+                logging_config TEXT,
+                created_at TEXT NOT NULL,
+                last_modified TEXT NOT NULL,
+                PRIMARY KEY (function_name, version),
+                FOREIGN KEY (function_name) REFERENCES lambda_functions(function_name)
+                    ON DELETE CASCADE
+            )
+        """
+        )
+
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_versions_function
+            ON lambda_function_versions(function_name, version)
+        """
+        )
+
         conn.commit()
         conn.close()
         logger.info("Database initialized successfully")
@@ -440,6 +477,73 @@ class Database:
             functions.append(function_data)
 
         return functions
+
+    def list_versions(self, function_name):
+        """List all published versions of a function"""
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute(
+            """SELECT * FROM lambda_function_versions 
+               WHERE function_name = ? 
+               ORDER BY version DESC""",
+            (function_name,)
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        
+        if not rows:
+            return []
+        
+        versions = []
+        for row in rows:
+            # Parse environment if present
+            environment = {}
+            if row["environment"]:
+                try:
+                    environment = json.loads(row["environment"])
+                except (json.JSONDecodeError, TypeError):
+                    logger.warning(f"Failed to parse environment for version {row['version']}")
+                    environment = {}
+            
+            # Parse logging_config if present
+            logging_config = None
+            if row["logging_config"]:
+                try:
+                    logging_config = json.loads(row["logging_config"])
+                except (json.JSONDecodeError, TypeError):
+                    logger.warning(f"Failed to parse logging_config for version {row['version']}")
+                    logging_config = None
+            
+            version_data = {
+                "FunctionName": row["function_name"],
+                "FunctionArn": row["function_arn"],
+                "Version": str(row["version"]),
+                "CreatedAt": row["created_at"],
+                "LastModified": row["last_modified"],
+                "Runtime": row["runtime"],
+                "Handler": row["handler"],
+                "CodeSize": row["code_size"],
+                "CodeSha256": row["code_sha256"],
+                "State": row["state"],
+                "LastUpdateStatus": row["last_update_status"],
+                "PackageType": row["package_type"],
+            }
+            
+            # Add optional fields if present
+            if row["description"]:
+                version_data["Description"] = row["description"]
+            if row["image_uri"]:
+                version_data["ImageUri"] = row["image_uri"]
+            if environment:
+                version_data["Environment"] = environment
+            if logging_config:
+                version_data["LoggingConfig"] = logging_config
+            
+            versions.append(version_data)
+        
+        return versions
 
     def __init__(self):
         self.init_db()
@@ -4429,6 +4533,98 @@ def cloudwatch_logs_api():
                 }
             ),
             400,
+        )
+
+
+@app.route("/2015-03-31/functions/<function_name>/versions", methods=["GET"])
+def list_versions_by_function(function_name):
+    """AWS Lambda ListVersionsByFunction API
+    GET /2015-03-31/functions/{FunctionName}/versions
+    
+    Returns all versions (including $LATEST) of a function
+    """
+    try:
+        logger.info(f"ListVersionsByFunction: {function_name}")
+        
+        db = Database()
+        
+        # Check function exists
+        func = db.get_function_from_db(function_name)
+        if not func:
+            return jsonify({
+                "__type": "ResourceNotFoundException",
+                "message": f"Function not found: {function_name}"
+            }), 404
+        
+        # Build $LATEST version from current function
+        versions = [{
+            "FunctionName": function_name,
+            "FunctionArn": func["FunctionArn"],
+            "Version": "$LATEST",
+            "CreatedAt": func.get("CreatedAt", ""),
+            "LastModified": func.get("LastModified", ""),
+            "Runtime": func.get("Runtime", ""),
+            "Handler": func.get("Handler", ""),
+            "CodeSize": func.get("CodeSize", 0),
+            "CodeSha256": func.get("CodeSha256", ""),
+            "State": func.get("State", "Active"),
+            "LastUpdateStatus": func.get("LastUpdateStatus", "Successful"),
+            "PackageType": func.get("PackageType", "Zip")
+        }]
+        
+        # Add published versions from database
+        published = db.list_versions(function_name)
+        versions.extend(published)
+        
+        return jsonify({"Versions": versions}), 200
+        
+    except Exception as e:
+        logger.error(f"Error listing versions: {e}", exc_info=True)
+        return jsonify({
+            "__type": "InternalServerError",
+            "message": str(e)
+        }), 500
+
+
+@app.route("/2015-03-31/functions/<function_name>/code-signing-config", methods=["GET"])
+@app.route("/2020-06-30/functions/<function_name>/code-signing-config", methods=["GET"])
+def get_function_code_signing_config(function_name):
+    """AWS Lambda GetFunctionCodeSigningConfig API
+    GET /2015-03-31/functions/{FunctionName}/code-signing-config
+    GET /2020-06-30/functions/{FunctionName}/code-signing-config
+    
+    Returns code signing config for a function (returns empty if not configured)
+    """
+    try:
+        logger.info(f"GetFunctionCodeSigningConfig: {function_name}")
+        
+        db = Database()
+        
+        # Check function exists
+        func = db.get_function_from_db(function_name)
+        if not func:
+            return jsonify({
+                "__type": "ResourceNotFoundException",
+                "message": f"Function not found: {function_name}"
+            }), 404
+        
+        # Code signing config is optional - when not configured, return 200 with empty/minimal structure
+        # This allows Terraform to proceed without error
+        return jsonify({
+            "CodeSigningConfigArn": "",
+            "CodeSigningPolicies": {
+                "UntrustedArtifactOnDeployment": "Warn"
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting code signing config: {e}", exc_info=True)
+        return (
+            jsonify({
+                "__type": "InternalServerError",
+                "message": str(e)
+            }),
+            500
         )
 
 
