@@ -340,13 +340,13 @@ class Database:
 
         elif row["package_type"] == "Image":
             # IMAGE: Should have Code/ImageUri
-            image_uri = row.get("image_uri")
+            image_uri = row["image_uri"]
             if image_uri:
                 result["Code"] = {
                     "ImageUri": image_uri
                 }
 
-            if row.get("image_config"):
+            if row["image_config"]:
                 try:
                     result["ImageConfig"] = (
                         row["image_config"]
@@ -367,6 +367,8 @@ class Database:
 
         # Serialize environment variables to JSON
         environment = function_config.get("Environment", {})
+        if isinstance(environment, dict) and "Variables" in environment:
+            environment = environment["Variables"]
         environment_json = json.dumps(environment) if environment else "{}"
 
         # Serialize logging config to JSON
@@ -1431,12 +1433,14 @@ class ContainerLifecycleManager:
             return None
 
         runtime = function_config.get("Runtime", "python3.11")
-        image_uri = function_config.get("ImageUri")
+        image_uri = function_config.get("ImageUri") or (function_config.get("Code") or {}).get("ImageUri")
         handler = function_config.get("Handler", "lambda_function.handler")
-        environment = function_config.get("Environment", {})
+
+        env = function_config.get("Environment", {})
+        environment = env.get("Variables", {}) if isinstance(env, dict) and "Variables" in env else (env or {})
 
         # Get custom log group if configured
-        log_group_name = function_config.get("LoggingConfig", {}).get("LogGroup")
+        log_group_name = (function_config.get("LoggingConfig") or {}).get("LogGroup")
 
         # Try to recover function_path for ZIP-based functions
         function_path = None
@@ -3617,20 +3621,22 @@ def create_function():
             "State": "Active",
             "LastUpdateStatus": "Successful",
             "PackageType": "Image" if image_uri else "Zip",
-            "ImageUri": image_uri if image_uri else built_image,
             "CodeSha256": base64.b64encode(
-                (image_uri or built_image).encode()
+                (image_uri or built_image or "").encode()
             ).decode(),
             "Environment": environment,
             "LoggingConfig": logging_config,
             "MemorySize": memory_size,
             "Timeout": timeout,
         }
-        function_config["ImageConfig"] = {
-            "Command": command,
-            "EntryPoint": entrypoint,
-            "WorkingDirectory": workdir,
-        }
+
+        if image_uri:
+            function_config["ImageUri"] = image_uri
+            function_config["ImageConfig"] = {
+                "Command": command,
+                "EntryPoint": entrypoint,
+                "WorkingDirectory": workdir,
+            }
 
         # Save to database
         lifecycle_manager.db.save_function_to_db(function_config)

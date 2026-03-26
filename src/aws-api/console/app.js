@@ -1912,7 +1912,7 @@ async function viewFunctionDetails(functionName) {
         `;
 
         // Initialize environment variables editor
-        initEnvironmentVariablesEditor(config.FunctionName, config.Environment || {});
+        initEnvironmentVariablesEditor(config.FunctionName, config.Environment?.Variables || config.Environment || {});
 
         showModal('function-details-modal');
     } catch (error) {
