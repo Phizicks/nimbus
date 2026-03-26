@@ -2911,13 +2911,14 @@ def update_function_code(function_name):
 
         elif zip_file:
             zip_data = base64.b64decode(zip_file)
+            filename_hash = sha256(zip_data).hexdigest()
 
-            filename_hash = sha256(zip_file.encode("utf-8")).hexdigest()
-            function_dir = FUNCTIONS_DIR / filename_hash
+            function_dir = FUNCTIONS_DIR / function_name
             function_dir.mkdir(exist_ok=True)
 
-            zip_path = function_dir / "function.zip"
+            zip_path = function_dir / f"{filename_hash}.zip"
             zip_path.write_bytes(zip_data)
+
             src_dir = function_dir / "src"
             src_dir.mkdir(exist_ok=True)
             with zipfile.ZipFile(zip_path, "r") as zip_ref:
@@ -3568,19 +3569,13 @@ def create_function():
             # Create from ZIP file (base64 encoded)
             logger.info(f"Creating function from ZIP file")
 
-            # Decode ZIP file
             zip_data = base64.b64decode(zip_file)
-            filename_hash = sha256(zip_file.encode("utf-8")).hexdigest()
+            filename_hash = sha256(zip_data).hexdigest()
 
-            function_dir = FUNCTIONS_DIR / filename_hash
+            function_dir = FUNCTIONS_DIR / function_name
             function_dir.mkdir(exist_ok=True)
 
-            # Extract ZIP
-            zip_path = function_dir / "function.zip"
-            try:
-                os.remove(zip_path)
-            except:
-                pass
+            zip_path = function_dir / f"{filename_hash}.zip"
             zip_path.write_bytes(zip_data)
 
             src_dir = function_dir / "src"
