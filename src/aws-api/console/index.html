@@ -1039,7 +1039,14 @@
                 <form id="upload-object-form" onsubmit="uploadObject(event)">
                     <div class="form-group">
                         <label>File *</label>
-                        <input type="file" id="upload-file" required>
+                        <div id="s3-drop-zone" class="drop-zone">
+                            <input type="file" id="upload-file" class="drop-zone-input">
+                            <div class="drop-zone-content">
+                                <span class="drop-zone-icon">📁</span>
+                                <span class="drop-zone-text">Drag &amp; drop a file here, or <u>click to browse</u></span>
+                                <span class="drop-zone-filename" id="s3-drop-filename"></span>
+                            </div>
+                        </div>
                     </div>
                     <div class="form-group">
                         <label>Key (Path) *</label>
@@ -1664,7 +1671,14 @@
                     <!-- ZIP File Upload (for Zip packages) -->
                     <div class="form-group" id="zipfile-group">
                         <label>Code (ZIP File) *</label>
-                        <input type="file" id="lambda-zipfile" accept=".zip">
+                        <div id="lambda-drop-zone" class="drop-zone">
+                            <input type="file" id="lambda-zipfile" accept=".zip" class="drop-zone-input">
+                            <div class="drop-zone-content">
+                                <span class="drop-zone-icon">🗜️</span>
+                                <span class="drop-zone-text">Drag &amp; drop a .zip file here, or <u>click to browse</u></span>
+                                <span class="drop-zone-filename" id="lambda-drop-filename"></span>
+                            </div>
+                        </div>
                         <small style="color: #545B64; font-size: 12px;">Upload a .zip file containing your function code</small>
                     </div>
 

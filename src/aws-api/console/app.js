@@ -2220,7 +2220,6 @@ async function deleteFunction(functionName) {
 }
 
 function showCreateFunctionModal() {
-    // Reset form
     document.getElementById('create-function-form').reset();
     document.getElementById('lambda-package-type').value = 'Zip';
     document.getElementById('lambda-runtime').value = 'python3.12';
@@ -2229,10 +2228,18 @@ function showCreateFunctionModal() {
     document.getElementById('lambda-timeout').value = '300';
     document.getElementById('lambda-custom-logging').checked = false;
 
-    // Show/hide appropriate fields
+    const lambdaFilenameEl = document.getElementById('lambda-drop-filename');
+    const lambdaZone = document.getElementById('lambda-drop-zone');
+    if (lambdaFilenameEl) lambdaFilenameEl.textContent = '';
+    if (lambdaZone) lambdaZone.classList.remove('has-file');
+
+    initDropZone('lambda-drop-zone', 'lambda-zipfile', (file) => {
+        if (lambdaFilenameEl) lambdaFilenameEl.textContent = file.name;
+        if (lambdaZone) lambdaZone.classList.add('has-file');
+    });
+
     togglePackageTypeFields();
     toggleLoggingConfig();
-
     showModal('create-function-modal');
 }
 
@@ -4444,9 +4451,49 @@ function filterS3Objects() {
 }
 
 function showUploadObjectModal() {
-    document.getElementById('upload-file').value = '';
+    const input = document.getElementById('upload-file');
+    const filenameEl = document.getElementById('s3-drop-filename');
+    const zone = document.getElementById('s3-drop-zone');
+
+    input.value = '';
+    filenameEl.textContent = '';
+    zone.classList.remove('has-file');
     document.getElementById('upload-key').value = currentPrefix;
+
+    initDropZone('s3-drop-zone', 'upload-file', (file) => {
+        filenameEl.textContent = file.name;
+        zone.classList.add('has-file');
+        const key = currentPrefix ? currentPrefix.replace(/\/?$/, '/') + file.name : file.name;
+        document.getElementById('upload-key').value = key;
+    });
+
     showModal('upload-object-modal');
+}
+
+function initDropZone(zoneId, inputId, onFile) {
+    const zone = document.getElementById(zoneId);
+    const input = document.getElementById(inputId);
+    if (!zone || !input) return;
+
+    zone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        zone.classList.add('drag-over');
+    });
+    zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+    zone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        zone.classList.remove('drag-over');
+        const file = e.dataTransfer.files[0];
+        if (file) {
+            const dt = new DataTransfer();
+            dt.items.add(file);
+            input.files = dt.files;
+            onFile(file);
+        }
+    });
+    input.addEventListener('change', () => {
+        if (input.files[0]) onFile(input.files[0]);
+    });
 }
 
 async function uploadObject(event) {
