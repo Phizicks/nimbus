@@ -1229,12 +1229,12 @@ class ContainerLifecycleManager:
                 logger.warning(
                     f"Container {C.YELLOW}{container.name}{C.RESET} already removed"
                 )
-                continue
-
-            # Clean up activity tracking (use container ID)
-            with self._lock("ContainerLifecycleManager._cleanup_stopped_containers"):
-                self.container_activity.pop(getattr(container, "id", None), None)
-
+            finally:
+                # Always unregister so LEASED/RUNNING metadata doesn't linger
+                if cid:
+                    with self._lock("ContainerLifecycleManager._cleanup_stopped_containers"):
+                        self.container_activity.pop(cid, None)
+                    self.unregister_container(cid)
             #     logger.info(f"Removed stopped container {C.YELLOW}{container.name}{C.RESET} for function {function_name}")
 
             # except Exception as e:
