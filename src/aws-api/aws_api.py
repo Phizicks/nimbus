@@ -1743,6 +1743,7 @@ def create_function():
             "Timeout": created.get("Timeout", int(data.get("Timeout", 3))),
         }
 
+
         db.save_function_to_db(function_config)
         logger.info(f"Function created successfully: {function_name}")
 

@@ -278,9 +278,8 @@ class Database:
         logger.info("Database initialized successfully")
 
     def get_function_from_db(self, function_name):
-        """Retrieve a function from the database"""
         conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row  # Enable access by column name
+        conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
         cursor.execute(
@@ -292,52 +291,70 @@ class Database:
         if not row:
             return None
 
-        # Deserialize environment JSON
-        environment = {}
+        # --- Environment ---
+        environment = None
         if row["environment"]:
             try:
-                environment = json.loads(row["environment"])
+                parsed = json.loads(row["environment"])
+                if parsed:
+                    environment = {"Variables": parsed}
             except (json.JSONDecodeError, TypeError):
                 logger.warning(f"Failed to parse environment for {function_name}")
-                environment = {}
 
+        # --- LoggingConfig ---
         logging_config = None
         if "logging_config" in row.keys() and row["logging_config"]:
             try:
                 logging_config = json.loads(row["logging_config"])
             except (json.JSONDecodeError, TypeError):
                 logger.warning(f"Failed to parse logging_config for {function_name}")
-                logging_config = None
 
+        # --- Base result (ONLY AWS-valid fields) ---
         result = {
             "FunctionName": row["function_name"],
             "FunctionArn": row["function_arn"],
-            "Runtime": row["runtime"],
-            "Handler": row["handler"],
             "Role": row["role"],
             "CodeSize": row["code_size"],
             "State": row["state"],
             "LastUpdateStatus": row["last_update_status"],
             "PackageType": row["package_type"],
-            "ImageUri": row["image_uri"],
             "CodeSha256": row["code_sha256"],
-            "Endpoint": row["endpoint"],
-            "ContainerName": row["container_name"],
-            "HostPort": row["host_port"],
-            "Environment": environment,
-            "CreatedAt": row["created_at"],
             "LastModified": row["last_modified"],
-            "ProvisionedConcurrency": row["provisioned_concurrency"],
-            "ReservedConcurrency": row["reserved_concurrency"],
-            "LoggingConfig": row["logging_config"],
-            "MemorySize": row["memory_size"] if "memory_size" in row.keys() else 128,
-            "Timeout": row["timeout"] if "timeout" in row.keys() else 3,
+            "MemorySize": row["memory_size"] if "memory_size" in row.keys() and row["memory_size"] is not None else 128,
+            "Timeout": row["timeout"] if "timeout" in row.keys() and row["timeout"] is not None else 3,
         }
+
+        if environment:
+            result["Environment"] = environment
 
         if logging_config:
             result["LoggingConfig"] = logging_config
-        if row["image_config"]:
-            result["ImageConfig"] = row["image_config"]
+
+        # --- Package type handling ---
+        if row["package_type"] == "Zip":
+            # ZIP: Sets Runtime + Handler
+            if row["runtime"]:
+                result["Runtime"] = row["runtime"]
+            if row["handler"]:
+                result["Handler"] = row["handler"]
+
+        elif row["package_type"] == "Image":
+            # IMAGE: Should have Code/ImageUri
+            image_uri = row.get("image_uri")
+            if image_uri:
+                result["Code"] = {
+                    "ImageUri": image_uri
+                }
+
+            if row.get("image_config"):
+                try:
+                    result["ImageConfig"] = (
+                        row["image_config"]
+                        if isinstance(row["image_config"], dict)
+                        else json.loads(row["image_config"])
+                    )
+                except (json.JSONDecodeError, TypeError):
+                    logger.warning(f"Failed to parse image_config for {function_name}")
 
         return result
 
@@ -2609,27 +2626,17 @@ def get_function(function_name):
                 404,
             )
 
-        response_config = function_config.copy()
-        response_config.pop("Endpoint", None)
-        response_config.pop("ContainerName", None)
-        response_config.pop("HostPort", None)
+        configuration = {k: v for k, v in function_config.items()
+                         if k not in ("Endpoint", "ContainerName", "HostPort", "Code")}
 
-        return (
-            jsonify(
-                {
-                    "Configuration": response_config,
-                    "Code": {
-                        "RepositoryType": (
-                            "ECR"
-                            if response_config.get("PackageType") == "Image"
-                            else "S3"
-                        ),
-                        "ImageUri": response_config.get("ImageUri", ""),
-                    },
-                }
-            ),
-            200,
-        )
+        code = function_config.get("Code") or {}
+        if not code:
+            code = {
+                "RepositoryType": "ECR" if function_config.get("PackageType") == "Image" else "S3"
+                # eventually "Location": "https://nimbus.local/lambda/test_lambda_function.zip"
+            }
+
+        return jsonify({"Configuration": configuration, "Code": code}), 200
 
     except Exception as e:
         logger.error(f"Error getting function {function_name}: {e}", exc_info=True)
@@ -2744,14 +2751,8 @@ def get_function_configuration(function_name):
                 404,
             )
 
-        response_config = function_config.copy()
-        response_config.pop("Endpoint", None)
-        response_config.pop("ContainerName", None)
-        response_config.pop("HostPort", None)
-
-        env_vars = response_config.get("Environment", {})
-        if isinstance(env_vars, dict):
-            response_config["Environment"] = {"Variables": env_vars}
+        response_config = {k: v for k, v in function_config.items()
+                           if k not in ("Endpoint", "ContainerName", "HostPort", "Code")}
 
         return jsonify(response_config), 200
 
