@@ -7,8 +7,6 @@ ElasticMQ natively supports all SQS features out of the box.
 import boto3
 import json
 import time
-import uuid
-import custom_logger
 import logging
 import sqlite3
 import os
@@ -46,7 +44,7 @@ class SQSDatabase:
         self.db_path = DB_PATH
         self.lock = TimedLock(warn_threshold=10)
         self._init_database()
-        logger.info(f"SQSDatabase initialized at {DB_PATH}")
+        logger.info("SQSDatabase initialized at %s", DB_PATH)
 
     def _init_database(self):
         """Create tables if they don't exist"""
@@ -150,7 +148,7 @@ class SQSDatabase:
                         ),
                     )
                     conn.commit()
-                    logger.info(f"Created queue metadata: {internal_name}")
+                    logger.info("Created queue metadata: %s", internal_name)
                     return True
 
                 except sqlite3.IntegrityError:
@@ -286,10 +284,10 @@ class SQSDatabase:
                 conn.commit()
 
                 if cursor.rowcount > 0:
-                    logger.info(f"Updated queue attributes: {internal_name}")
+                    logger.info("Updated queue attributes: %s", internal_name)
                     return True
                 else:
-                    logger.warning(f"Queue not found for update: {internal_name}")
+                    logger.warning("Queue not found for update: %s", internal_name)
                     return False
 
     def delete_queue(self, internal_name: str) -> bool:
@@ -316,10 +314,10 @@ class SQSDatabase:
                 conn.commit()
 
                 if cursor.rowcount > 0:
-                    logger.info(f"Deleted queue metadata: {internal_name}")
+                    logger.info("Deleted queue metadata: %s", internal_name)
                     return True
                 else:
-                    logger.warning(f"Queue not found for deletion: {internal_name}")
+                    logger.warning("Queue not found for deletion: %s", internal_name)
                     return False
 
     def queue_exists(self, internal_name: str) -> bool:
@@ -375,9 +373,10 @@ class QueueManager:
         self.queue_url_cache = {}
 
         logger.info(
-            f"QueueManager initialized for account {account_id}, region {region}"
+            "QueueManager initialized for account %s, region %s",
+            account_id, region
         )
-        logger.info(f"ElasticMQ endpoint: {self.elasticmq_url}")
+        logger.info("ElasticMQ endpoint: %s", self.elasticmq_url)
 
     def _init_sqs_client(self):
         """Initialize boto3 SQS client pointing to ElasticMQ"""
@@ -391,7 +390,7 @@ class QueueManager:
             )
             logger.info("SQS client initialized successfully")
         except Exception as e:
-            logger.error(f"Failed to initialize SQS client: {e}")
+            logger.error("Failed to initialize SQS client: %s", e, exc_info=True)
             raise
 
     def start(self):
@@ -401,7 +400,7 @@ class QueueManager:
             self.sqs_client.list_queues()
             logger.info("Successfully connected to ElasticMQ")
         except Exception as e:
-            logger.error(f"Failed to connect to ElasticMQ: {e}")
+            logger.error("Failed to connect to ElasticMQ: %s", e, exc_info=True)
             raise
 
     def stop(self):
@@ -452,7 +451,7 @@ class QueueManager:
 
         # Check if already exists
         if self.db.queue_exists(internal_name):
-            logger.info(f"Queue already exists: {queue_name}")
+            logger.info("Queue already exists: %s", queue_name)
             raise Exception(f"Queue already exists: {queue_name}")
 
         try:
@@ -471,7 +470,7 @@ class QueueManager:
                     },
                 )
                 dlq_url = dlq_response["QueueUrl"]
-                logger.info(f"Created DLQ: {dlq_name}")
+                logger.info("Created DLQ: %s", dlq_name)
 
             # Prepare queue attributes
             queue_attrs = {
@@ -504,7 +503,7 @@ class QueueManager:
             )
 
             queue_url = response["QueueUrl"]
-            logger.info(f"Created queue: {queue_name} -> {queue_url}")
+            logger.info("Created queue: %s -> %s", queue_name, queue_url)
 
             # Store metadata in SQLite
             metadata = {
@@ -543,7 +542,7 @@ class QueueManager:
             }
 
         except Exception as e:
-            logger.error(f"Error creating queue {queue_name}: {e}")
+            logger.error("Error creating queue {queue_name}: %s", e, exc_info=True)
             raise
 
     def get_queue_url(self, queue_name: str) -> Optional[str]:
@@ -578,7 +577,7 @@ class QueueManager:
             self.queue_url_cache[internal_name] = url
             return url
         except Exception as e:
-            logger.info(f"Queue not found: {queue_name} - {e}")
+            logger.info("Queue not found: {queue_name} - %s", e)
             return None
 
     def list_queues(self, prefix: Optional[str] = None) -> List[str]:
@@ -601,7 +600,7 @@ class QueueManager:
 
             return queue_urls
         except Exception as e:
-            logger.error(f"Error listing queues: {e}")
+            logger.error("Error listing queues: %s", e, exc_info=True)
             return []
 
     def delete_queue(self, queue_name: str) -> bool:
@@ -617,7 +616,7 @@ class QueueManager:
         try:
             queue_url = self.get_queue_url(queue_name)
             if not queue_url:
-                logger.info(f"Queue not found: {queue_name}")
+                logger.info("Queue not found: %s", queue_name)
                 return False
 
             self.sqs_client.delete_queue(QueueUrl=queue_url)
@@ -629,11 +628,11 @@ class QueueManager:
             if internal_name in self.queue_url_cache:
                 del self.queue_url_cache[internal_name]
 
-            logger.info(f"Deleted queue: {queue_name}")
+            logger.info("Deleted queue: %s", queue_name)
             return True
 
         except Exception as e:
-            logger.error(f"Error deleting queue {queue_name}: {e}")
+            logger.error("Error deleting queue {queue_name}: %s", e, exc_info=True)
             return False
 
     def send_message(
@@ -658,7 +657,7 @@ class QueueManager:
         try:
             queue_url = self.get_queue_url(queue_name)
             if not queue_url:
-                logger.info(f"Queue not found: {queue_name}")
+                logger.info("Queue not found: %s", queue_name)
                 return None
 
             kwargs = {"QueueUrl": queue_url, "MessageBody": message_body}
@@ -670,11 +669,11 @@ class QueueManager:
                 kwargs["DelaySeconds"] = delay_seconds
 
             response = self.sqs_client.send_message(**kwargs)
-            logger.info(f"Sent message to {queue_name}: {response.get('MessageId')}")
+            logger.info("Sent message to {queue_name}: %s", response.get('MessageId'))
             return response
 
         except Exception as e:
-            logger.error(f"Error sending message to {queue_name}: {e}")
+            logger.error("Error sending message to {queue_name}: %s", e, exc_info=True)
             return None
 
     def send_message_batch(
@@ -693,17 +692,17 @@ class QueueManager:
         try:
             queue_url = self.get_queue_url(queue_name)
             if not queue_url:
-                logger.info(f"Queue not found: {queue_name}")
+                logger.info("Queue not found: %s", queue_name)
                 return None
 
             response = self.sqs_client.send_message_batch(
                 QueueUrl=queue_url, Entries=messages
             )
-            logger.info(f"Sent {len(messages)} messages to {queue_name}")
+            logger.info("Sent {len(messages)} messages to %s", queue_name)
             return response
 
         except Exception as e:
-            logger.error(f"Error sending batch to {queue_name}: {e}")
+            logger.error("Error sending batch to {queue_name}: %s", e, exc_info=True)
             return None
 
     def receive_message(
@@ -728,7 +727,7 @@ class QueueManager:
         try:
             queue_url = self.get_queue_url(queue_name)
             if not queue_url:
-                logger.info(f"Queue not found: {queue_name}")
+                logger.info("Queue not found: %s", queue_name)
                 return None
 
             kwargs = {
@@ -745,7 +744,7 @@ class QueueManager:
             return response
 
         except Exception as e:
-            logger.error(f"Error receiving from {queue_name}: {e}")
+            logger.error("Error receiving from {queue_name}: %s", e, exc_info=True)
             return None
 
     def delete_message(self, queue_name: str, receipt_handle: str) -> bool:
@@ -762,7 +761,7 @@ class QueueManager:
         try:
             queue_url = self.get_queue_url(queue_name)
             if not queue_url:
-                logger.info(f"Queue not found: {queue_name}")
+                logger.info("Queue not found: %s", queue_name)
                 return False
 
             self.sqs_client.delete_message(
@@ -771,7 +770,7 @@ class QueueManager:
             return True
 
         except Exception as e:
-            logger.error(f"Error deleting message: {e}")
+            logger.error("Error deleting message: %s", e, exc_info=True)
             return False
 
     def delete_message_batch(
@@ -790,7 +789,7 @@ class QueueManager:
         try:
             queue_url = self.get_queue_url(queue_name)
             if not queue_url:
-                logger.info(f"Queue not found: {queue_name}")
+                logger.info("Queue not found: %s", queue_name)
                 return None
 
             response = self.sqs_client.delete_message_batch(
@@ -799,7 +798,7 @@ class QueueManager:
             return response
 
         except Exception as e:
-            logger.error(f"Error deleting batch: {e}")
+            logger.error("Error deleting batch: %s", e, exc_info=True)
             return None
 
     def change_message_visibility(
@@ -819,7 +818,7 @@ class QueueManager:
         try:
             queue_url = self.get_queue_url(queue_name)
             if not queue_url:
-                logger.info(f"Queue not found: {queue_name}")
+                logger.info("Queue not found: %s", queue_name)
                 return False
 
             self.sqs_client.change_message_visibility(
@@ -830,7 +829,7 @@ class QueueManager:
             return True
 
         except Exception as e:
-            logger.error(f"Error changing message visibility: {e}")
+            logger.error("Error changing message visibility: %s", e, exc_info=True)
             return False
 
     def change_message_visibility_batch(
@@ -849,7 +848,7 @@ class QueueManager:
         try:
             queue_url = self.get_queue_url(queue_name)
             if not queue_url:
-                logger.info(f"Queue not found: {queue_name}")
+                logger.info("Queue not found: %s", queue_name)
                 return None
 
             response = self.sqs_client.change_message_visibility_batch(
@@ -858,7 +857,7 @@ class QueueManager:
             return response
 
         except Exception as e:
-            logger.error(f"Error changing visibility batch: {e}")
+            logger.error("Error changing visibility batch: %s", e, exc_info=True)
             return None
 
     def get_queue_attributes(
@@ -877,7 +876,7 @@ class QueueManager:
         try:
             queue_url = self.get_queue_url(queue_name)
             if not queue_url:
-                logger.info(f"Queue not found: {queue_name}")
+                logger.info("Queue not found: %s", queue_name)
                 return None
 
             if not attribute_names:
@@ -889,7 +888,7 @@ class QueueManager:
             return response.get("Attributes", {})
 
         except Exception as e:
-            logger.error(f"Error getting queue attributes: {e}")
+            logger.error("Error getting queue attributes: %s", e, exc_info=True)
             return None
 
     def set_queue_attributes(self, queue_name: str, attributes: Dict) -> bool:
@@ -906,7 +905,7 @@ class QueueManager:
         try:
             queue_url = self.get_queue_url(queue_name)
             if not queue_url:
-                logger.info(f"Queue not found: {queue_name}")
+                logger.info("Queue not found: %s", queue_name)
                 return False
 
             self.sqs_client.set_queue_attributes(
@@ -915,7 +914,7 @@ class QueueManager:
             return True
 
         except Exception as e:
-            logger.error(f"Error setting queue attributes: {e}")
+            logger.error("Error setting queue attributes: %s", e, exc_info=True)
             return False
 
 
@@ -978,7 +977,7 @@ def handle_sqs_request():
         if not action:
             return error_response("MissingAction", "Missing Action parameter"), 400
 
-        logger.info(f"Handling action: {action} - Data: {request.form}")
+        logger.info("Handling action: {action} - Data: %s", request.form)
 
         # Route to appropriate handler
         action_handlers = {
@@ -1008,17 +1007,17 @@ def handle_sqs_request():
         return handler()
 
     except Exception as e:
-        logger.error(f"Error handling request: {e}", exc_info=True)
+        logger.error("Error handling request: %s", e, exc_info=True)
         return error_response("InternalError", str(e)), 500
 
 
 def get_request_param(name: str, default=None):
     """Extract parameter from request (form data or JSON)"""
-    # logger.debug(f"Content-Type: {request.content_type}")
-    # logger.debug(f"Form data: {dict(request.form)}")
-    # logger.debug(f"JSON data: {request.json if request.is_json else 'Not JSON'}")
-    # logger.debug(f"Raw data: {request.data}")
-    # logger.debug(f"Args: {dict(request.args)}")
+    # logger.debug("Content-Type: %s", request.content_type)
+    # logger.debug("Form data: %s", dict(request.form))
+    # logger.debug("JSON data: %s", request.json if request.is_json else 'Not JSON')
+    # logger.debug("Raw data: %s", request.data)
+    # logger.debug("Args: %s", dict(request.args))
     if request.form:
         return request.form.get(name, default)
 
@@ -1026,16 +1025,16 @@ def get_request_param(name: str, default=None):
     try:
         data = request.get_json(force=True, silent=True)
         if data:
-            # logger.debug(f"Returning: Name:{name} -> {data.get(name, default)}")
+            # logger.debug("Returning: Name:%s -> %s", name, data.get(name, default))
             return data.get(name, default)
     except Exception as e:
-        logger.debug(f"Data not JSON, skipping")
+        logger.debug("Data not JSON, skipping")
 
     try:
-        logger.debug(f"Returning: {json.loads(request.data)}")
+        logger.debug("Returning: %s", json.loads(request.data))
         return json.loads(request.data)
-    except:
-        logger.debug(f"Returning: {default}")
+    except Exception:
+        logger.debug("Returning: %s", default)
         return default
 
 
@@ -1052,11 +1051,11 @@ def success_response(data: Dict) -> Response:
 def handle_create_queue():
     """Handle CreateQueue action"""
     try:
-        logger.info(f"Content-Type: {request.content_type}")
-        logger.info(f"Form data: {dict(request.form)}")
-        logger.info(f"JSON data: {request.json if request.is_json else 'Not JSON'}")
-        logger.info(f"Raw data: {request.data}")
-        logger.info(f"Args: {dict(request.args)}")
+        logger.info("Content-Type: %s", request.content_type)
+        logger.info("Form data: %s", dict(request.form))
+        logger.info("JSON data: %s", request.json if request.is_json else "Not JSON")
+        logger.info("Raw data: %s", request.data)
+        logger.info("Args: %s", dict(request.args))
         queue_name = get_request_param("QueueName")
         if not queue_name:
             return error_response("MissingParameter", "QueueName is required"), 400
@@ -1089,7 +1088,7 @@ def handle_create_queue():
         return success_response({"QueueUrl": result["QueueUrl"]}), 200
 
     except Exception as e:
-        logger.error(f"Error in CreateQueue [{queue_name}]: {e}")
+        logger.error("Error in CreateQueue [%s]: %s", queue_name, e, exc_info=True)
         return error_response("InternalError", str(e)), 500
 
 
@@ -1112,7 +1111,7 @@ def handle_get_queue_url():
         return success_response({"QueueUrl": queue_url}), 200
 
     except Exception as e:
-        logger.error(f"Error in GetQueueUrl: {e}")
+        logger.error("Error in GetQueueUrl: %s", e, exc_info=True)
         return error_response("InternalError", str(e)), 500
 
 
@@ -1125,7 +1124,7 @@ def handle_list_queues():
         return success_response({"QueueUrls": queue_urls}), 200
 
     except Exception as e:
-        logger.error(f"Error in ListQueues: {e}")
+        logger.error("Error in ListQueues: %s", e, exc_info=True)
         return error_response("InternalError", str(e)), 500
 
 
@@ -1146,7 +1145,7 @@ def handle_delete_queue():
         return success_response({}), 200
 
     except Exception as e:
-        logger.error(f"Error in DeleteQueue: {e}")
+        logger.error("Error in DeleteQueue: %s", e, exc_info=True)
         return error_response("InternalError", str(e)), 500
 
 
@@ -1191,7 +1190,7 @@ def handle_send_message():
         )
 
     except Exception as e:
-        logger.error(f"Error in SendMessage: {e}")
+        logger.error("Error in SendMessage: %s", e, exc_info=True)
         return error_response("InternalError", str(e)), 500
 
 
@@ -1240,7 +1239,7 @@ def handle_send_message_batch():
         )
 
     except Exception as e:
-        logger.error(f"Error in SendMessageBatch: {e}")
+        logger.error("Error in SendMessageBatch: %s", e, exc_info=True)
         return error_response("InternalError", str(e)), 500
 
 
@@ -1273,7 +1272,7 @@ def handle_receive_message():
         return success_response({"Messages": result.get("Messages", [])}), 200
 
     except Exception as e:
-        logger.error(f"Error in ReceiveMessage: {e}")
+        logger.error("Error in ReceiveMessage: %s", e, exc_info=True)
         return error_response("InternalError", str(e)), 500
 
 
@@ -1302,7 +1301,7 @@ def handle_delete_message():
         return success_response({}), 200
 
     except Exception as e:
-        logger.error(f"Error in DeleteMessage: {e}")
+        logger.error("Error in DeleteMessage: %s", e, exc_info=True)
         return error_response("InternalError", str(e)), 500
 
 
@@ -1337,7 +1336,7 @@ def handle_delete_message_batch():
         )
 
     except Exception as e:
-        logger.error(f"Error in DeleteMessageBatch: {e}")
+        logger.error("Error in DeleteMessageBatch: %s", e, exc_info=True)
         return error_response("InternalError", str(e)), 500
 
 
@@ -1371,7 +1370,7 @@ def handle_change_message_visibility():
         return success_response({}), 200
 
     except Exception as e:
-        logger.error(f"Error in ChangeMessageVisibility: {e}")
+        logger.error("Error in ChangeMessageVisibility: %s", e, exc_info=True)
         return error_response("InternalError", str(e)), 500
 
 
@@ -1406,7 +1405,7 @@ def handle_change_message_visibility_batch():
         )
 
     except Exception as e:
-        logger.error(f"Error in ChangeMessageVisibilityBatch: {e}")
+        logger.error("Error in ChangeMessageVisibilityBatch: %s", e, exc_info=True)
         return error_response("InternalError", str(e)), 500
 
 
@@ -1433,7 +1432,7 @@ def handle_get_queue_attributes():
         return success_response({"Attributes": attributes}), 200
 
     except Exception as e:
-        logger.error(f"Error in GetQueueAttributes: {e}")
+        logger.error("Error in GetQueueAttributes: %s", e, exc_info=True)
         return error_response("InternalError", str(e)), 500
 
 
@@ -1460,7 +1459,7 @@ def handle_set_queue_attributes():
         return success_response({}), 200
 
     except Exception as e:
-        logger.error(f"Error in SetQueueAttributes: {e}")
+        logger.error("Error in SetQueueAttributes: %s", e, exc_info=True)
         return error_response("InternalError", str(e)), 500
 
 
@@ -1483,11 +1482,11 @@ def handle_purge_queue():
             queue_manager.sqs_client.purge_queue(QueueUrl=url)
             return success_response({}), 200
         except Exception as e:
-            logger.error(f"Error purging queue: {e}")
+            logger.error("Error purging queue: %s", e, exc_info=True)
             return error_response("InternalError", str(e)), 500
 
     except Exception as e:
-        logger.error(f"Error in PurgeQueue: {e}")
+        logger.error("Error in PurgeQueue: %s", e, exc_info=True)
         return error_response("InternalError", str(e)), 500
 
 

@@ -20,8 +20,6 @@ import sqlite3
 from datetime import datetime, timezone
 from timedlocking import TimedLock
 from flask import Flask, request, jsonify, Response
-import custom_logger
-from pathlib import Path
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -269,7 +267,7 @@ class Database:
         ]:
             try:
                 cursor.execute(f"ALTER TABLE lambda_functions ADD COLUMN {col} {definition}")
-                logger.info(f"Migrated lambda_functions: added column '{col}'")
+                logger.info("Migrated lambda_functions: added column '%s'", col)
             except sqlite3.OperationalError:
                 pass  # Column already exists
 
@@ -299,7 +297,7 @@ class Database:
                 if parsed:
                     environment = {"Variables": parsed}
             except (json.JSONDecodeError, TypeError):
-                logger.warning(f"Failed to parse environment for {function_name}")
+                logger.warning("Failed to parse environment for %s", function_name)
 
         # --- LoggingConfig ---
         logging_config = None
@@ -307,7 +305,7 @@ class Database:
             try:
                 logging_config = json.loads(row["logging_config"])
             except (json.JSONDecodeError, TypeError):
-                logger.warning(f"Failed to parse logging_config for {function_name}")
+                logger.warning("Failed to parse logging_config for %s", function_name)
 
         # --- Base result (ONLY AWS-valid fields) ---
         result = {
@@ -354,7 +352,7 @@ class Database:
                         else json.loads(row["image_config"])
                     )
                 except (json.JSONDecodeError, TypeError):
-                    logger.warning(f"Failed to parse image_config for {function_name}")
+                    logger.warning("Failed to parse image_config for %s", function_name)
 
         return result
 
@@ -544,7 +542,7 @@ class Database:
                 try:
                     environment = json.loads(row["environment"])
                 except (json.JSONDecodeError, TypeError):
-                    logger.warning(f"Failed to parse environment for version {row['version']}")
+                    logger.warning("Failed to parse environment for version %s", row['version'])
                     environment = {}
 
             # Parse logging_config if present
@@ -553,7 +551,7 @@ class Database:
                 try:
                     logging_config = json.loads(row["logging_config"])
                 except (json.JSONDecodeError, TypeError):
-                    logger.warning(f"Failed to parse logging_config for version {row['version']}")
+                    logger.warning("Failed to parse logging_config for version %s", row['version'])
                     logging_config = None
 
             version_data = {
@@ -739,10 +737,10 @@ class ContainerLifecycleManager:
             # Image already exists, just verify it's pullable
             try:
                 self.docker_client.images.pull(image_uri)
-                logger.info(f"Pulled image for {function_name}: {image_uri}")
+                logger.info("Pulled image for %s: %s", image_uri, function_name)
                 return image_uri, None, None
             except Exception as e:
-                logger.error(f"Failed to pull image {image_uri}: {e}")
+                logger.error("Failed to pull image %s: %s", e, image_uri, exc_info=True)
                 return (
                     None,
                     {
@@ -758,7 +756,7 @@ class ContainerLifecycleManager:
             image_tag = f"lambda-{function_name}:latest".lower()
 
             try:
-                logger.info(f"Building image from {function_path}")
+                logger.info("Building image from %s", function_path)
                 _, logs = self.docker_client.images.build(
                     path=str(function_path), tag=image_tag, rm=True
                 )
@@ -766,11 +764,11 @@ class ContainerLifecycleManager:
                     if "stream" in log:
                         logger.info(log["stream"].strip())
 
-                logger.info(f"Successfully built image: {image_tag}")
+                logger.info("Successfully built image: %s", image_tag)
                 return image_tag, None, None
 
             except errors.BuildError as e:
-                logger.error(f"Build error: {e}")
+                logger.error("Build error: %s", e)
                 return (
                     None,
                     {
@@ -814,7 +812,7 @@ class ContainerLifecycleManager:
         with self._lock("ContainerLifecycleManager.get_invocation_queue"):
             # Double-check after acquiring lock
             if function_name not in self._invocation_queues:
-                logger.info(f"Creating new invocation queue for {function_name}")
+                logger.info("Creating new invocation queue for %s", function_name)
                 self._invocation_queues[function_name] = Queue()
                 logger.debug(
                     f"Queue created with ID: {id(self._invocation_queues[function_name])}"
@@ -883,7 +881,7 @@ class ContainerLifecycleManager:
                     init_start_time=time.time(),
                     state=state,
                 )
-        logger.debug(f"DATA self.container_metadata ({self.container_metadata})")
+        logger.debug("DATA self.container_metadata (%s)", self.container_metadata)
 
     def update_container_ip(self, container_id, ip_address):
         """Update the IP address for an already-registered container"""
@@ -984,7 +982,7 @@ class ContainerLifecycleManager:
             for container_id, container_meta in list[tuple](
                 self.container_metadata.items()
             ):  # Use list() here too
-                # logger.debug(f"Checking Container {C.MAGENTA}{container_id}{C.RESET}, State:{container_meta.state} Fucntion:{container_meta.function_name}")
+                # logger.debug("Checking Container %s%s%s, State:%s Fucntion:%s", container_id, C.RESET, container_meta.state, container_meta.function_name, C.MAGENTA)
                 if (
                     not container_meta.ip_address
                     and container_meta.state == ContainerState.STARTING
@@ -1068,7 +1066,7 @@ class ContainerLifecycleManager:
             try:
                 self._check_all_functions()
             except Exception as e:
-                logger.error(f"Error in monitor loop: {e}", exc_info=True)
+                logger.error("Error in monitor loop: %s", e, exc_info=True)
 
             time.sleep(self.check_interval)
 
@@ -1210,15 +1208,15 @@ class ContainerLifecycleManager:
             # try:
             #     container.reload()
             # except errors.NotFound:
-            #     logger.warning(f"Container {C.YELLOW}{container.name}{C.RESET} not found during cleanup")
+            #     logger.warning("Container %s%s%s not found during cleanup", container.name, C.RESET, C.YELLOW)
             #     continue
             # exit_code = container.attrs.get('State', {}).get('ExitCode', 0)
 
             # # Log failures for debugging
             # if exit_code != 0:
             #     logs = container.logs(tail=50).decode(errors='ignore')
-            #     logger.error(f"Container {C.YELLOW}{container.name}{C.RESET} for {function_name} exited with code {exit_code}")
-            #     logger.error(f"Last 50 lines of logs:\n{logs}")
+            #     logger.error("Container %s%s%s for %s exited with code %s", container.name, C.RESET, function_name, exit_code, C.YELLOW)
+            #     logger.error("Last 50 lines of logs:\n%s", logs)
 
             #     # Clean up any pending invocations for this container
             #     self._cleanup_container_invocations(container.id)
@@ -1235,10 +1233,10 @@ class ContainerLifecycleManager:
                     with self._lock("ContainerLifecycleManager._cleanup_stopped_containers"):
                         self.container_activity.pop(cid, None)
                     self.unregister_container(cid)
-            #     logger.info(f"Removed stopped container {C.YELLOW}{container.name}{C.RESET} for function {function_name}")
+            #     logger.info("Removed stopped container %s%s%s for function %s", container.name, C.RESET, function_name, C.YELLOW)
 
             # except Exception as e:
-            #     logger.error(f"Failed to remove container: {C.YELLOW}{container.name}{C.RESET} -> {e}")
+            #     logger.error("Failed to remove container: %s%s%s -> %s", container.name, C.RESET, e, C.YELLOW, exc_info=True)
 
     def _cleanup_container_invocations(self, container_id):
         """Clean up any pending invocations for a crashed container"""
@@ -1361,7 +1359,7 @@ class ContainerLifecycleManager:
 
             # Skip containers that are still starting up
             if container_metadata.state == ContainerState.STARTING:
-                logger.debug(f"Skipping {container.name} - still starting up")
+                logger.debug("Skipping %s - still starting up", container.name)
                 continue
 
             # Check idle time - use container_activity if available, otherwise use metadata.last_activity
@@ -1395,7 +1393,7 @@ class ContainerLifecycleManager:
                 all=(status is None), filters=filters
             )
         except Exception as e:
-            logger.error(f"Error listing containers for {function_name}: {e}")
+            logger.error("Error listing containers for %s: %s", e, function_name, exc_info=True)
             return []
 
     def _get_queue_depth(self, function_name):
@@ -1409,13 +1407,13 @@ class ContainerLifecycleManager:
         Start a container and verify it's ready.
         Returns container_name on success, None on failure.
         """
-        logger.info(f"Starting container for {function_name}")
+        logger.info("Starting container for %s", function_name)
 
         # Start container (it handles verification internally now)
         container_name = self._start_container_instance(function_name)
 
         if container_name is None:
-            logger.error(f"Failed to start container for {function_name}")
+            logger.error("Failed to start container for %s", function_name)
             return None
 
         # Container already verified by _start_container_instance
@@ -1429,7 +1427,7 @@ class ContainerLifecycleManager:
 
         function_config = self.db.get_function_from_db(function_name)
         if not function_config:
-            logger.error(f"Cannot start container: function {function_name} not found")
+            logger.error("Cannot start container: function %s not found", function_name)
             return None
 
         runtime = function_config.get("Runtime", "python3.11")
@@ -1475,7 +1473,7 @@ class ContainerLifecycleManager:
             )
 
             if err_resp:
-                logger.error(f"Failed to start container: {err_code} - {err_resp}")
+                logger.error("Failed to start container: %s - %s", err_resp, err_code)
                 return None
 
             logger.info(
@@ -1615,7 +1613,7 @@ class ContainerLifecycleManager:
                 last_log_time = time.time()
 
             if self.invocation_responses:
-                logger.debug(f"Existing requests: {self.invocation_responses}")
+                logger.debug("Existing requests: %s", self.invocation_responses)
             if request_id in self.invocation_responses:
                 response = self.invocation_responses.pop(request_id)
 
@@ -1721,14 +1719,14 @@ class ContainerLifecycleManager:
 
             if container.status:
                 container.kill()
-                logger.info(f"Killed container {C.YELLOW}{container.name}{C.RESET}")
+                logger.info("Killed container %s%s%s", container.name, C.RESET, C.YELLOW)
         except errors.NotFound:
             pass
 
         try:
             with self._lock("ContainerLifecycleManager.kill_container"):
                 self.container_activity.pop(getattr(container, "id", None), None)
-        except:
+        except Exception:
             pass
 
     def _graceful_shutdown_all(self, timeout=900):
@@ -1738,12 +1736,12 @@ class ContainerLifecycleManager:
                 filters={"label": "localcloud=true"}
             )
 
-            logger.info(f"Gracefully shutting down {len(containers)} containers...")
+            logger.info("Gracefully shutting down %s containers...", len(containers))
             for container in containers:
                 self.stop_container_gracefully(container, timeout)
 
         except Exception as e:
-            logger.error(f"Error during graceful shutdown: {e}", exc_info=True)
+            logger.error("Error during graceful shutdown: %s", e, exc_info=True)
 
     def mark_container_active(self, container_id):
         """Mark a container as active (called when processing invocation)"""
@@ -1792,7 +1790,7 @@ class ContainerLifecycleManager:
 
         try:
             if not image_uri and not function_path:
-                logger.error(f"Either ImageUri or function code must be provided")
+                logger.error("Either ImageUri or function code must be provided")
                 return (
                     None,
                     None,
@@ -1812,7 +1810,7 @@ class ContainerLifecycleManager:
                 )
                 image_tag = f"lambda-{function_name}:latest".lower()
                 try:
-                    logger.info(f"Building image from {function_path}")
+                    logger.info("Building image from %s", function_path)
                     _, logs = self.docker_client.images.build(
                         path=str(function_path), nocache=True, tag=image_tag, rm=True
                     )
@@ -1820,7 +1818,7 @@ class ContainerLifecycleManager:
                         if "stream" in log:
                             logger.info(log["stream"].strip())
                 except errors.BuildError as e:
-                    logger.error(f"Build error: {e}")
+                    logger.error("Build error: %s", e)
                     return (
                         None,
                         None,
@@ -2046,7 +2044,7 @@ class ContainerLifecycleManager:
                             400,
                         )
                     except Exception as e:
-                        logger.error(f"Failed to get IP address: {e}")
+                        logger.error("Failed to get IP address: %s", e, exc_info=True)
                         if verify_ready:
                             logs = None
                             try:
@@ -2059,7 +2057,7 @@ class ContainerLifecycleManager:
                             self.unregister_container(container.id)
                             try:
                                 container.remove(force=True)
-                            except:
+                            except Exception:
                                 pass
                             return (
                                 None,
@@ -2109,7 +2107,7 @@ class ContainerLifecycleManager:
                             self.unregister_container(container.id)
                             container.remove(force=True)
                         except Exception as e:
-                            logger.debug(f"Failed to force remove container: {e}")
+                            logger.debug("Failed to force remove container: %s", e)
                         return (
                             None,
                             None,
@@ -2165,7 +2163,7 @@ class ContainerLifecycleManager:
                             logs = container.logs(tail=100).decode(errors="ignore")
                         except Exception:
                             logs = "<no logs available>"
-                        logger.error(f"Container exited during startup:\n{logs}")
+                        logger.error("Container exited during startup:\n%s", logs)
                         self.unregister_container(container.id)
                         return (
                             None,
@@ -2194,7 +2192,7 @@ class ContainerLifecycleManager:
                 return endpoint, container_name, None, None, None
 
             except errors.ImageNotFound as e:
-                logger.error(f"Image not found: {e}")
+                logger.error("Image not found: %s", e)
                 return (
                     None,
                     None,
@@ -2206,7 +2204,7 @@ class ContainerLifecycleManager:
                     400,
                 )
             except errors.APIError as e:
-                logger.error(f"API error: {e}")
+                logger.error("API error: %s", e)
                 return (
                     None,
                     None,
@@ -2218,7 +2216,7 @@ class ContainerLifecycleManager:
                     400,
                 )
             except Exception as e:
-                logger.error(f"Error starting container: {e}", exc_info=True)
+                logger.error("Error starting container: %s", e, exc_info=True)
                 return (
                     None,
                     None,
@@ -2227,7 +2225,7 @@ class ContainerLifecycleManager:
                     500,
                 )
         except Exception as e:
-            logger.error(f"Unexpected error: {e}", exc_info=True)
+            logger.error("Unexpected error: %s", e, exc_info=True)
             return (
                 None,
                 None,
@@ -2309,15 +2307,15 @@ CMD [ "{handler}" ]
                         return False
 
             except errors.NotFound:
-                logger.error(f"Container disappeared during readiness check")
+                logger.error("Container disappeared during readiness check")
                 return False
             except Exception as e:
-                logger.error(f"Error checking container status: {e}")
+                logger.error("Error checking container status: %s", e, exc_info=True)
                 return False
 
             time.sleep(0.2)
 
-        logger.error(f"Container readiness timeout after {timeout}s")
+        logger.error("Container readiness timeout after %ss", timeout)
         return False
 
     def get_function_by_container_id(self, container_id):
@@ -2372,7 +2370,7 @@ CMD [ "{handler}" ]
             containers = self.docker_client.containers.list(
                 filters={"label": "localcloud=true"}
             )
-            logger.info(f"Found {len(containers)} existing LocalCloud containers")
+            logger.info("Found %s existing LocalCloud containers", len(containers))
 
             for container in containers:
                 function_name = container.labels.get("function-name")
@@ -2411,10 +2409,10 @@ CMD [ "{handler}" ]
                         f"Recovered container mapping: {function_name} -> {C.YELLOW}{container.name}{C.RESET} ({container_ip})"
                     )
                 else:
-                    logger.info(f"Container mapping already exists for {function_name}")
+                    logger.info("Container mapping already exists for %s", function_name)
 
         except Exception as e:
-            logger.error(f"Error recovering containers: {e}", exc_info=True)
+            logger.error("Error recovering containers: %s", e, exc_info=True)
 
 
 app = Flask(__name__)
@@ -2458,7 +2456,7 @@ def invoke_function(function_name):
         event = payload.decode(errors="ignore")
 
     request_id = str(uuid.uuid4())
-    logger.info(f"New invocation RequestId: {request_id}")
+    logger.info("New invocation RequestId: %s", request_id)
     include_logs = request.headers.get("X-Amz-Log-Type", "") == "Tail"
 
     # Ensure a container is running for this function
@@ -2507,7 +2505,7 @@ def invoke_function(function_name):
                         f"Queue was already empty when trying to remove failed message"
                     )
             except Exception as e:
-                logger.error(f"Error removing message from queue: {e}")
+                logger.error("Error removing message from queue: %s", e, exc_info=True)
 
             # Remove from timing to prevent infinite retry
             with lifecycle_manager._lock("invoke_function.cleanup_failed"):
@@ -2585,7 +2583,7 @@ def invoke_function(function_name):
         )
 
     except Exception as e:
-        logger.error(f"Error waiting for invocation response: {e}", exc_info=True)
+        logger.error("Error waiting for invocation response: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException", "message": str(e)}), 500
 
 
@@ -2598,7 +2596,7 @@ def list_functions():
         return jsonify({"Functions": functions, "NextMarker": None}), 200
 
     except Exception as e:
-        logger.error(f"Error listing functions: {e}", exc_info=True)
+        logger.error("Error listing functions: %s", e, exc_info=True)
         return (
             jsonify(
                 {
@@ -2616,7 +2614,7 @@ def list_functions():
 def get_function(function_name):
     """Get function configuration"""
     try:
-        logger.info(f"Getting function: {function_name}")
+        logger.info("Getting function: %s", function_name)
 
         function_config = lifecycle_manager.db.get_function_from_db(function_name)
         if not function_config:
@@ -2643,7 +2641,7 @@ def get_function(function_name):
         return jsonify({"Configuration": configuration, "Code": code}), 200
 
     except Exception as e:
-        logger.error(f"Error getting function {function_name}: {e}", exc_info=True)
+        logger.error("Error getting function %s: %s", function_name, e, exc_info=True)
         return (
             jsonify(
                 {
@@ -2661,7 +2659,7 @@ def get_function(function_name):
 def delete_function(function_name):
     """Delete a Lambda function"""
     try:
-        logger.info(f"Deleting function: {function_name}")
+        logger.info("Deleting function: %s", function_name)
 
         function_config = lifecycle_manager.db.get_function_from_db(function_name)
         if not function_config:
@@ -2709,19 +2707,19 @@ def delete_function(function_name):
                         container.stop(timeout=3)
                         container.remove()
                     except Exception as e:
-                        logger.warning(f"Error force-removing untracked container: {e}")
+                        logger.warning("Error force-removing untracked container: %s", e)
         else:
-            logger.info(f"No containers found for {function_name}")
+            logger.info("No containers found for %s", function_name)
 
         # Delete from database - function is now unavailable for new invocations
         lifecycle_manager.db.delete_function_from_db(function_name)
-        logger.info(f"Function deleted from database: {function_name}")
-        logger.info(f"Containers will be terminated by lifecycle manager")
+        logger.info("Function deleted from database: %s", function_name)
+        logger.info("Containers will be terminated by lifecycle manager")
 
         return "", 204
 
     except Exception as e:
-        logger.error(f"Error deleting function {function_name}: {e}", exc_info=True)
+        logger.error("Error deleting function %s: %s", function_name, e, exc_info=True)
         return (
             jsonify(
                 {
@@ -2741,7 +2739,7 @@ def delete_function(function_name):
 def get_function_configuration(function_name):
     """Get Lambda function configuration"""
     try:
-        logger.info(f"Getting function configuration: {function_name}")
+        logger.info("Getting function configuration: %s", function_name)
 
         function_config = lifecycle_manager.db.get_function_from_db(function_name)
         if not function_config:
@@ -2783,7 +2781,7 @@ def get_function_configuration(function_name):
 def update_function_configuration(function_name):
     """Update Lambda function configuration"""
     try:
-        logger.info(f"Updating function configuration: {function_name}")
+        logger.info("Updating function configuration: %s", function_name)
 
         function_config = lifecycle_manager.db.get_function_from_db(function_name)
         if not function_config:
@@ -2814,7 +2812,7 @@ def update_function_configuration(function_name):
 
         # Save updated configuration
         lifecycle_manager.db.save_function_to_db(function_config)
-        logger.info(f"Function configuration updated: {function_name}")
+        logger.info("Function configuration updated: %s", function_name)
 
         response_config = function_config.copy()
         response_config.pop("Endpoint", None)
@@ -2847,7 +2845,7 @@ def update_function_configuration(function_name):
 def update_function_code(function_name):
     """Update function code"""
     try:
-        logger.info(f"Updating function code: {function_name}")
+        logger.info("Updating function code: %s", function_name)
 
         function_config = lifecycle_manager.db.get_function_from_db(function_name)
         if not function_config:
@@ -2890,7 +2888,7 @@ def update_function_code(function_name):
                     container.stop(timeout=3)
                     container.remove()
             except Exception as e:
-                logger.warning(f"Error removing old container: {e}")
+                logger.warning("Error removing old container: %s", e)
 
         runtime = function_config.get("Runtime", "python3.11")
         handler = function_config.get("Handler", "lambda_function.handler")
@@ -2952,7 +2950,7 @@ def update_function_code(function_name):
             ).decode()
 
         lifecycle_manager.db.save_function_to_db(function_config)
-        logger.info(f"Function code updated: {function_name}")
+        logger.info("Function code updated: %s", function_name)
 
         response_config = function_config.copy()
         response_config.pop("Endpoint", None)
@@ -2962,7 +2960,7 @@ def update_function_code(function_name):
         return jsonify(response_config), 200
 
     except Exception as e:
-        logger.error(f"Error updating code for {function_name}: {e}", exc_info=True)
+        logger.error("Error updating code for %s: %s", function_name, e, exc_info=True)
         return (
             jsonify(
                 {
@@ -2978,7 +2976,7 @@ def update_function_code(function_name):
 def get_function_logging_config(function_name):
     """Get function logging configuration"""
     try:
-        logger.info(f"Getting logging config for: {function_name}")
+        logger.info("Getting logging config for: %s", function_name)
 
         function_config = lifecycle_manager.db.get_function_from_db(function_name)
         if not function_config:
@@ -3005,7 +3003,7 @@ def get_function_logging_config(function_name):
         return jsonify(log_config), 200
 
     except Exception as e:
-        logger.error(f"Error getting logging config: {e}", exc_info=True)
+        logger.error("Error getting logging config: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException:", "message": str(e)}), 500
 
 
@@ -3013,7 +3011,7 @@ def get_function_logging_config(function_name):
 def put_function_logging_config(function_name):
     """Configure function logging"""
     try:
-        logger.info(f"Setting logging config for: {function_name}")
+        logger.info("Setting logging config for: %s", function_name)
 
         function_config = lifecycle_manager.db.get_function_from_db(function_name)
         if not function_config:
@@ -3042,7 +3040,7 @@ def put_function_logging_config(function_name):
         return jsonify(log_config), 200
 
     except Exception as e:
-        logger.error(f"Error updating logging config: {e}", exc_info=True)
+        logger.error("Error updating logging config: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException:", "message": str(e)}), 500
 
 
@@ -3050,7 +3048,7 @@ def put_function_logging_config(function_name):
 def delete_function_logging_config(function_name):
     """Delete function logging configuration"""
     try:
-        logger.info(f"Deleting logging config for: {function_name}")
+        logger.info("Deleting logging config for: %s", function_name)
 
         function_config = lifecycle_manager.db.get_function_from_db(function_name)
         if not function_config:
@@ -3071,7 +3069,7 @@ def delete_function_logging_config(function_name):
         return "", 204
 
     except Exception as e:
-        logger.error(f"Error deleting logging config: {e}", exc_info=True)
+        logger.error("Error deleting logging config: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException:", "message": str(e)}), 500
 
 
@@ -3081,7 +3079,7 @@ def delete_function_logging_config(function_name):
 def get_function_concurrency(function_name):
     """Get provisioned concurrent settings"""
     try:
-        logger.info(f"Getting function concurrency for: {function_name}")
+        logger.info("Getting function concurrency for: %s", function_name)
         function_config = lifecycle_manager.db.get_function_from_db(function_name)
         if not function_config:
             return (
@@ -3106,7 +3104,7 @@ def get_function_concurrency(function_name):
         # return jsonify(function_config), 200
 
     except Exception as e:
-        logger.error(f"Error setting concurrency: {e}", exc_info=True)
+        logger.error("Error setting concurrency: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException:", "message": str(e)}), 500
 
 
@@ -3116,7 +3114,7 @@ def get_function_concurrency(function_name):
 def get_provisioned_concurrency(function_name):
     """Get provisioned concurrent settings"""
     try:
-        logger.info(f"Getting provisioned concurrency for: {function_name}")
+        logger.info("Getting provisioned concurrency for: %s", function_name)
         function_config = lifecycle_manager.db.get_function_from_db(function_name)
         if not function_config:
             return (
@@ -3128,7 +3126,7 @@ def get_provisioned_concurrency(function_name):
                 ),
                 404,
             )
-        logger.critical(f"function_config: {function_config}")
+        logger.critical("function_config: %s", function_config)
         # data = request.get_json() or {}
         provisioned = function_config.get("ProvisionedConcurrentExecutions", 0)
 
@@ -3147,7 +3145,7 @@ def get_provisioned_concurrency(function_name):
         )
 
     except Exception as e:
-        logger.error(f"Error setting concurrency: {e}", exc_info=True)
+        logger.error("Error setting concurrency: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException:", "message": str(e)}), 500
 
 
@@ -3170,14 +3168,14 @@ def delete_function_concurrency(function_name):
         # Reset reserved concurrency to default (unreserved) — account default of 100
         function_config["ReservedConcurrency"] = 100
 
-        logger.info(f"Deleted reserved concurrency for Function:{function_name}, reset to account default")
+        logger.info("Deleted reserved concurrency for Function:%s, reset to account default", function_name)
         lifecycle_manager.db.save_function_to_db(function_config)
 
         # AWS returns 204 No Content on success
         return Response(status=204)
 
     except Exception as e:
-        logger.error(f"Error deleting concurrency: {e}", exc_info=True)
+        logger.error("Error deleting concurrency: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException", "message": str(e)}), 500
 
 
@@ -3212,7 +3210,7 @@ def put_function_concurrency(function_name):
         return jsonify({"ReservedConcurrentExecutions": reserved}), 200
 
     except Exception as e:
-        logger.error(f"Error setting concurrency: {e}", exc_info=True)
+        logger.error("Error setting concurrency: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException:", "message": str(e)}), 500
 
 
@@ -3222,7 +3220,7 @@ def put_function_concurrency(function_name):
 def put_provisioned_concurrency(function_name):
     """Set provisioned concurrent executions"""
     try:
-        logger.info(f"Setting provisioned concurrency for: {function_name}")
+        logger.info("Setting provisioned concurrency for: %s", function_name)
 
         function_config = lifecycle_manager.db.get_function_from_db(function_name)
         if not function_config:
@@ -3256,7 +3254,7 @@ def put_provisioned_concurrency(function_name):
         )
 
     except Exception as e:
-        logger.error(f"Error setting provisioned concurrency: {e}", exc_info=True)
+        logger.error("Error setting provisioned concurrency: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException:", "message": str(e)}), 500
 
 
@@ -3266,7 +3264,7 @@ def put_provisioned_concurrency(function_name):
 def delete_provisioned_concurrency(function_name):
     """Set provisioned concurrent executions"""
     try:
-        logger.info(f"Deleting provisioned concurrency for: {function_name}")
+        logger.info("Deleting provisioned concurrency for: %s", function_name)
 
         function_config = lifecycle_manager.db.get_function_from_db(function_name)
         if not function_config:
@@ -3286,7 +3284,7 @@ def delete_provisioned_concurrency(function_name):
         return jsonify({}), 200
 
     except Exception as e:
-        logger.error(f"Error setting provisioned concurrency: {e}", exc_info=True)
+        logger.error("Error setting provisioned concurrency: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException:", "message": str(e)}), 500
 
 
@@ -3298,7 +3296,7 @@ def delete_provisioned_concurrency(function_name):
 def get_function_event_invoke_config_endpoint(function_name):
     """Get function event invoke configuration"""
     try:
-        logger.info(f"Getting event invoke config for: {function_name}")
+        logger.info("Getting event invoke config for: %s", function_name)
 
         function_config = lifecycle_manager.db.get_function_from_db(function_name)
         if not function_config:
@@ -3326,7 +3324,7 @@ def get_function_event_invoke_config_endpoint(function_name):
         return jsonify(config), 200
 
     except Exception as e:
-        logger.error(f"Error getting event invoke config: {e}", exc_info=True)
+        logger.error("Error getting event invoke config: %s", e, exc_info=True)
         return jsonify({"__type": "InternalServerError", "message": str(e)}), 500
 
 
@@ -3338,7 +3336,7 @@ def get_function_event_invoke_config_endpoint(function_name):
 def put_function_event_invoke_config_endpoint(function_name):
     """Create or update event invoke configuration"""
     try:
-        logger.info(f"Setting event invoke config for: {function_name}")
+        logger.info("Setting event invoke config for: %s", function_name)
 
         function_config = lifecycle_manager.db.get_function_from_db(function_name)
         if not function_config:
@@ -3379,7 +3377,7 @@ def put_function_event_invoke_config_endpoint(function_name):
             400,
         )
     except Exception as e:
-        logger.error(f"Error putting event invoke config: {e}", exc_info=True)
+        logger.error("Error putting event invoke config: %s", e, exc_info=True)
         return jsonify({"__type": "InternalServerError", "message": str(e)}), 500
 
 
@@ -3391,7 +3389,7 @@ def put_function_event_invoke_config_endpoint(function_name):
 def update_function_event_invoke_config_endpoint(function_name):
     """Update event invoke configuration"""
     try:
-        logger.info(f"Updating event invoke config for: {function_name}")
+        logger.info("Updating event invoke config for: %s", function_name)
 
         function_config = lifecycle_manager.db.get_function_from_db(function_name)
         if not function_config:
@@ -3437,7 +3435,7 @@ def update_function_event_invoke_config_endpoint(function_name):
             400,
         )
     except Exception as e:
-        logger.error(f"Error updating event invoke config: {e}", exc_info=True)
+        logger.error("Error updating event invoke config: %s", e, exc_info=True)
         return jsonify({"__type": "InternalServerError", "message": str(e)}), 500
 
 
@@ -3449,7 +3447,7 @@ def update_function_event_invoke_config_endpoint(function_name):
 def delete_function_event_invoke_config_endpoint(function_name):
     """Delete event invoke configuration"""
     try:
-        logger.info(f"Deleting event invoke config for: {function_name}")
+        logger.info("Deleting event invoke config for: %s", function_name)
 
         function_config = lifecycle_manager.db.get_function_from_db(function_name)
         if not function_config:
@@ -3475,7 +3473,7 @@ def delete_function_event_invoke_config_endpoint(function_name):
         return "", 204
 
     except Exception as e:
-        logger.error(f"Error deleting event invoke config: {e}", exc_info=True)
+        logger.error("Error deleting event invoke config: %s", e, exc_info=True)
         return jsonify({"__type": "InternalServerError", "message": str(e)}), 500
 
 
@@ -3487,7 +3485,7 @@ def create_function():
         function_name = data.get("FunctionName")
 
         if not function_name:
-            logger.error(f"InvalidParameterValueException: FunctionName is required")
+            logger.error("InvalidParameterValueException: FunctionName is required")
             return (
                 jsonify(
                     {
@@ -3556,13 +3554,13 @@ def create_function():
         image_uri = code.get("ImageUri")
         zip_file = code.get("ZipFile")
 
-        logger.debug(f"Params: {data}")
-        logger.debug(f"Environment variables: {list(environment.keys())}")
-        logger.info(f"Creating Function: {function_name} with Runtime: {runtime}")
+        logger.debug("Params: %s", data)
+        logger.debug("Environment variables: %s", list(environment.keys()))
+        logger.info("Creating Function: %s with Runtime: %s", runtime, function_name)
 
         if image_uri:
             # Verify/pull the image
-            logger.info(f"Creating function from image: {image_uri}")
+            logger.info("Creating function from image: %s", image_uri)
             built_image, err_resp, err_code = lifecycle_manager.build_function_image(
                 function_name, runtime=runtime, image_uri=image_uri, handler=handler
             )
@@ -3571,7 +3569,7 @@ def create_function():
 
         elif zip_file:
             # Create from ZIP file (base64 encoded)
-            logger.info(f"Creating function from ZIP file")
+            logger.info("Creating function from ZIP file")
 
             zip_data = base64.b64decode(zip_file)
             filename_hash = sha256(zip_data).hexdigest()
@@ -3641,7 +3639,7 @@ def create_function():
         # Save to database
         lifecycle_manager.db.save_function_to_db(function_config)
 
-        logger.info(f"Function created successfully: {function_name}")
+        logger.info("Function created successfully: %s", function_name)
 
         # Return config without internal fields
         response_config = function_config.copy()
@@ -3656,7 +3654,7 @@ def create_function():
         filename = tb.tb_frame.f_code.co_filename
         line_no = tb.tb_lineno
         error_details = f'{exc_type.__name__}: {e} (File "{filename}", line {line_no})'
-        logger.error(f"Unhandled exception: {error_details}", exc_info=True)
+        logger.error("Unhandled exception: %s", error_details, exc_info=True)
         error_response = {
             "__type": "ServiceException:",
             "message": f"Unhandled exception for function: {function_name} - {error_details}",
@@ -3676,7 +3674,7 @@ def runtime_next():
         # Get container metadata with retry for race condition during startup
         container_meta = _get_container_with_retry(client_ip)
         if not container_meta:
-            logger.warning(f"Runtime next: container not found for IP {client_ip}")
+            logger.warning("Runtime next: container not found for IP %s", client_ip)
             return jsonify({"message": "Container not registered"}), 404
 
         function_name = container_meta.function_name
@@ -3705,7 +3703,7 @@ def runtime_next():
                 # ensure it's cleaned up
                 lifecycle_manager.unregister_container(container_id)
             except Exception as e:
-                logger.debug(f"Failed to unregister container {container_id}: {e}")
+                logger.debug("Failed to unregister container %s: %s", e, container_id)
             logger.debug(
                 f"Container {C.MAGENTA}{container_id}{C.RESET} no longer exists, dropping connection"
             )
@@ -3831,7 +3829,7 @@ def _write_start_log(container_id, request_id):
         lifecycle_manager.log_manager.write_start_line(
             request_id, log_group, log_stream
         )
-        logger.debug(f"Wrote START line for {request_id} to {log_group}/{log_stream}")
+        logger.debug("Wrote START line for %s to %s/%s", log_group, log_stream, request_id)
 
 
 def _build_invocation_response(event, request_id, function_name):
@@ -3901,14 +3899,14 @@ def runtime_response(request_id):
 
         return ("", 202)
     except Exception as e:
-        logger.error(f"Error processing runtime response: {e}")
+        logger.error("Error processing runtime response: %s", e, exc_info=True)
         return jsonify({"message": str(e)}), 500
 
 
 @app.route("/2018-06-01/runtime/init/error", methods=["POST"])
 def runtime_error():
     error_data = request.get_data()
-    logger.error(f"INIT Error: {error_data}")
+    logger.error("INIT Error: %s", error_data)
     return ("", 202)
 
 
@@ -3951,7 +3949,7 @@ def runtime_request_error(request_id):
 
         return ("", 202)
     except Exception as e:
-        logger.error(f"Error processing runtime error: {e}")
+        logger.error("Error processing runtime error: %s", e, exc_info=True)
         return jsonify({"message": str(e)}), 500
 
 
@@ -4032,10 +4030,10 @@ def create_log_group():
                 400,
             )
 
-        logger.info(f"Created log group: {group}")
+        logger.info("Created log group: %s", group)
         return jsonify({}), 200
     except Exception as e:
-        logger.error(f"Error creating log group: {e}", exc_info=True)
+        logger.error("Error creating log group: %s", e, exc_info=True)
         return jsonify({"__type": "InternalServerError", "message": str(e)}), 500
 
 
@@ -4080,10 +4078,10 @@ def create_log_stream():
                 400,
             )
 
-        logger.info(f"Created log stream: {group}/{stream}")
+        logger.info("Created log stream: %s/%s", stream, group)
         return jsonify({}), 200
     except Exception as e:
-        logger.error(f"Error creating log stream: {e}", exc_info=True)
+        logger.error("Error creating log stream: %s", e, exc_info=True)
         return jsonify({"__type": "InternalServerError", "message": str(e)}), 500
 
 
@@ -4123,7 +4121,7 @@ def put_log_events():
         next_seq_token = log_manager.logs_db.put_log_events(group, stream, events)
         return jsonify({"nextSequenceToken": next_seq_token}), 200
     except Exception as e:
-        logger.error(f"Error putting log events: {e}", exc_info=True)
+        logger.error("Error putting log events: %s", e, exc_info=True)
         return (
             jsonify({"__type": "ServiceUnavailableException", "message": str(e)}),
             500,
@@ -4192,7 +4190,7 @@ def get_log_events():
             200,
         )
     except Exception as e:
-        logger.error(f"Error getting log events: {e}", exc_info=True)
+        logger.error("Error getting log events: %s", e, exc_info=True)
         return jsonify({"__type": "InternalServerError", "message": str(e)}), 500
 
 
@@ -4222,7 +4220,7 @@ def describe_log_groups():
 
         return jsonify({"logGroups": formatted_groups}), 200
     except Exception as e:
-        logger.error(f"Error describing log groups: {e}", exc_info=True)
+        logger.error("Error describing log groups: %s", e, exc_info=True)
         return jsonify({"__type": "InternalServerError", "message": str(e)}), 500
 
 
@@ -4281,7 +4279,7 @@ def describe_log_streams():
 
         return jsonify({"logStreams": formatted_streams}), 200
     except Exception as e:
-        logger.error(f"Error describing log streams: {e}", exc_info=True)
+        logger.error("Error describing log streams: %s", e, exc_info=True)
         return jsonify({"__type": "InternalServerError", "message": str(e)}), 500
 
 
@@ -4344,7 +4342,7 @@ def get_log_events_api():
             200,
         )
     except Exception as e:
-        logger.error(f"Error getting log events: {e}", exc_info=True)
+        logger.error("Error getting log events: %s", e, exc_info=True)
         return jsonify({"__type": "InternalServerError", "message": str(e)}), 500
 
 
@@ -4411,7 +4409,7 @@ def filter_log_events():
             200,
         )
     except Exception as e:
-        logger.error(f"Error filtering log events: {e}", exc_info=True)
+        logger.error("Error filtering log events: %s", e, exc_info=True)
         return jsonify({"__type": "InternalServerError", "message": str(e)}), 500
 
 
@@ -4446,7 +4444,7 @@ def delete_log_group():
         deleted = log_manager.logs_db.delete_log_group(group_name)
 
         if deleted:
-            logger.info(f"Deleted log group {group_name}")
+            logger.info("Deleted log group %s", group_name)
             return jsonify({}), 200
         else:
             return (
@@ -4459,7 +4457,7 @@ def delete_log_group():
                 404,
             )
     except Exception as e:
-        logger.error(f"Error deleting log group: {e}", exc_info=True)
+        logger.error("Error deleting log group: %s", e, exc_info=True)
         return jsonify({"__type": "InternalServerError", "message": str(e)}), 500
 
 
@@ -4506,7 +4504,7 @@ def delete_log_stream():
         deleted = log_manager.logs_db.delete_log_stream(group_name, stream_name)
 
         if deleted:
-            logger.info(f"Deleted log stream {group_name}/{stream_name}")
+            logger.info("Deleted log stream %s/%s", stream_name, group_name)
             return jsonify({}), 200
         else:
             return (
@@ -4519,7 +4517,7 @@ def delete_log_stream():
                 404,
             )
     except Exception as e:
-        logger.error(f"Error deleting log stream: {e}", exc_info=True)
+        logger.error("Error deleting log stream: %s", e, exc_info=True)
         return jsonify({"__type": "InternalServerError", "message": str(e)}), 500
 
 
@@ -4571,7 +4569,7 @@ def list_versions_by_function(function_name):
     Returns all versions (including $LATEST) of a function
     """
     try:
-        logger.info(f"ListVersionsByFunction: {function_name}")
+        logger.info("ListVersionsByFunction: %s", function_name)
 
         db = Database()
 
@@ -4606,7 +4604,7 @@ def list_versions_by_function(function_name):
         return jsonify({"Versions": versions}), 200
 
     except Exception as e:
-        logger.error(f"Error listing versions: {e}", exc_info=True)
+        logger.error("Error listing versions: %s", e, exc_info=True)
         return jsonify({
             "__type": "InternalServerError",
             "message": str(e)
@@ -4623,7 +4621,7 @@ def get_function_code_signing_config(function_name):
     Returns code signing config for a function (returns empty if not configured)
     """
     try:
-        logger.info(f"GetFunctionCodeSigningConfig: {function_name}")
+        logger.info("GetFunctionCodeSigningConfig: %s", function_name)
 
         db = Database()
 
@@ -4645,7 +4643,7 @@ def get_function_code_signing_config(function_name):
         }), 200
 
     except Exception as e:
-        logger.error(f"Error getting code signing config: {e}", exc_info=True)
+        logger.error("Error getting code signing config: %s", e, exc_info=True)
         return (
             jsonify({
                 "__type": "InternalServerError",
@@ -4659,8 +4657,8 @@ def get_function_code_signing_config(function_name):
 @app.route("/<path:path>", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 def catch_all(path):
     """Catch-all route for debugging"""
-    logger.warning(f"Unhandled route: {request.method} /{path}")
-    logger.warning(f"Query params: {vars(request.args)}")
+    logger.warning("Unhandled route: %s /%s", path, request.method)
+    logger.warning("Query params: %s", vars(request.args))
     logger.warning(
         f"Available routes: {[str(rule) for rule in app.url_map.iter_rules()]}"
     )
@@ -4698,9 +4696,9 @@ if __name__ == "__main__":
         # lifecycle_manager.recover_existing_containers()
         lifecycle_manager.start()
     except Exception as e:
-        logger.error(f"Error during lifecycle bootstrap: {e}")
+        logger.error("Error during lifecycle bootstrap: %s", e, exc_info=True)
 
     logger.info("Starting LocalCloud Lambda emulation HTTP API (Flask)")
     listening_addr = os.getenv("NIMBUS_LISTENING_ADDR", "127.0.0.1")
-    logger.info(f"Flask listening on {listening_addr}:4566")
+    logger.info("Flask listening on %s:4566", listening_addr)
     app.run(host=listening_addr, port=4566)

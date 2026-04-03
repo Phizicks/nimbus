@@ -196,7 +196,7 @@ class Database:
             try:
                 environment = json.loads(row[14])
             except (json.JSONDecodeError, TypeError):
-                logger.warning(f"Failed to parse environment for {function_name}")
+                logger.warning("Failed to parse environment for %s", function_name)
                 environment = {}
 
         # Deserialize logging_config JSON (new column at index 19)
@@ -205,7 +205,7 @@ class Database:
             try:
                 logging_config = json.loads(row[19])
             except (json.JSONDecodeError, TypeError):
-                logger.warning(f"Failed to parse logging_config for {function_name}")
+                logger.warning("Failed to parse logging_config for %s", function_name)
                 logging_config = None
 
         result = {
@@ -338,7 +338,7 @@ class Database:
                 try:
                     environment = json.loads(row[14])
                 except (json.JSONDecodeError, TypeError):
-                    logger.warning(f"Failed to parse environment for {row[0]}")
+                    logger.warning("Failed to parse environment for %s", row[0])
                     environment = {}
 
             # Deserialize logging_config JSON
@@ -347,7 +347,7 @@ class Database:
                 try:
                     logging_config = json.loads(row[19])
                 except (json.JSONDecodeError, TypeError):
-                    logger.warning(f"Failed to parse logging_config for {row[0]}")
+                    logger.warning("Failed to parse logging_config for %s", row[0])
                     logging_config = None
 
             function_data = {
@@ -501,7 +501,7 @@ class Database:
 
         conn.commit()
         conn.close()
-        logger.info(f"Deleted S3 notification mappings for bucket: {bucket_name}")
+        logger.info("Deleted S3 notification mappings for bucket: %s", bucket_name)
 
     def get_queue_arn_for_bucket_event(self, bucket_name):
         """Get all queue ARNs configured for a bucket (for webhook routing)"""
@@ -537,4 +537,4 @@ class Database:
 
         conn.commit()
         conn.close()
-        logger.info(f"Deleted S3 notification mapping: {bucket_name}/{notification_id}")
+        logger.info("Deleted S3 notification mapping: %s/%s", bucket_name, notification_id)

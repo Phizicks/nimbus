@@ -2,7 +2,6 @@
 Lambda Event Source Mapping - Polls SQS and invokes Lambda functions
 """
 
-from curses import noecho
 import threading
 import time
 import os
@@ -10,7 +9,6 @@ import sqlite3
 import json
 import uuid
 import requests
-from urllib3.util import retry
 import boto3
 import botocore
 import datetime
@@ -19,9 +17,8 @@ from contextlib import contextmanager
 from collections import defaultdict
 from enum import Enum
 from timedlocking import TimedLock
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify
 import logging
-import custom_logger
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +122,7 @@ class EMSDatabase:
             )
 
             conn.commit()
-            logger.info(f"EMS Database initialized at {self.db_path}")
+            logger.info("EMS Database initialized at %s", self.db_path)
 
     @contextmanager
     def _get_connection(self):
@@ -136,7 +133,7 @@ class EMSDatabase:
             yield conn
         except Exception as e:
             conn.rollback()
-            logger.error(f"Database error: {e}", exc_info=True)
+            logger.error("Database error: %s", e, exc_info=True)
             raise
         finally:
             conn.close()
@@ -171,10 +168,10 @@ class EMSDatabase:
                     ),
                 )
                 conn.commit()
-                logger.info(f"Created mapping in DB: {mapping['UUID']}")
+                logger.info("Created mapping in DB: %s", mapping['UUID'])
                 return True
         except Exception as e:
-            logger.error(f"Error creating mapping: {e}", exc_info=True)
+            logger.error("Error creating mapping: %s", e, exc_info=True)
             return False
 
     def get_mapping_by_uuid(self, uuid: str) -> Optional[Dict]:
@@ -193,7 +190,7 @@ class EMSDatabase:
                     return self._row_to_dict(row)
                 return None
         except Exception as e:
-            logger.error(f"Error getting mapping: {e}", exc_info=True)
+            logger.error("Error getting mapping: %s", e, exc_info=True)
             return None
 
     def get_mapping_by_function_name(self, function_name: str) -> Optional[Dict]:
@@ -212,7 +209,7 @@ class EMSDatabase:
                     return self._row_to_dict(row)
                 return None
         except Exception as e:
-            logger.error(f"Error getting mapping: {e}", exc_info=True)
+            logger.error("Error getting mapping: %s", e, exc_info=True)
             return None
 
     def get_all_mappings(self, function_name: str = "") -> List[Dict]:
@@ -235,7 +232,7 @@ class EMSDatabase:
 
                 return [self._row_to_dict(row) for row in rows]
         except Exception as e:
-            logger.error(f"Error getting mappings: {e}", exc_info=True)
+            logger.error("Error getting mappings: %s", e, exc_info=True)
             return []
 
     def get_enabled_mappings(self) -> List[Dict]:
@@ -254,7 +251,7 @@ class EMSDatabase:
 
                 return [self._row_to_dict(row) for row in rows]
         except Exception as e:
-            logger.error(f"Error getting enabled mappings: {e}", exc_info=True)
+            logger.error("Error getting enabled mappings: %s", e, exc_info=True)
             return []
 
     def update_mapping(self, uuid: str, updates: Dict) -> bool:
@@ -271,7 +268,7 @@ class EMSDatabase:
                     values.append(value)
 
                 if not set_clauses:
-                    logger.warning(f"No updates to apply for mapping: {uuid}")
+                    logger.warning("No updates to apply for mapping: %s", uuid)
                     return False
 
                 set_clauses.append("last_modified = ?")
@@ -287,13 +284,13 @@ class EMSDatabase:
                 conn.commit()
 
                 if cursor.rowcount > 0:
-                    logger.info(f"Updated mapping: {uuid}")
+                    logger.info("Updated mapping: %s", uuid)
                     return True
                 else:
-                    logger.warning(f"No mapping found to update: {uuid}")
+                    logger.warning("No mapping found to update: %s", uuid)
                     return False
         except Exception as e:
-            logger.error(f"Error updating mapping: {e}", exc_info=True)
+            logger.error("Error updating mapping: %s", e, exc_info=True)
             return False
 
     def delete_mapping(self, uuid: str) -> bool:
@@ -310,13 +307,13 @@ class EMSDatabase:
                 conn.commit()
 
                 if cursor.rowcount > 0:
-                    logger.info(f"Deleted mapping: {uuid}")
+                    logger.info("Deleted mapping: %s", uuid)
                     return True
                 else:
-                    logger.warning(f"No mapping found to delete: {uuid}")
+                    logger.warning("No mapping found to delete: %s", uuid)
                     return False
         except Exception as e:
-            logger.error(f"Error deleting mapping: {e}", exc_info=True)
+            logger.error("Error deleting mapping: %s", e, exc_info=True)
             return False
 
     def mapping_exists(self, uuid: str) -> bool:
@@ -332,7 +329,7 @@ class EMSDatabase:
                 )
                 return cursor.fetchone() is not None
         except Exception as e:
-            logger.error(f"Error checking mapping existence: {e}", exc_info=True)
+            logger.error("Error checking mapping existence: %s", e, exc_info=True)
             return False
 
     def get_mapping_by_queue_and_function(
@@ -354,7 +351,7 @@ class EMSDatabase:
                     return self._row_to_dict(row)
                 return None
         except Exception as e:
-            logger.error(f"Error getting mapping by queue+function: {e}", exc_info=True)
+            logger.error("Error getting mapping by queue+function: %s", e, exc_info=True)
             return None
 
     def _row_to_dict(self, row: sqlite3.Row) -> Dict:
@@ -446,7 +443,7 @@ class EventSourceMapping:
             response = dynamodb.list_tables()
             table_names = response.get("TableNames", [])
 
-            logger.debug(f"Searching {len(table_names)} tables for stream {stream_id}")
+            logger.debug("Searching %s tables for stream %s", len(table_names), stream_id)
 
             # Check each table's stream
             for table_name in table_names:
@@ -457,18 +454,18 @@ class EventSourceMapping:
                     )
 
                     if table_stream_arn == stream_id:
-                        logger.info(f"Found matching table: {table_name}")
+                        logger.info("Found matching table: %s", table_name)
                         return table_name
 
                 except Exception as e:
-                    logger.debug(f"Error checking table {table_name}: {e}")
+                    logger.debug("Error checking table %s: %s", table_name, e)
                     continue
 
-            logger.warning(f"No table found with stream ID: {stream_id}")
+            logger.warning("No table found with stream ID: %s", stream_id)
             return None
 
         except Exception as e:
-            logger.error(f"Error searching for stream table: {e}", exc_info=True)
+            logger.error("Error searching for stream table: %s", e, exc_info=True)
             return None
 
     # Faaaark this is annoying
@@ -495,7 +492,7 @@ class EventSourceMapping:
         if ":sqs:" in event_source_arn:
             result["source_type"] = "sqs"
             result["queue_name"] = event_source_arn.split(":")[-1]
-            logger.debug(f"Parsed as SQS queue: {result['queue_name']}")
+            logger.debug("Parsed as SQS queue: %s", result['queue_name'])
             return result
 
         # DynamoDB Stream - AWS format
@@ -531,7 +528,7 @@ class EventSourceMapping:
                     result["normalized_arn"] = self._to_aws_arn(
                         result["stream_id"], result["table_name"]
                     )
-                    logger.info(f"Normalized ARN: {result['normalized_arn']}")
+                    logger.info("Normalized ARN: %s", result['normalized_arn'])
             return result
 
         # Bare stream ID: S78066be1-f911-11f0-8dd7-c100609dac5d
@@ -556,17 +553,17 @@ class EventSourceMapping:
                 result["normalized_arn"] = self._to_aws_arn(
                     event_source_arn, table_name
                 )
-                logger.info(f"Found table {table_name} for stream {event_source_arn}")
+                logger.info("Found table %s for stream %s", table_name, event_source_arn)
             else:
-                logger.error(f"Could not find table for stream ID: {event_source_arn}")
+                logger.error("Could not find table for stream ID: %s", event_source_arn)
 
             return result
 
         # Unknown format - assume SQS for backward compatibility
-        # logger.warning(f"Unknown ARN format: {event_source_arn}, assuming SQS")
+        # logger.warning("Unknown ARN format: %s, assuming SQS", event_source_arn)
         # result['source_type'] = 'sqs'
         result["queue_name"] = event_source_arn.split(":")[-1]
-        logger.critical(f"-------------- Unknown event_source_arn --------------")
+        logger.critical("-------------- Unknown event_source_arn --------------")
         return result
 
     def _get_stream_id_from_table(self, table_name: str) -> Optional[str]:
@@ -584,7 +581,7 @@ class EventSourceMapping:
             stream_spec = response.get("Table", {}).get("StreamSpecification", {})
 
             if not stream_spec.get("StreamEnabled"):
-                logger.warning(f"Table {table_name} does not have streams enabled")
+                logger.warning("Table %s does not have streams enabled", table_name)
                 return None
 
             stream_arn = response.get("Table", {}).get("LatestStreamArn")
@@ -625,7 +622,7 @@ class EventSourceMapping:
                 f"Could not determine source type from ARN: {event_source_arn}"
             )
 
-        logger.info(f"Detected source type: {parsed['source_type']}")
+        logger.info("Detected source type: %s", parsed['source_type'])
 
         mapping_uuid = str(uuid.uuid4())
 
@@ -678,13 +675,13 @@ class EventSourceMapping:
             )
 
         if existing:
-            logger.info(f"Mapping already exists: {existing['UUID']}")
+            logger.info("Mapping already exists: %s", existing['UUID'])
             raise DuplicateMappingError(existing)
 
         if not self.db.create_mapping(mapping):
             raise Exception("Failed to create mapping in database")
 
-        logger.info(f"Created {parsed['source_type']} mapping {mapping_uuid}")
+        logger.info("Created %s mapping %s", parsed['source_type'], mapping_uuid)
 
         if enabled:
             self._start_polling(mapping_uuid)
@@ -717,7 +714,7 @@ class EventSourceMapping:
             )
 
             if should_be_dynamodb:
-                logger.info(f"Migrating mapping {mapping['UUID']} to DynamoDB type")
+                logger.info("Migrating mapping %s to DynamoDB type", mapping['UUID'])
 
                 # Re-parse the ARN
                 parsed = self._parse_event_source_arn(arn)
@@ -736,7 +733,7 @@ class EventSourceMapping:
                 migrated += 1
 
         if migrated > 0:
-            logger.info(f"Migrated {migrated} mappings to correct source type")
+            logger.info("Migrated %s mappings to correct source type", migrated)
         else:
             logger.info("No mappings needed migration")
 
@@ -763,7 +760,7 @@ class EventSourceMapping:
         self._stop_polling(uuid)
 
         if self.db.delete_mapping(uuid):
-            logger.info(f"Deleted event source mapping {uuid}")
+            logger.info("Deleted event source mapping %s", uuid)
             return True
 
         return False
@@ -805,26 +802,26 @@ class EventSourceMapping:
 
     def _start_polling(self, mapping_uuid: str):
         """Start polling thread for a mapping (routes to SQS or DynamoDB handler)"""
-        logger.info(f"Starting polling for {mapping_uuid}")
+        logger.info("Starting polling for %s", mapping_uuid)
 
         with self._thread_lock("EventSourceMapping._start_polling"):
             if (
                 mapping_uuid in self.polling_threads
                 and self.polling_threads[mapping_uuid]["thread"].is_alive()
             ):
-                logger.info(f"Polling thread already exists for {mapping_uuid}")
+                logger.info("Polling thread already exists for %s", mapping_uuid)
                 return
 
             mapping = self.db.get_mapping_by_uuid(mapping_uuid)
             if not mapping:
-                logger.error(f"Cannot start polling: mapping {mapping_uuid} not found")
+                logger.error("Cannot start polling: mapping %s not found", mapping_uuid)
                 return
 
             stop_event = threading.Event()
 
             # Use source_type from database to determine polling method
             source_type = mapping.get("SourceType")
-            logger.debug(f"Source Polling Type: {source_type} from {mapping}")
+            logger.debug("Source Polling Type: %s from %s", source_type, mapping)
             if source_type == "dynamodb":
                 target_func = self._poll_dynamodb_stream
                 thread_name = f"DDB-Stream-{mapping_uuid[:8]}"
@@ -850,16 +847,16 @@ class EventSourceMapping:
             }
 
             thread.start()
-            logger.info(f"Started polling thread: {thread_name}")
+            logger.info("Started polling thread: %s", thread_name)
 
     def _stop_polling(self, mapping_uuid: str):
         """Stop polling thread for a mapping"""
-        logger.info(f"Stopping polling for {mapping_uuid}")
+        logger.info("Stopping polling for %s", mapping_uuid)
 
         with self._thread_lock("EventSourceMapping._stop_polling"):
             thread_info = self.polling_threads.get(mapping_uuid)
             if not thread_info:
-                logger.warning(f"No polling thread found for {mapping_uuid}")
+                logger.warning("No polling thread found for %s", mapping_uuid)
                 return
 
         stop_event = thread_info["stop_event"]
@@ -871,15 +868,15 @@ class EventSourceMapping:
         with self._thread_lock("EventSourceMapping._stop_polling"):
             if mapping_uuid in self.polling_threads:
                 del self.polling_threads[mapping_uuid]
-                logger.info(f"Stopped polling thread {mapping_uuid}")
+                logger.info("Stopped polling thread %s", mapping_uuid)
 
     def _poll_queue(self, mapping_uuid: str, stop_event: threading.Event):
         """Main polling loop for SQS queues ONLY"""
-        logger.info(f"MappingId:[{mapping_uuid}] SQS polling thread starting")
+        logger.info("MappingId:[%s] SQS polling thread starting", mapping_uuid)
 
         mapping = self.db.get_mapping_by_uuid(mapping_uuid)
         if not mapping:
-            logger.error(f"MappingId:[{mapping_uuid}] No mapping found")
+            logger.error("MappingId:[%s] No mapping found", mapping_uuid)
             return
 
         # CRITICAL: Verify this is actually an SQS mapping
@@ -904,7 +901,7 @@ class EventSourceMapping:
             time.sleep(0.1)
 
         if not self._running:
-            logger.warning(f"MappingId:[{mapping_uuid}] Service not running, exiting")
+            logger.warning("MappingId:[%s] Service not running, exiting", mapping_uuid)
             return
 
         logger.info(
@@ -978,15 +975,15 @@ class EventSourceMapping:
                 consecutive_failures += 1
                 time.sleep(5)
 
-        logger.info(f"MappingId:[{mapping_uuid}] SQS polling stopped")
+        logger.info("MappingId:[%s] SQS polling stopped", mapping_uuid)
 
     def _poll_dynamodb_stream(self, mapping_uuid: str, stop_event: threading.Event):
         """Main polling loop for DynamoDB Streams"""
-        logger.info(f"[{mapping_uuid}] DynamoDB Stream polling thread starting")
+        logger.info("[%s] DynamoDB Stream polling thread starting", mapping_uuid)
 
         mapping = self.db.get_mapping_by_uuid(mapping_uuid)
         if not mapping:
-            logger.error(f"[{mapping_uuid}] No mapping found")
+            logger.error("[%s] No mapping found", mapping_uuid)
             return
 
         # Wait for service to be running
@@ -997,7 +994,7 @@ class EventSourceMapping:
             time.sleep(0.1)
 
         if not self._running:
-            logger.warning(f"[{mapping_uuid}] Service not running, exiting")
+            logger.warning("[%s] Service not running, exiting", mapping_uuid)
             return
 
         # Initialize DynamoDB Streams poller if not exists
@@ -1007,7 +1004,7 @@ class EventSourceMapping:
             self.streams_db, self.account_id, self.region
         )
 
-        logger.info(f"[{mapping_uuid}] Starting DynamoDB Stream polling")
+        logger.info("[%s] Starting DynamoDB Stream polling", mapping_uuid)
 
         try:
             # Discover and poll shards
@@ -1031,7 +1028,7 @@ class EventSourceMapping:
             if hasattr(self, "streams_poller"):
                 self.streams_poller.cleanup_mapping(mapping_uuid)
 
-        logger.info(f"[{mapping_uuid}] DynamoDB Stream polling stopped")
+        logger.info("[%s] DynamoDB Stream polling stopped", mapping_uuid)
 
     def _ensure_function_ready(
         self, mapping_uuid: str, function_name: str, stop_event: threading.Event
@@ -1090,7 +1087,7 @@ class EventSourceMapping:
             )
 
         event = {"Records": records}
-        logger.debug(f"Sending Event:{event} to Function:{function_name}")
+        logger.debug("Sending Event:%s to Function:%s", event, function_name)
         try:
             url = f"{API_BASE}/2015-03-31/functions/{function_name}/invocations"
             response = requests.post(
@@ -1115,10 +1112,10 @@ class EventSourceMapping:
                 return False
 
         except requests.exceptions.Timeout:
-            logger.error(f"[{mapping_uuid}] Invocation timeout after 305s")
+            logger.error("[%s] Invocation timeout after 305s", mapping_uuid)
             return False
         except Exception as e:
-            logger.error(f"[{mapping_uuid}] Error invoking Lambda: {e}", exc_info=True)
+            logger.error("[%s] Error invoking Lambda: %s", mapping_uuid, e, exc_info=True)
             return False
 
     def _receive_messages(self, queue_name: str, max_messages: int) -> list:
@@ -1135,7 +1132,7 @@ class EventSourceMapping:
 
             # Handle missing queue
             if status == 404:
-                logger.info(f"Mapping queue not found: {queue_name} (status 404)")
+                logger.info("Mapping queue not found: %s (status 404)", queue_name)
                 raise RuntimeError("QUEUE_NOT_FOUND")
 
             if status != 200:
@@ -1153,7 +1150,7 @@ class EventSourceMapping:
         except RuntimeError:
             raise  # propagate known errors upward
         except Exception as e:
-            logger.error(f"Error receiving messages from {queue_name}: {e}")
+            logger.error("Error receiving messages from %s: %s", queue_name, e)
 
         return []
 
@@ -1171,15 +1168,15 @@ class EventSourceMapping:
                     _, status = sqs_request("DeleteMessage", payload, timeout=10)
                     if status == 200:
                         deleted += 1
-                        logger.debug(f"Deleted message {message_id} from {queue_name}")
+                        logger.debug("Deleted message %s from %s", message_id, queue_name)
                     else:
                         logger.warning(
                             f"Failed to delete message {message_id} (status {status})"
                         )
 
-            logger.info(f"Deleted {deleted}/{len(messages)} messages from {queue_name}")
+            logger.info("Deleted %s/%s messages from %s", deleted, len(messages), queue_name)
         except Exception as e:
-            logger.error(f"Error deleting messages: {e}", exc_info=True)
+            logger.error("Error deleting messages: %s", e, exc_info=True)
 
     def start(self):
         """Start the event source mapping service"""
@@ -1193,7 +1190,7 @@ class EventSourceMapping:
         try:
             self.migrate_existing_mappings()
         except Exception as e:
-            logger.error(f"Migration failed: {e}", exc_info=True)
+            logger.error("Migration failed: %s", e, exc_info=True)
 
         # Start cleanup thread
         self.cleanup_thread = threading.Thread(
@@ -1213,14 +1210,14 @@ class EventSourceMapping:
         """Background worker to load and start existing mappings"""
         try:
             time.sleep(0.5)  # Let other services initialize
-            logger.info(f"StartupWorker has been started")
+            logger.info("StartupWorker has been started")
 
             enabled_mappings = self.db.get_enabled_mappings()
             if not enabled_mappings:
                 logger.info("No existing enabled mappings found")
                 return
 
-            logger.info(f"Restoring {len(enabled_mappings)} enabled mapping(s)")
+            logger.info("Restoring %s enabled mapping(s)", len(enabled_mappings))
 
             for mapping in enabled_mappings:
                 uuid_val = mapping["UUID"]
@@ -1231,7 +1228,7 @@ class EventSourceMapping:
 
             logger.info("EMS service fully started")
         except Exception as e:
-            logger.error(f"Error in startup worker: {e}", exc_info=True)
+            logger.error("Error in startup worker: %s", e, exc_info=True)
 
     def _cleanup_worker(self):
         """Cleanup worker - currently unused but kept for future use"""
@@ -1241,7 +1238,7 @@ class EventSourceMapping:
                 time.sleep(60)
                 # Future: Add any periodic cleanup tasks here
             except Exception as e:
-                logger.error(f"Error in cleanup worker: {e}", exc_info=True)
+                logger.error("Error in cleanup worker: %s", e, exc_info=True)
 
     def stop(self):
         """Stop all polling threads"""
@@ -1299,7 +1296,7 @@ class DynamoDBStreamsDatabase:
             yield conn
         except Exception as e:
             conn.rollback()
-            logger.error(f"Database error: {e}", exc_info=True)
+            logger.error("Database error: %s", e, exc_info=True)
             raise
         finally:
             conn.close()
@@ -1406,7 +1403,7 @@ class DynamoDBStreamsDatabase:
                 (mapping_uuid, shard_id),
             )
             conn.commit()
-            logger.info(f"Marked shard {shard_id} as exhausted")
+            logger.info("Marked shard %s as exhausted", shard_id)
 
     def cleanup_mapping_shards(self, mapping_uuid: str):
         """Remove all shard checkpoints for a mapping"""
@@ -1507,10 +1504,10 @@ class DynamoDBStreamsPoller:
                     return None, resp.status_code
 
             except requests.exceptions.ConnectionError as e:
-                logger.error(f"DynamoDB Streams connection error: {e}")
+                logger.error("DynamoDB Streams connection error: %s", e)
                 # return None, 503
             # except Exception as e:
-            #     logger.error(f"DynamoDB Streams request error: {e}", exc_info=True)
+            #     logger.error("DynamoDB Streams request error: %s", e, exc_info=True)
             #     return None, 503
             time.sleep(1)
 
@@ -1552,15 +1549,15 @@ class DynamoDBStreamsPoller:
 
         if status == 400:
             # Stream not found - table likely deleted
-            logger.warning(f"Stream not found: {stream_arn}")
+            logger.warning("Stream not found: %s", stream_arn)
             return None
 
         if status == 503:
             # Connection error - service may be starting up
-            logger.warning(f"DynamoDB service unavailable")
+            logger.warning("DynamoDB service unavailable")
             return None
 
-        logger.error(f"DescribeStream failed with status {status}")
+        logger.error("DescribeStream failed with status %s", status)
         return None
 
     def get_shard_iterator(
@@ -1595,7 +1592,7 @@ class DynamoDBStreamsPoller:
             response = self.streams_client.get_shard_iterator(**params)
             iterator = response.get("ShardIterator")
 
-            logger.debug(f"Got iterator: {iterator[:60] if iterator else 'None'}...")
+            logger.debug("Got iterator: %s...", iterator[:60] if iterator else 'None')
 
             return iterator
 
@@ -1622,7 +1619,7 @@ class DynamoDBStreamsPoller:
             return response
 
         except Exception as e:
-            logger.error(f"GetRecords failed: {e}", exc_info=True)
+            logger.error("GetRecords failed: %s", e, exc_info=True)
             return None
 
     def poll_shard(
@@ -1648,7 +1645,7 @@ class DynamoDBStreamsPoller:
         function_name = mapping["FunctionName"]
         batch_size = mapping.get("BatchSize", 100)
 
-        logger.debug(f"[{mapping_uuid}] Started polling shard {shard_id}")
+        logger.debug("[%s] Started polling shard %s", mapping_uuid, shard_id)
 
         checkpoint = self.db.get_shard_checkpoint(mapping_uuid, shard_id)
 
@@ -1695,7 +1692,7 @@ class DynamoDBStreamsPoller:
                     if success:
                         last_seq = records[-1]["dynamodb"]["SequenceNumber"]
                         self.db.save_shard_checkpoint(mapping_uuid, shard_id, last_seq)
-                        logger.debug(f"[{mapping_uuid}] Checkpoint updated: {last_seq}")
+                        logger.debug("[%s] Checkpoint updated: %s", mapping_uuid, last_seq)
                     else:
                         logger.warning(
                             f"[{mapping_uuid}] Lambda invocation failed, will retry"
@@ -1704,7 +1701,7 @@ class DynamoDBStreamsPoller:
                         continue
 
                 if not next_iterator:
-                    logger.info(f"[{mapping_uuid}] Shard {shard_id} exhausted")
+                    logger.info("[%s] Shard %s exhausted", mapping_uuid, shard_id)
                     self.db.mark_shard_exhausted(mapping_uuid, shard_id)
                     break
 
@@ -1720,7 +1717,7 @@ class DynamoDBStreamsPoller:
                 consecutive_errors += 1
                 time.sleep(5)
 
-        logger.info(f"[{mapping_uuid}] Stopped polling shard {shard_id}")
+        logger.info("[%s] Stopped polling shard %s", mapping_uuid, shard_id)
 
     def _build_lambda_event(self, stream_arn: str, records: List[Dict]) -> Dict:
         """Build Lambda event from DynamoDB Stream records"""
@@ -1743,7 +1740,7 @@ class DynamoDBStreamsPoller:
     def _invoke_lambda(self, function_name: str, event: Dict) -> bool:
         """Invoke Lambda function with event via boto3"""
         try:
-            logger.debug(f"Event Type: {type(event)}, Event Data: {event}")
+            logger.debug("Event Type: %s, Event Data: %s", type(event), event)
 
             # Bit of a hack, I'm not proud: Convert datetime object values to a string before invoking lambda function
             payload = json.dumps(
@@ -1760,14 +1757,14 @@ class DynamoDBStreamsPoller:
             )
 
             if resp.get("StatusCode") == 200:
-                logger.debug(f"Successfully invoked {function_name}")
+                logger.debug("Successfully invoked %s", function_name)
                 return True
             else:
-                logger.error(f"Lambda invocation failed: {resp['StatusCode']} - {resp}")
+                logger.error("Lambda invocation failed: %s - %s", resp['StatusCode'], resp)
                 return False
 
         except Exception as e:
-            logger.error(f"Error invoking Lambda: {e}")
+            logger.error("Error invoking Lambda: %s", e)
             return False
 
     def discover_and_poll_shards(
@@ -1780,7 +1777,7 @@ class DynamoDBStreamsPoller:
         stream_id = mapping.get("StreamId")
 
         if not table_name:
-            logger.error(f"[{mapping_uuid}] No table name in mapping")
+            logger.error("[%s] No table name in mapping", mapping_uuid)
             return
 
         # Get stream ARN/ID - prefer StreamId if available
@@ -1808,7 +1805,7 @@ class DynamoDBStreamsPoller:
                     return
 
         if not stream_id:
-            logger.error(f"[{mapping_uuid}] Could not determine stream ID")
+            logger.error("[%s] Could not determine stream ID", mapping_uuid)
             return
 
         logger.debug(
@@ -1823,7 +1820,7 @@ class DynamoDBStreamsPoller:
                 page_num = 1
 
                 while True:
-                    # logger.debug(f"[{mapping_uuid}] Fetching shard page {page_num}...")
+                    # logger.debug("[%s] Fetching shard page %s...", mapping_uuid, page_num)
 
                     stream_desc = self.describe_stream(
                         stream_id, exclusive_start_shard_id=next_shard_id
@@ -1844,7 +1841,7 @@ class DynamoDBStreamsPoller:
                     shards = stream_desc.get("Shards", [])
                     all_shards.extend(shards)
 
-                    # logger.info(f"[{mapping_uuid}] Page {page_num}: Got {len(shards)} shards (total: {len(all_shards)})")
+                    # logger.info("[%s] Page %s: Got %s shards (total: %s)", mapping_uuid, page_num, len(shards), len(all_shards))
 
                     # Check for more pages
                     next_shard_id = stream_desc.get("LastEvaluatedShardId")
@@ -1857,7 +1854,7 @@ class DynamoDBStreamsPoller:
                     page_num += 1
 
                 if not all_shards:
-                    logger.warning(f"[{mapping_uuid}] No shards found")
+                    logger.warning("[%s] No shards found", mapping_uuid)
                     time.sleep(10)
                     continue
 
@@ -1900,7 +1897,7 @@ class DynamoDBStreamsPoller:
                 )
                 time.sleep(30)
 
-        logger.info(f"[{mapping_uuid}] Shard discovery stopped")
+        logger.info("[%s] Shard discovery stopped", mapping_uuid)
 
     def cleanup_mapping(self, mapping_uuid: str):
         """Clean up all resources for a mapping"""
@@ -1934,7 +1931,7 @@ def sqs_request(action: str, payload: dict, timeout: int = 30):
             data = None
         return data, resp.status_code
     except Exception as e:
-        logger.error(f"sqs_request error action={action}: {e}", exc_info=True)
+        logger.error("sqs_request error action=%s: %s", action, e, exc_info=True)
         return None, 503
 
 
@@ -2015,7 +2012,7 @@ def create_mapping_api():
         )
         return jsonify(mapping), 201
     except DuplicateMappingError as e:
-        logger.info(f"Duplicate mapping requested: {e}")
+        logger.info("Duplicate mapping requested: %s", e)
         return (
             jsonify(
                 {"message": "Mapping already exists", "ExistingMapping": e.mapping}
@@ -2023,7 +2020,7 @@ def create_mapping_api():
             409,
         )
     except Exception as e:
-        logger.error(f"Error creating mapping via API: {e}")
+        logger.error("Error creating mapping via API: %s", e)
         return jsonify({"message": str(e)}), 500
 
 
@@ -2072,7 +2069,7 @@ def update_mapping_api(mapping_uuid):
             return jsonify({"message": "Mapping not found"}), 404
         return jsonify(updated)
     except Exception as e:
-        logger.error(f"Error updating mapping via API: {e}")
+        logger.error("Error updating mapping via API: %s", e)
         return jsonify({"message": str(e)}), 500
 
 
@@ -2138,7 +2135,7 @@ def table_deleted_notification():
 if __name__ == "__main__":
     # Start services and run Flask app for EMS API
     listening_addr = os.getenv("NIMBUS_LISTENING_ADDR", "127.0.0.1")
-    logger.info(f"Starting Event Source Mapping HTTP API on {listening_addr}:4566")
+    logger.info("Starting Event Source Mapping HTTP API on %s:4566", listening_addr)
     get_or_create_services()
     port = int(os.getenv("NIMBUS_HTTP_PORT", "4566"))
     app.run(host=listening_addr, port=port)

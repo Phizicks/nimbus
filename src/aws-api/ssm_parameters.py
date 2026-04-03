@@ -4,7 +4,6 @@ Supports parameters, versions, tags, and secure strings
 """
 
 from typing import Optional, List, Dict, Any
-from database import Database
 import base64
 import logging
 import re
@@ -123,7 +122,7 @@ class SSMParameterStore:
 
     def _validate_allowed_pattern(self, value: str, pattern: str) -> bool:
         """Validate parameter value against allowed pattern"""
-        logger.critical(f"Validating value '{value}' against pattern '{pattern}'")
+        logger.critical("Validating value '%s' against pattern '%s'", value, pattern)
         return bool(re.match(pattern, value))
 
     def _encrypt_value(
@@ -686,7 +685,7 @@ class SSMParameterStore:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
 
-        logger.info(f"parameter_name: {parameter_name}")
+        logger.info("parameter_name: %s", parameter_name)
 
         cursor.execute(
             """

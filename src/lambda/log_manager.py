@@ -2,7 +2,6 @@
 Lambda Log Manager - Captures and correlates container logs with request IDs
 """
 
-from pathlib import Path
 import threading
 import time
 import logging
@@ -45,7 +44,7 @@ class CloudWatchLogsDatabase:
 
         self.db_path = db_path
         self.init_db()
-        logger.info(f"CloudWatch Logs database initialized at {db_path}")
+        logger.info("CloudWatch Logs database initialized at %s", db_path)
         self.log_buffers = {}
 
     def init_db(self):
@@ -146,10 +145,10 @@ class CloudWatchLogsDatabase:
                 (log_group_name, creation_time, retention_in_days),
             )
             conn.commit()
-            logger.info(f"Created log group: {log_group_name}")
+            logger.info("Created log group: %s", log_group_name)
             return True
         except sqlite3.IntegrityError:
-            logger.debug(f"Log group already exists: {log_group_name}")
+            logger.debug("Log group already exists: %s", log_group_name)
             return False
         finally:
             conn.close()
@@ -174,7 +173,7 @@ class CloudWatchLogsDatabase:
         conn.close()
 
         if deleted:
-            logger.info(f"Deleted log group: {log_group_name}")
+            logger.info("Deleted log group: %s", log_group_name)
 
         return deleted
 
@@ -260,7 +259,7 @@ class CloudWatchLogsDatabase:
             )
 
             conn.commit()
-            logger.info(f"Created log stream: {log_group_name}/{log_stream_name}")
+            logger.info("Created log stream: %s/%s", log_group_name, log_stream_name)
             return True
         except sqlite3.IntegrityError:
             logger.debug(
@@ -301,7 +300,7 @@ class CloudWatchLogsDatabase:
         conn.close()
 
         if deleted:
-            logger.info(f"Deleted log stream: {log_group_name}/{log_stream_name}")
+            logger.info("Deleted log stream: %s/%s", log_group_name, log_stream_name)
 
         return deleted
 
@@ -443,7 +442,7 @@ class CloudWatchLogsDatabase:
         conn.commit()
         conn.close()
 
-        logger.info(f"Deleted events from {log_group_name}/{log_stream_name}")
+        logger.info("Deleted events from %s/%s", log_group_name, log_stream_name)
         return True
 
     def put_log_events(self, log_group_name, log_stream_name, events):
@@ -541,7 +540,7 @@ class CloudWatchLogsDatabase:
         conn.commit()
         conn.close()
 
-        logger.info(f"Added {len(events)} events to {log_group_name}/{log_stream_name}")
+        logger.info("Added %s events to %s/%s", len(events), log_group_name, log_stream_name)
         return next_token
 
     def get_log_events(
@@ -743,7 +742,7 @@ class LogManager:
 
         with self._lock("LogManager.start_container_logging"):
             if container_id in self.log_threads:
-                logger.warning(f"Logging already started for container {container_id}")
+                logger.warning("Logging already started for container %s", container_id)
                 return
 
             # Store log group/stream info for this container (keyed by container ID)
@@ -787,7 +786,7 @@ class LogManager:
                 f"Added START line to CloudWatch for {C.CYAN}{request_id}{C.RESET}"
             )
         except Exception as e:
-            logger.error(f"Failed to write START line to CloudWatch: {e}")
+            logger.error("Failed to write START line to CloudWatch: %s", e)
 
     def write_end_line(self, request_id, log_group, log_stream):
         """
@@ -803,7 +802,7 @@ class LogManager:
                 f"Added END line to CloudWatch for {C.CYAN}{request_id}{C.RESET}"
             )
         except Exception as e:
-            logger.error(f"Failed to write END line to CloudWatch: {e}")
+            logger.error("Failed to write END line to CloudWatch: %s", e)
 
     def _stream_container_logs_safe(self, container_id, function_name):
         """Wrapper to catch and log exceptions from _stream_container_logs"""
@@ -886,7 +885,7 @@ class LogManager:
                             timestamp = datetime.fromisoformat(timestamp_str_clean)
                             if timestamp.tzinfo is not None:
                                 timestamp = timestamp.replace(tzinfo=None)
-                        except:
+                        except Exception:
                             timestamp = datetime.now(timezone.utc).replace(tzinfo=None)
                             message = log_str
                     else:
@@ -922,7 +921,7 @@ class LogManager:
                                 log_group, log_stream, [cloudwatch_event]
                             )
                         except Exception as e:
-                            logger.error(f"Error sending log to CloudWatch: {e}")
+                            logger.error("Error sending log to CloudWatch: %s", e)
 
                     # Server-side debug logging only (not customer-facing)
                     logger.debug(
@@ -930,13 +929,13 @@ class LogManager:
                     )
 
                 except Exception as e:
-                    logger.error(f"Error processing log line: {e}")
+                    logger.error("Error processing log line: %s", e)
                     continue
 
             # No final flush needed - all logs sent immediately
 
         except docker.errors.NotFound:
-            logger.warning(f"Container {container_id} not found for logging")
+            logger.warning("Container %s not found for logging", container_id)
         except Exception as e:
             logger.error(
                 f"Error streaming logs from {container_id}: {e}", exc_info=True
@@ -959,7 +958,7 @@ class LogManager:
             self.container_request_map.pop(container_id, None)
             thread = self.log_threads.pop(container_id, None)
             if thread:
-                logger.info(f"Stopped log streaming for container {container_id}")
+                logger.info("Stopped log streaming for container %s", container_id)
 
     def associate_request(self, container_name, container_id, request_id):
         """Associate a request with a container - container_id is the ID"""
@@ -1104,7 +1103,7 @@ class LogManager:
                 f"Added REPORT line to CloudWatch for {C.CYAN}{request_id}{C.RESET}"
             )
         except Exception as e:
-            logger.error(f"Failed to write REPORT line to CloudWatch: {e}")
+            logger.error("Failed to write REPORT line to CloudWatch: %s", e)
 
     def _cleanup_loop(self):
         """
@@ -1114,7 +1113,7 @@ class LogManager:
             try:
                 self._cleanup_old_logs()
             except Exception as e:
-                logger.error(f"Error in cleanup loop: {e}", exc_info=True)
+                logger.error("Error in cleanup loop: %s", e, exc_info=True)
 
             time.sleep(60)  # Clean up every minute
 
@@ -1152,10 +1151,10 @@ class LogManager:
         try:
             created = self.logs_db.create_log_group(group_name, retention_in_days)
             if created:
-                logger.info(f"Created log group: {group_name}")
+                logger.info("Created log group: %s", group_name)
             return created
         except Exception as e:
-            logger.error(f"Error creating log group {group_name}: {e}")
+            logger.error("Error creating log group %s: %s", group_name, e)
             raise
 
     def create_log_stream(self, group_name, stream_name):
@@ -1168,12 +1167,12 @@ class LogManager:
             # Create locally - not sure if needed if we do it below via api
             created = self.logs_db.create_log_stream(group_name, stream_name)
             if created:
-                logger.info(f"Created log stream: {group_name}/{stream_name}")
+                logger.info("Created log stream: %s/%s", group_name, stream_name)
             else:
-                logger.debug(f"Log stream already exists: {group_name}/{stream_name}")
+                logger.debug("Log stream already exists: %s/%s", group_name, stream_name)
             return created
         except Exception as e:
-            logger.error(f"Error creating log stream {group_name}/{stream_name}: {e}")
+            logger.error("Error creating log stream %s/%s: %s", group_name, stream_name, e)
             raise
 
     def put_log_events(self, group_name, stream_name, events):
@@ -1196,7 +1195,7 @@ class LogManager:
                 f"Forward to aws_api failed for {group_name}/{stream_name}, falling back to local DB"
             )
         except Exception as e:
-            logger.warning(f"Exception while forwarding to aws_api: {e}")
+            logger.warning("Exception while forwarding to aws_api: %s", e)
 
         # Local fallback
         try:
@@ -1244,10 +1243,10 @@ class LogManager:
                 )
                 return False
         except requests.exceptions.RequestException as e:
-            logger.warning(f"Failed to forward logs to aws_api: {e}")
+            logger.warning("Failed to forward logs to aws_api: %s", e)
             return False
         except Exception as e:
-            logger.error(f"Error forwarding logs: {e}")
+            logger.error("Error forwarding logs: %s", e)
             return False
 
     def get_log_events(self, group_name, stream_name, events):
@@ -1266,7 +1265,7 @@ class LogManager:
 
             token = str(int(self.sequence_tokens[(group_name, stream_name)]) + 1)
             self.sequence_tokens[(group_name, stream_name)] = token
-            logger.info(f"{len(events)} events added to {group_name}/{stream_name}")
+            logger.info("%s events added to %s/%s", len(events), group_name, stream_name)
             return token
 
     def get_or_create_function_log_stream(self, function_name, instance_id):

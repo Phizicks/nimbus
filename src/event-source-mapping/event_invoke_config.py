@@ -43,7 +43,7 @@ class EventInvokeConfigDatabase:
             )
 
             conn.commit()
-            logger.info(f"Event Invoke Config database initialized at {self.db_path}")
+            logger.info("Event Invoke Config database initialized at %s", self.db_path)
 
     @contextmanager
     def _get_connection(self):
@@ -54,7 +54,7 @@ class EventInvokeConfigDatabase:
             yield conn
         except Exception as e:
             conn.rollback()
-            logger.error(f"Database error: {e}", exc_info=True)
+            logger.error("Database error: %s", e, exc_info=True)
             raise
         finally:
             conn.close()
@@ -87,10 +87,10 @@ class EventInvokeConfigDatabase:
                     ),
                 )
                 conn.commit()
-                logger.info(f"Saved event invoke config for {function_name}")
+                logger.info("Saved event invoke config for %s", function_name)
                 return True
         except Exception as e:
-            logger.error(f"Error saving config: {e}", exc_info=True)
+            logger.error("Error saving config: %s", e, exc_info=True)
             return False
 
     def get_config(self, function_name: str) -> Optional[Dict]:
@@ -110,7 +110,7 @@ class EventInvokeConfigDatabase:
                     return self._row_to_dict(row)
                 return None
         except Exception as e:
-            logger.error(f"Error getting config: {e}", exc_info=True)
+            logger.error("Error getting config: %s", e, exc_info=True)
             return None
 
     def delete_config(self, function_name: str) -> bool:
@@ -127,11 +127,11 @@ class EventInvokeConfigDatabase:
                 conn.commit()
 
                 if cursor.rowcount > 0:
-                    logger.info(f"Deleted event invoke config for {function_name}")
+                    logger.info("Deleted event invoke config for %s", function_name)
                     return True
                 return False
         except Exception as e:
-            logger.error(f"Error deleting config: {e}", exc_info=True)
+            logger.error("Error deleting config: %s", e, exc_info=True)
             return False
 
     def list_configs(self) -> list:
@@ -148,7 +148,7 @@ class EventInvokeConfigDatabase:
                 rows = cursor.fetchall()
                 return [self._row_to_dict(row) for row in rows]
         except Exception as e:
-            logger.error(f"Error listing configs: {e}", exc_info=True)
+            logger.error("Error listing configs: %s", e, exc_info=True)
             return []
 
     def _row_to_dict(self, row: sqlite3.Row) -> Dict:

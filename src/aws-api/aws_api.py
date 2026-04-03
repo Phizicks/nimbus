@@ -4,7 +4,6 @@ Provides a local endpoint that handles the AWS API calls
 """
 
 import re
-from typing import Dict
 import boto3
 from flask import Flask, request, jsonify, Response, send_file, stream_with_context
 import requests
@@ -13,7 +12,6 @@ import base64
 import os
 import sys
 import hmac
-import custom_logger
 import logging
 import docker
 from datetime import datetime, timezone, timedelta
@@ -147,14 +145,14 @@ def esm_request(method: str, path: str, **kwargs):
         except Exception:
             return resp.status_code, resp.text
     except requests.exceptions.RequestException as e:
-        logger.error(f"ESM request failed: {method} {url} -> {e}")
+        logger.error("ESM request failed: %s %s -> %s", url, e, method)
         return 502, {"message": "ESM service unavailable"}
 
 
 def secretsmanager_request(method: str, path: str, **kwargs):
     """Send an HTTP request to the Secrets Manager endpoint."""
     url = SECRETS_MANAGER_ENDPOINT.rstrip("/") + path
-    logger.debug(f"Secrets Manager request sent: {method} {url}")
+    logger.debug("Secrets Manager request sent: %s %s", url, method)
     try:
         resp = requests.request(method, url, timeout=5, **kwargs)
         try:
@@ -162,7 +160,7 @@ def secretsmanager_request(method: str, path: str, **kwargs):
         except Exception:
             return resp.status_code, resp.text, resp
     except requests.exceptions.RequestException as e:
-        logger.error(f"Secrets Manager request failed: {method} {url} -> {e}")
+        logger.error("Secrets Manager request failed: %s %s -> %s", url, e, method)
         return 502, {"message": "Secrets Manager service unavailable"}, None
 
 
@@ -202,7 +200,7 @@ def proxy_to_secretsmanager():
 def dynamodb_request(method: str, path: str, **kwargs):
     """Send an HTTP request to the DynamoDB endpoint."""
     url = DYNAMODB_ENDPOINT.rstrip("/") + path
-    logger.debug(f"DynamoDB request sent: {method} {url}")
+    logger.debug("DynamoDB request sent: %s %s", url, method)
     try:
         resp = requests.request(method, url, timeout=30, **kwargs)
         try:
@@ -210,7 +208,7 @@ def dynamodb_request(method: str, path: str, **kwargs):
         except Exception:
             return resp.status_code, resp.text, resp
     except requests.exceptions.RequestException as e:
-        logger.error(f"DynamoDB request failed: {method} {url} -> {e}")
+        logger.error("DynamoDB request failed: %s %s -> %s", url, e, method)
         return 502, {"message": "DynamoDB service unavailable"}, None
 
 
@@ -251,14 +249,14 @@ def lambda_request(method: str, path: str, **kwargs):
         except Exception:
             return resp.status_code, resp.text, resp
     except requests.exceptions.RequestException as e:
-        logger.error(f"Lambda request failed: {method} {url} -> {e}")
+        logger.error("Lambda request failed: %s %s -> %s", url, e, method)
         return 502, {"message": "Lambda service unavailable"}, None
 
 
 def log_request(method: str, path: str = "/logs", **kwargs):
     """Send an HTTP request to the Lambda lifecycle's CloudWatch Logs endpoint."""
     url = LAMBDA_ENDPOINT.rstrip("/") + path
-    logger.debug(f"Log request sent to logs: {method} {url}")
+    logger.debug("Log request sent to logs: %s %s", url, method)
     try:
         resp = requests.request(method, url, timeout=10, **kwargs)
         try:
@@ -266,7 +264,7 @@ def log_request(method: str, path: str = "/logs", **kwargs):
         except Exception:
             return resp.status_code, resp.text, resp
     except requests.exceptions.RequestException as e:
-        logger.error(f"Log request failed: {method} {url} -> {e}")
+        logger.error("Log request failed: %s %s -> %s", url, e, method)
         return 502, {"message": "Logs service unavailable"}, None
 
 
@@ -352,7 +350,7 @@ def get_request_data():
             if data:
                 return data
         except Exception as e:
-            logger.error(f"Error parsing JSON: {e}")
+            logger.error("Error parsing JSON: %s", e, exc_info=True)
 
     # Form-encoded protocol (application/x-www-form-urlencoded)
     if "urlencoded" in content_type:
@@ -363,33 +361,33 @@ def get_request_data():
                     k: v[0] if isinstance(v, list) and len(v) > 0 else v
                     for k, v in parsed.items()
                 }
-                logger.debug(f"Parsed form data: {list(data.keys())}")
+                logger.debug("Parsed form data: %s", list(data.keys()))
                 return data
         except Exception as e:
-            logger.error(f"Error parsing form data: {e}")
+            logger.error("Error parsing form data: %s", e, exc_info=True)
 
     # Try request.form as fallback
     if request.form:
-        logger.debug(f"Using request.form: {list(request.form.keys())}")
+        logger.debug("Using request.form: %s", list(request.form.keys()))
         return dict(request.form)
 
     # XML protocol (AWS S3 and MinIO use application/xml)
     if "xml" in content_type or raw_data.strip().startswith("<"):
         try:
             data = xmltodict.parse(raw_data)
-            logger.debug(f"Parsed XML data: top-level keys = {list(data.keys())}")
+            logger.debug("Parsed XML data: top-level keys = %s", list(data.keys()))
             return data
         except Exception as e:
-            logger.error(f"Error parsing XML: {e}\nRAW:\n{raw_data}")
+            logger.error("Error parsing XML: %s\nRAW:\n%s", raw_data, e, exc_info=True)
 
     # Try JSON without checking content-type (last resort)
     try:
         data = request.get_json(force=True, silent=True)
         if data:
-            logger.debug(f"Parsed JSON (no content-type check): {list(data.keys())}")
+            logger.debug("Parsed JSON (no content-type check): %s", list(data.keys()))
             return data
     except Exception as e:
-        logger.error(f"Error parsing JSON (no content-type check): {e}")
+        logger.error("Error parsing JSON (no content-type check): %s", e, exc_info=True)
 
     # Final fallback: empty dict
     return {}
@@ -449,7 +447,7 @@ def docker_registry_error(code: str, message: str, status: int = 404):
 def create_repository():
     """Create a new ECR repository"""
     data = get_request_data()
-    logger.info(f"CreateRepository data: {data}")
+    logger.info("CreateRepository data: %s", data)
 
     repository_name = data.get("repositoryName")
 
@@ -460,12 +458,12 @@ def create_repository():
     cursor = conn.cursor()
 
     if ecr_repository_exists(repository_name):
-        raise ValueError(f"Repository {repository_name} already exists")
+        raise ValueError(f"Repository %s already exists", repository_name)
 
     # cursor.execute('SELECT * FROM repositories WHERE repository_name = ?', (repository_name,))
     # if cursor.fetchone():
     #     conn.close()
-    #     raise ValueError(f"Repository {repository_name} already exists")
+    #     raise ValueError(f"Repository %s already exists", repository_name)
 
     registry_host = get_request_server_address()  # urlparse(request.base_url).hostname
     repository_uri = f"{registry_host}/{repository_name}"
@@ -563,9 +561,9 @@ def delete_repository():
             tags = tags_resp.json().get("tags", [])
             has_images = len(tags) > 0
         elif tags_resp.status_code != 404:
-            logger.warning(f"Failed to check images: {tags_resp.status_code}")
+            logger.warning("Failed to check images: %s", tags_resp.status_code)
     except Exception as e:
-        logger.error(f"Error checking for images: {e}")
+        logger.error("Error checking for images: %s", e, exc_info=True)
 
     # AWS ECR behavior: cannot delete repository with images unless force=true
     if has_images and not force:
@@ -621,7 +619,7 @@ def delete_repository():
                 return jsonify({"error": f"Registry error: {tags_resp.text}"}), 502
 
         except Exception as e:
-            logger.error(f"Error deleting from registry backend: {e}", exc_info=True)
+            logger.error("Error deleting from registry backend: %s", e, exc_info=True)
             # Continue to database cleanup even if registry deletion fails
 
     # Delete from database
@@ -713,7 +711,7 @@ def list_images():
                     image_ids.append({"imageTag": tag, "imageDigest": digest})
 
             except Exception as e:
-                logger.warning(f"Error getting digest for {repository_name}:{tag}: {e}")
+                logger.warning("Error getting digest for %s:%s: %s", tag, e, repository_name)
                 # Still include the tag even if we can't get the digest
                 image_ids.append({"imageTag": tag, "imageDigest": "sha256:unknown"})
 
@@ -724,7 +722,7 @@ def list_images():
         }
 
     except Exception as e:
-        logger.error(f"Error listing images: {e}", exc_info=True)
+        logger.error("Error listing images: %s", e, exc_info=True)
         return {
             "imageIds": [],
             "repositoryName": repository_name,
@@ -831,7 +829,7 @@ def describe_images():
         return {"imageDetails": image_details}
 
     except Exception as e:
-        logger.error(f"Error describing images: {e}", exc_info=True)
+        logger.error("Error describing images: %s", e, exc_info=True)
         return {"imageDetails": []}
 
 
@@ -883,7 +881,7 @@ def batch_delete_image():
                                 f"Registry deletion failed: {delete_resp.status_code}"
                             )
 
-                        logger.info(f"Deleted {repo_path}:{image_tag} from registry")
+                        logger.info("Deleted %s:%s from registry", image_tag, repo_path)
                 elif manifest_resp.status_code != 404:
                     raise Exception(
                         f"Failed to get manifest: {manifest_resp.status_code}"
@@ -914,7 +912,7 @@ def batch_delete_image():
             deleted.append(img_id)
 
         except Exception as e:
-            logger.error(f"Failed to delete image {img_id}: {e}")
+            logger.error("Failed to delete image %s: %s", e, img_id, exc_info=True)
             failures.append(
                 {
                     "imageId": img_id,
@@ -947,7 +945,7 @@ def docker_registry_root():
             ],
         )
     except Exception as e:
-        logger.error(f"Registry root error: {e}")
+        logger.error("Registry root error: %s", e, exc_info=True)
         return jsonify({}), 200  # Return success anyway for docker login
 
 
@@ -960,7 +958,7 @@ def docker_registry_proxy(path):
     """Proxy Docker Registry v2 API calls with detailed debug logging"""
     try:
         repo = extract_repository_from_path(path)
-        logger.debug(f"v2 request: path={path}, repo={repo}")
+        logger.debug("v2 request: path=%s, repo=%s", repo, path)
         # If it's a registry-level call (no repo) then skip repository existence check
         if repo is not None:
             # only enforce existence for APIs that require an existing repo
@@ -969,23 +967,23 @@ def docker_registry_proxy(path):
                     "NAME_UNKNOWN", f"repository {repo} does not exist", status=404
                 )
         else:
-            logger.critical(f"registry call only, dont think we should reach here")
+            logger.critical("registry call only, dont think we should reach here")
 
         # Inject account ID namespace for isolation
-        if not path.startswith(f"{ACCOUNT_ID}/"):
-            path = f"{ACCOUNT_ID}/{path}"
+        # if not path.startswith(f"%s/", ACCOUNT_ID):
+        request_path = f"{ACCOUNT_ID}/{path}"
 
-        url = f"http://{BACKEND_REGISTRY_HOST}/v2/{path}"
+        url = f"http://{BACKEND_REGISTRY_HOST}/v2/{request_path}"
 
         # Include query string
         if request.query_string:
             url += f"?{request.query_string.decode()}"
 
-        # logger.info(f"=== PROXY REQUEST ===")
-        # logger.info(f"Method: {request.method}")
-        logger.info(f"Path: {path}")
-        logger.info(f"Full URL: {url}")
-        # logger.info(f"Request Headers: {dict(request.headers)}")
+        # logger.info("=== PROXY REQUEST ===")
+        # logger.info("Method: %s", request.method)
+        logger.info("Path: %s", request_path)
+        logger.info("Full URL: %s", url)
+        # logger.info("Request Headers: %s", dict(request.headers))
 
         # Prepare headers - exclude problematic ones
         headers = {
@@ -1013,9 +1011,9 @@ def docker_registry_proxy(path):
             allow_redirects=False,
         )
 
-        # logger.info(f"=== REGISTRY RESPONSE ===")
-        # logger.info(f"Status: {resp.status_code}")
-        # logger.info(f"Response Headers: {dict(resp.headers)}")
+        # logger.info("=== REGISTRY RESPONSE ===")
+        # logger.info("Status: %s", resp.status_code)
+        # logger.info("Response Headers: %s", dict(resp.headers))
 
         # Build response headers
         excluded = {
@@ -1046,14 +1044,14 @@ def docker_registry_proxy(path):
                         v = f"http://{request.host}{v}"
                         if account_prefix in v:
                             v = v.replace(account_prefix, "/v2/")
-                        logger.info(f"Rewrote Location to client path: {v}")
+                        logger.info("Rewrote Location to client path: %s", v)
 
                 response_headers.append((k, v))
 
-        # logger.info(f"=== PROXY RESPONSE ===")
-        # logger.info(f"Status: {resp.status_code}")
-        # logger.info(f"Headers being sent: {response_headers}")
-        # logger.info(f"==================")
+        # logger.info("=== PROXY RESPONSE ===")
+        # logger.info("Status: %s", resp.status_code)
+        # logger.info("Headers being sent: %s", response_headers)
+        # logger.info("==================")
 
         return resp.content, resp.status_code, response_headers
 
@@ -1062,7 +1060,7 @@ def docker_registry_proxy(path):
         filename = tb.tb_frame.f_code.co_filename
         line_no = tb.tb_lineno
         error_details = f'{exc_type.__name__}: {e} (File "{filename}", line {line_no})'
-        logger.error(f"Registry proxy error: {error_details}", exc_info=True)
+        logger.error("Registry proxy error: %s", error_details, exc_info=True)
         return jsonify({"error": f"Registry proxy error: {error_details}"}), 502
 
 
@@ -1217,7 +1215,7 @@ def put_image():
             "Docker-Content-Digest", "sha256:unknown"
         )
     except Exception as e:
-        logger.warning(f"Could not get digest from registry: {e}")
+        logger.warning("Could not get digest from registry: %s", e)
         # Fallback to calculating from manifest
         manifest_bytes = (
             json.dumps(image_manifest).encode()
@@ -1303,7 +1301,7 @@ def batch_get_image():
             )
 
         except Exception as e:
-            logger.error(f"Failed to get image {img_id}: {e}")
+            logger.error("Failed to get image %s: %s", e, img_id, exc_info=True)
             failures.append(
                 {
                     "imageId": img_id,
@@ -1402,7 +1400,7 @@ class SigV4Validator:
                 return False, "Invalid signature"
 
         except Exception as e:
-            logger.error(f"Error validating signature: {e}")
+            logger.error("Error validating signature: %s", e, exc_info=True)
             return False, f"Signature validation error: {str(e)}"
 
     def _calculate_signature(self, request, date_stamp, signed_headers):
@@ -1476,7 +1474,7 @@ def require_sigv4(validator):
         def decorated_function(*args, **kwargs):
             is_valid, message = validator.validate_request(request)
             if not is_valid:
-                logger.warning(f"Authentication failed: {message}")
+                logger.warning("Authentication failed: %s", message)
                 return (
                     jsonify(
                         {
@@ -1529,7 +1527,7 @@ def wait_for_container_ready(container, timeout=30):
                 time.sleep(2)
                 return True
         except Exception as e:
-            logger.error(f"Error checking container status: {e}")
+            logger.error("Error checking container status: %s", e, exc_info=True)
             return False
 
         time.sleep(0.5)
@@ -1548,7 +1546,7 @@ def get_function_containers(function_name, status="running"):
     try:
         return docker_client.containers.list(all=(status is None), filters=filters)
     except Exception as e:
-        logger.error(f"Error listing containers: {e}", exc_info=True)
+        logger.error("Error listing containers: %s", e, exc_info=True)
         return []
 
 
@@ -1608,7 +1606,7 @@ def runtime_next_invocation():
             )
         return (status, "", 500)
     except Exception as e:
-        logger.critical(f"Unhandled Exception - {e}", exc_info=True)
+        logger.critical("Unhandled Exception - %s", e, exc_info=True)
         return (
             jsonify(
                 {
@@ -1693,7 +1691,7 @@ def create_function():
         function_name = data.get("FunctionName")
 
         if not function_name:
-            logger.error(f"InvalidParameterValueException: FunctionName is required")
+            logger.error("InvalidParameterValueException: FunctionName is required")
             return (
                 jsonify(
                     {
@@ -1704,14 +1702,14 @@ def create_function():
                 400,
             )
 
-        logger.info(f"Creating function [{function_name}]")
+        logger.info("Creating function [%s]", function_name)
 
         # Proxy creation request to lambda service endpoint
         status, resp, raw = lambda_request("POST", "/2015-03-31/functions", json=data)
 
         if status >= 400:
             # Forward error from lambda service
-            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            logger.warning("Lambda service returned error: %s - %s", resp, status)
             return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
 
         # Save to local database for reference
@@ -1746,7 +1744,7 @@ def create_function():
 
 
         db.save_function_to_db(function_config)
-        logger.info(f"Function created successfully: {function_name}")
+        logger.info("Function created successfully: %s", function_name)
 
         # Return response from lambda service
         return jsonify(resp), status
@@ -1756,7 +1754,7 @@ def create_function():
         filename = tb.tb_frame.f_code.co_filename
         line_no = tb.tb_lineno
         error_details = f'{exc_type.__name__}: {e} (File "{filename}", line {line_no})'
-        logger.error(f"Unhandled exception: {error_details}", exc_info=True)
+        logger.error("Unhandled exception: %s", error_details, exc_info=True)
         error_response = {
             "__type": "ServiceException:",
             "message": f"Unhandled exception: {error_details}",
@@ -1770,7 +1768,7 @@ def create_function():
 def delete_function(function_name):
     """Delete a Lambda function - proxy to lambda endpoint"""
     try:
-        logger.info(f"Function delete request: {function_name}")
+        logger.info("Function delete request: %s", function_name)
 
         # Proxy to lambda service endpoint
         status, resp, raw = lambda_request(
@@ -1778,12 +1776,12 @@ def delete_function(function_name):
         )
 
         if status >= 400:
-            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            logger.warning("Lambda service returned error: %s - %s", resp, status)
             return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
 
         # Remove from local database after successful deletion
         db.delete_function_from_db(function_name)
-        logger.info(f"Function deleted: {function_name}")
+        logger.info("Function deleted: %s", function_name)
 
         return "", 204
 
@@ -1792,7 +1790,7 @@ def delete_function(function_name):
         filename = tb.tb_frame.f_code.co_filename
         line_no = tb.tb_lineno
         error_details = f'{exc_type.__name__}: {e} (File "{filename}", line {line_no})'
-        logger.error(f"Unhandled exception: {error_details}", exc_info=True)
+        logger.error("Unhandled exception: %s", error_details, exc_info=True)
         error_response = {
             "__type": "ServiceException:",
             "message": f"Unhandled exception for function: {function_name} - {error_details}",
@@ -1806,7 +1804,7 @@ def delete_function(function_name):
 def update_function_code(function_name):
     """Update function code - proxy to lambda endpoint"""
     try:
-        logger.info(f"Updating function code: {function_name}")
+        logger.info("Updating function code: %s", function_name)
 
         data = request.get_json() or {}
 
@@ -1816,10 +1814,10 @@ def update_function_code(function_name):
         )
 
         if status >= 400:
-            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            logger.warning("Lambda service returned error: %s - %s", resp, status)
             return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
 
-        logger.info(f"Function code updated: {function_name}")
+        logger.info("Function code updated: %s", function_name)
         return jsonify(resp), status
 
     except Exception as e:
@@ -1827,7 +1825,7 @@ def update_function_code(function_name):
         filename = tb.tb_frame.f_code.co_filename
         line_no = tb.tb_lineno
         error_details = f'{exc_type.__name__}: {e} (File "{filename}", line {line_no})'
-        logger.error(f"Unhandled exception: {error_details}", exc_info=True)
+        logger.error("Unhandled exception: %s", error_details, exc_info=True)
         error_response = {
             "__type": "ServiceException:",
             "message": f"Unhandled exception for function: {function_name} - {error_details}",
@@ -1843,7 +1841,7 @@ def update_function_code(function_name):
 def get_function_configuration(function_name):
     """Get Lambda function configuration - proxy to lambda endpoint"""
     try:
-        logger.info(f"Getting function configuration: {function_name}")
+        logger.info("Getting function configuration: %s", function_name)
 
         # Proxy to lambda service endpoint
         status, resp, raw = lambda_request(
@@ -1851,7 +1849,7 @@ def get_function_configuration(function_name):
         )
 
         if status >= 400:
-            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            logger.warning("Lambda service returned error: %s - %s", resp, status)
             return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
 
         return jsonify(resp), status
@@ -1879,7 +1877,7 @@ def get_function_configuration(function_name):
 def update_function_configuration(function_name):
     """Update Lambda function configuration - proxy to lambda endpoint"""
     try:
-        logger.info(f"Updating function configuration: {function_name}")
+        logger.info("Updating function configuration: %s", function_name)
 
         data = request.get_json() or {}
 
@@ -1889,10 +1887,10 @@ def update_function_configuration(function_name):
         )
 
         if status >= 400:
-            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            logger.warning("Lambda service returned error: %s - %s", resp, status)
             return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
 
-        logger.info(f"Function configuration updated: {function_name}")
+        logger.info("Function configuration updated: %s", function_name)
         return jsonify(resp), status
 
     except Exception as e:
@@ -1916,7 +1914,7 @@ def webhook_s3():
     """Single webhook receives ALL S3 events, routes to matching queues"""
     try:
         event_data = request.get_json()
-        logger.info(f"S3 Webhook received: {json.dumps(event_data)}")
+        logger.info("S3 Webhook received: %s", json.dumps(event_data))
 
         for record in event_data.get("Records", []):
             bucket_name = record["s3"]["bucket"]["name"]
@@ -1953,7 +1951,7 @@ def webhook_s3():
 
         return "", 200
     except Exception as e:
-        logger.error(f"Webhook error: {e}", exc_info=True)
+        logger.error("Webhook error: %s", e, exc_info=True)
         return "", 500
 
 # Lambda Webhook
@@ -1962,7 +1960,7 @@ def webhook_lambda():
     """Single webhook receives ALL Lambda events, routes to matching functions"""
     try:
         event_data = request.get_json()
-        logger.info(f"Lambda Webhook received: {json.dumps(event_data)}")
+        logger.info("Lambda Webhook received: %s", json.dumps(event_data))
 
         for record in event_data.get("Records", []):
             bucket_name = record["s3"]["bucket"]["name"]
@@ -1972,7 +1970,7 @@ def webhook_lambda():
             configs = db.get_bucket_notification_configs(bucket_name)
 
             if not configs:
-                logger.warning(f"No notification configs found for bucket {bucket_name}")
+                logger.warning("No notification configs found for bucket %s", bucket_name)
                 continue
 
             for config in configs:
@@ -1985,11 +1983,11 @@ def webhook_lambda():
                     # Extract function name from ARN: arn:aws:lambda:region:account:function:name
                     function_name = queue_url.split(":")[-1]
                     send_event_to_lambda(function_name, record)
-                    logger.info(f"Routed {event_name} on {object_key} to lambda {function_name}")
+                    logger.info("Routed %s on %s to lambda %s", object_key, function_name, event_name)
 
         return "", 200
     except Exception as e:
-        logger.error(f"Webhook error: {e}", exc_info=True)
+        logger.error("Webhook error: %s", e, exc_info=True)
         return "", 500
 
 
@@ -2032,7 +2030,7 @@ def event_matches_config(event_name, object_key, config):
             break
 
     if not event_match:
-        logger.debug(f"Event {event_name} doesn't match patterns {event_patterns}")
+        logger.debug("Event %s doesn't match patterns %s", event_patterns, event_name)
         return False
 
     # Check filter rules (prefix/suffix) if present
@@ -2046,10 +2044,10 @@ def event_matches_config(event_name, object_key, config):
             value = rule.get("Value", "")
 
             if name == "prefix" and not object_key.startswith(value):
-                logger.debug(f"Object key {object_key} doesn't match prefix {value}")
+                logger.debug("Object key %s doesn't match prefix %s", value, object_key)
                 return False
             if name == "suffix" and not object_key.endswith(value):
-                logger.debug(f"Object key {object_key} doesn't match suffix {value}")
+                logger.debug("Object key %s doesn't match suffix %s", value, object_key)
                 return False
 
     return True
@@ -2065,11 +2063,11 @@ def send_event_to_queue(queue_url, record):
 
         response = sqs_client.send_message(QueueUrl=queue_url, MessageBody=message_body)
 
-        logger.debug(f"Sent message to {queue_url}: {response.get('MessageId')}")
+        logger.debug("Sent message to %s: %s", response.get('MessageId'), queue_url)
         return response
 
     except Exception as e:
-        logger.error(f"Failed to send event to queue {queue_url}: {e}", exc_info=True)
+        logger.error("Failed to send event to queue %s: %s", queue_url, e, exc_info=True)
         raise
 
 
@@ -2092,11 +2090,11 @@ def send_event_to_lambda(function_name, record: dict):
             Payload=payload
         )
 
-        logger.debug(f"Sent S3 event to lambda {function_name}: status={response.get('StatusCode')}")
+        logger.debug("Sent S3 event to lambda %s: status=%s", response.get('StatusCode'), function_name)
         return response
 
     except Exception as e:
-        logger.error(f"Failed to send event to lambda {function_name}: {e}", exc_info=True)
+        logger.error("Failed to send event to lambda %s: %s", function_name, e, exc_info=True)
         raise
 
 
@@ -2140,7 +2138,7 @@ def dynamodb_status():
             )
 
     except Exception as e:
-        logger.error(f"Failed to check DynamoDB status: {e}", exc_info=True)
+        logger.error("Failed to check DynamoDB status: %s", e, exc_info=True)
         return (
             jsonify(
                 {
@@ -2201,7 +2199,7 @@ def sqs_status():
 def get_function_event_invoke_config_endpoint(function_name):
     """Get function event invoke configuration - proxy to lambda endpoint"""
     try:
-        logger.info(f"Getting event invoke config for: {function_name}")
+        logger.info("Getting event invoke config for: %s", function_name)
 
         # Preserve query parameters
         query_string = request.query_string.decode() if request.query_string else ""
@@ -2213,13 +2211,13 @@ def get_function_event_invoke_config_endpoint(function_name):
         status, resp, raw = lambda_request("GET", path)
 
         if status >= 400:
-            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            logger.warning("Lambda service returned error: %s - %s", resp, status)
             return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
 
         return jsonify(resp), status
 
     except Exception as e:
-        logger.error(f"Error getting event invoke config: {e}", exc_info=True)
+        logger.error("Error getting event invoke config: %s", e, exc_info=True)
         return jsonify({"__type": "InternalServerError", "message": str(e)}), 500
 
 
@@ -2231,7 +2229,7 @@ def get_function_event_invoke_config_endpoint(function_name):
 def put_function_event_invoke_config_endpoint(function_name):
     """Create or update event invoke configuration - proxy to lambda endpoint"""
     try:
-        logger.info(f"Setting event invoke config for: {function_name}")
+        logger.info("Setting event invoke config for: %s", function_name)
 
         data = request.get_json() or {}
 
@@ -2245,13 +2243,13 @@ def put_function_event_invoke_config_endpoint(function_name):
         status, resp, raw = lambda_request("PUT", path, json=data)
 
         if status >= 400:
-            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            logger.warning("Lambda service returned error: %s - %s", resp, status)
             return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
 
         return jsonify(resp), status
 
     except Exception as e:
-        logger.error(f"Error putting event invoke config: {e}", exc_info=True)
+        logger.error("Error putting event invoke config: %s", e, exc_info=True)
         return jsonify({"__type": "InternalServerError", "message": str(e)}), 500
 
 
@@ -2263,7 +2261,7 @@ def put_function_event_invoke_config_endpoint(function_name):
 def update_function_event_invoke_config_endpoint(function_name):
     """Update event invoke configuration - proxy to lambda endpoint"""
     try:
-        logger.info(f"Updating event invoke config for: {function_name}")
+        logger.info("Updating event invoke config for: %s", function_name)
 
         data = request.get_json() or {}
 
@@ -2277,13 +2275,13 @@ def update_function_event_invoke_config_endpoint(function_name):
         status, resp, raw = lambda_request("POST", path, json=data)
 
         if status >= 400:
-            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            logger.warning("Lambda service returned error: %s - %s", resp, status)
             return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
 
         return jsonify(resp), status
 
     except Exception as e:
-        logger.error(f"Error updating event invoke config: {e}", exc_info=True)
+        logger.error("Error updating event invoke config: %s", e, exc_info=True)
         return jsonify({"__type": "InternalServerError", "message": str(e)}), 500
 
 
@@ -2295,7 +2293,7 @@ def update_function_event_invoke_config_endpoint(function_name):
 def delete_function_event_invoke_config_endpoint(function_name):
     """Delete event invoke configuration - proxy to lambda endpoint"""
     try:
-        logger.info(f"Deleting event invoke config for: {function_name}")
+        logger.info("Deleting event invoke config for: %s", function_name)
 
         # Preserve query parameters
         query_string = request.query_string.decode() if request.query_string else ""
@@ -2307,13 +2305,13 @@ def delete_function_event_invoke_config_endpoint(function_name):
         status, resp, raw = lambda_request("DELETE", path)
 
         if status >= 400:
-            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            logger.warning("Lambda service returned error: %s - %s", resp, status)
             return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
 
         return "", 204
 
     except Exception as e:
-        logger.error(f"Error deleting event invoke config: {e}", exc_info=True)
+        logger.error("Error deleting event invoke config: %s", e, exc_info=True)
         return jsonify({"__type": "InternalServerError", "message": str(e)}), 500
 
 
@@ -2322,21 +2320,21 @@ def delete_function_event_invoke_config_endpoint(function_name):
 @app.route("/2015-03-31/functions/<path:function_name>/invocations", methods=["POST"])
 def invoke_function(function_name):
     """AWS Lambda Invoke API endpoint - proxy to lambda endpoint"""
-    logger.info(f"Invoking function request for Function:{function_name}")
+    logger.info("Invoking function request for Function:%s", function_name)
 
     # Validate signature (permissive for local testing)
     try:
         is_valid, message = sigv4_validator.validate_request(request)
         if not is_valid:
-            logger.warning(f"Authentication failed: {message}")
+            logger.warning("Authentication failed: %s", message)
     except Exception as e:
-        logger.warning(f"Auth validation error: {e}")
+        logger.warning("Auth validation error: %s", e)
 
     # Get payload
     raw_payload = request.get_data()
 
-    logger.debug(f"Raw payload type: {type(raw_payload)}")
-    logger.debug(f"Raw payload length: {len(raw_payload) if raw_payload else 0}")
+    logger.debug("Raw payload type: %s", type(raw_payload))
+    logger.debug("Raw payload length: %s", len(raw_payload) if raw_payload else 0)
 
     # Proxy invocation to the Lambda service endpoint
     headers = dict(request.headers)
@@ -2384,7 +2382,7 @@ def invoke_function(function_name):
         )
 
     except requests.exceptions.Timeout as e:
-        logger.error(f"Timeout waiting for lambda service response: {e}")
+        logger.error("Timeout waiting for lambda service response: %s", e)
         return (
             jsonify(
                 {
@@ -2395,7 +2393,7 @@ def invoke_function(function_name):
             504,
         )
     except requests.exceptions.ConnectionError as e:
-        logger.error(f"Connection error to lambda service: {e}")
+        logger.error("Connection error to lambda service: %s", e)
         return (
             jsonify(
                 {
@@ -2406,7 +2404,7 @@ def invoke_function(function_name):
             503,
         )
     except Exception as e:
-        logger.error(f"Unexpected error proxying to lambda service: {e}", exc_info=True)
+        logger.error("Unexpected error proxying to lambda service: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException", "message": str(e)}), 500
 
 
@@ -2417,18 +2415,18 @@ def invoke_function(function_name):
 def put_provisioned_concurrency(function_name):
     """Set provisioned concurrency for a function - proxy to lambda endpoint"""
     try:
-        logger.info(f"Setting provisioned concurrency for: {function_name}")
+        logger.info("Setting provisioned concurrency for: %s", function_name)
 
         data = request.get_json() or {}
         status, resp, raw = lambda_request("PUT", request.path, json=data)
         if status >= 400:
-            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            logger.warning("Lambda service returned error: %s - %s", resp, status)
             return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
 
         return jsonify(resp), status
 
     except Exception as e:
-        logger.error(f"Error setting provisioned concurrency: {e}", exc_info=True)
+        logger.error("Error setting provisioned concurrency: %s", e, exc_info=True)
         return (
             jsonify(
                 {
@@ -2449,11 +2447,11 @@ def put_provisioned_concurrency(function_name):
 def get_function_concurrency(function_name):
     """Get reserved concurrent executions for a function - proxy to lambda endpoint"""
     try:
-        logger.info(f"Getting reserved concurrency for: {function_name}")
+        logger.info("Getting reserved concurrency for: %s", function_name)
 
         status, resp, raw = lambda_request("GET", request.path)
         if status >= 400:
-            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            logger.warning("Lambda service returned error: %s - %s", resp, status)
             return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
 
         return jsonify(resp), status
@@ -2472,12 +2470,12 @@ def get_function_concurrency(function_name):
 def put_provisioned__concurrency(function_name):
     """Set provisioned concurrent executions for a function"""
     try:
-        logger.info(f"Setting provisioned concurrency for: {function_name}")
+        logger.info("Setting provisioned concurrency for: %s", function_name)
 
         data = request.get_json() or {}
         status, resp, raw = lambda_request("PUT", request.path, json=data)
         if status >= 400:
-            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            logger.warning("Lambda service returned error: %s - %s", resp, status)
             return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
 
         return jsonify(resp), status
@@ -2496,11 +2494,11 @@ def put_provisioned__concurrency(function_name):
 def delete_provisioned__concurrency(function_name):
     """Set provisioned concurrent executions for a function"""
     try:
-        logger.info(f"Deleting provisioned concurrency for: {function_name}")
+        logger.info("Deleting provisioned concurrency for: %s", function_name)
 
         status, resp, raw = lambda_request("DELETE", request.path)
         if status >= 400:
-            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            logger.warning("Lambda service returned error: %s - %s", resp, status)
             return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
 
         return jsonify(resp), status
@@ -2519,12 +2517,12 @@ def delete_provisioned__concurrency(function_name):
 def put_function_concurrency(function_name):
     """Set reserved concurrent executions for a function - proxy to lambda endpoint"""
     try:
-        logger.info(f"Setting reserved concurrency for: {function_name}")
+        logger.info("Setting reserved concurrency for: %s", function_name)
 
         data = request.get_json() or {}
         status, resp, raw = lambda_request("PUT", request.path, json=data)
         if status >= 400:
-            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            logger.warning("Lambda service returned error: %s - %s", resp, status)
             return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
 
         return jsonify(resp), status
@@ -2543,11 +2541,11 @@ def put_function_concurrency(function_name):
 def delete_function_concurrency(function_name):
     """Removes reserved concurrent executions for a function - proxy to lambda endpoint"""
     try:
-        logger.info(f"Deleting reserved concurrency for: {function_name}")
+        logger.info("Deleting reserved concurrency for: %s", function_name)
 
         status, resp, raw = lambda_request("DELETE", request.path)
         if status >= 400:
-            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            logger.warning("Lambda service returned error: %s - %s", resp, status)
             return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
 
         return jsonify(resp), status
@@ -2568,13 +2566,13 @@ def get_function(function_name):
     try:
         status, resp, raw = lambda_request("GET", request.path)
         if status >= 400:
-            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            logger.warning("Lambda service returned error: %s - %s", resp, status)
             return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
 
         return jsonify(resp), status
 
     except Exception as e:
-        logger.error(f"Error getting function {function_name}: {e}", exc_info=True)
+        logger.error("Error getting function %s: %s", function_name, e, exc_info=True)
         return (
             jsonify(
                 {
@@ -2590,19 +2588,19 @@ def get_function(function_name):
 def list_functions():
     """List all available functions - proxy to lambda endpoint"""
     try:
-        logger.info(f"Lambda request - list-functions")
+        logger.info("Lambda request - list-functions")
 
         # Proxy to lambda service endpoint
         status, resp, raw = lambda_request("GET", f"/2015-03-31/functions")
 
         if status >= 400:
-            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            logger.warning("Lambda service returned error: %s - %s", resp, status)
             return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
 
         return jsonify(resp), status
 
     except Exception as e:
-        logger.error(f"Error listing functions: {e}", exc_info=True)
+        logger.error("Error listing functions: %s", e, exc_info=True)
         return (
             jsonify(
                 {
@@ -2622,19 +2620,19 @@ def list_functions():
 def list_versions_by_function(function_name):
     """AWS Lambda ListVersionsByFunction API - proxy to lambda endpoint"""
     try:
-        logger.info(f"ListVersionsByFunction: {function_name}")
+        logger.info("ListVersionsByFunction: %s", function_name)
 
         # Proxy to lambda service endpoint
-        status, resp, raw = lambda_request("GET", f"/2015-03-31/functions/{function_name}/versions")
+        status, resp, raw = lambda_request("GET", f"/2015-03-31/functions/%s/versions", function_name)
 
         if status >= 400:
-            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            logger.warning("Lambda service returned error: %s - %s", resp, status)
             return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
 
         return jsonify(resp), status
 
     except Exception as e:
-        logger.error(f"Error listing versions for {function_name}: {e}", exc_info=True)
+        logger.error("Error listing versions for %s: %s", function_name, e, exc_info=True)
         return (
             jsonify(
                 {
@@ -2659,19 +2657,19 @@ def list_versions_by_function(function_name):
 def get_function_code_signing_config(function_name):
     """AWS Lambda GetFunctionCodeSigningConfig API - proxy to lambda endpoint"""
     try:
-        logger.info(f"GetFunctionCodeSigningConfig: {function_name}")
+        logger.info("GetFunctionCodeSigningConfig: %s", function_name)
 
         # Proxy to lambda service endpoint (using latest API version)
-        status, resp, raw = lambda_request("GET", f"/2015-03-31/functions/{function_name}/code-signing-config")
+        status, resp, raw = lambda_request("GET", f"/2015-03-31/functions/%s/code-signing-config", function_name)
 
         if status >= 400:
-            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            logger.warning("Lambda service returned error: %s - %s", resp, status)
             return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
 
         return jsonify(resp), status
 
     except Exception as e:
-        logger.error(f"Error getting code signing config for {function_name}: {e}", exc_info=True)
+        logger.error("Error getting code signing config for %s: %s", function_name, e, exc_info=True)
         return (
             jsonify(
                 {
@@ -2697,30 +2695,30 @@ def parse_sqs_request():
         # Try request.form first (parsed by Flask)
         if request.form:
             data = dict(request.form)
-            logger.debug(f"Parsed from request.form: {list(data.keys())}")
+            logger.debug("Parsed from request.form: %s", list(data.keys()))
             return data
 
         # Try request.args (query string)
         if request.args:
             data = dict(request.args)
-            logger.debug(f"Parsed from request.args: {list(data.keys())}")
+            logger.debug("Parsed from request.args: %s", list(data.keys()))
             return data
 
         # Parse raw body data (AWS CLI sends form-encoded in raw body)
         try:
             raw_data = request.get_data(as_text=True)
             if raw_data:
-                logger.debug(f"Raw data: {raw_data[:200]}")
+                logger.debug("Raw data: %s", raw_data[:200])
                 parsed = parse_qs(raw_data, keep_blank_values=True)
                 # parse_qs returns lists, get first value
                 data = {
                     k: v[0] if isinstance(v, list) and len(v) > 0 else v
                     for k, v in parsed.items()
                 }
-                logger.debug(f"Parsed from raw data: {list(data.keys())}")
+                logger.debug("Parsed from raw data: %s", list(data.keys()))
                 return data
         except Exception as e:
-            logger.error(f"Error parsing raw data: {e}")
+            logger.error("Error parsing raw data: %s", e, exc_info=True)
     else:
         # GET request - use query string
         data = dict(request.args)
@@ -2780,7 +2778,7 @@ def put_function_logging_config(function_name):
     AWS API: PutFunctionLoggingConfig - proxy to lambda endpoint
     """
     try:
-        logger.info(f"Setting logging config for: {function_name}")
+        logger.info("Setting logging config for: %s", function_name)
 
         data = request.get_json() or {}
 
@@ -2790,13 +2788,13 @@ def put_function_logging_config(function_name):
         )
 
         if status >= 400:
-            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            logger.warning("Lambda service returned error: %s - %s", resp, status)
             return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
 
         return jsonify(resp), status
 
     except Exception as e:
-        logger.error(f"Error updating logging config: {e}", exc_info=True)
+        logger.error("Error updating logging config: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException:", "message": str(e)}), 500
 
 
@@ -2807,7 +2805,7 @@ def get_function_logging_config(function_name):
     AWS API: GetFunctionLoggingConfig - proxy to lambda endpoint
     """
     try:
-        logger.info(f"Getting logging config for: {function_name}")
+        logger.info("Getting logging config for: %s", function_name)
 
         # Proxy to lambda service endpoint
         status, resp, raw = log_request(
@@ -2815,13 +2813,13 @@ def get_function_logging_config(function_name):
         )
 
         if status >= 400:
-            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            logger.warning("Lambda service returned error: %s - %s", resp, status)
             return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
 
         return jsonify(resp), status
 
     except Exception as e:
-        logger.error(f"Error getting logging config: {e}", exc_info=True)
+        logger.error("Error getting logging config: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException:", "message": str(e)}), 500
 
 
@@ -2832,7 +2830,7 @@ def delete_function_logging_config(function_name):
     AWS API: DeleteFunctionLoggingConfig - proxy to lambda endpoint
     """
     try:
-        logger.info(f"Deleting logging config for: {function_name}")
+        logger.info("Deleting logging config for: %s", function_name)
 
         # Proxy to lambda service endpoint
         status, resp, raw = log_request(
@@ -2840,13 +2838,13 @@ def delete_function_logging_config(function_name):
         )
 
         if status >= 400:
-            logger.warning(f"Lambda service returned error: {status} - {resp}")
+            logger.warning("Lambda service returned error: %s - %s", resp, status)
             return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
 
         return "", 204
 
     except Exception as e:
-        logger.error(f"Error deleting logging config: {e}", exc_info=True)
+        logger.error("Error deleting logging config: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException:", "message": str(e)}), 500
 
 
@@ -2880,7 +2878,7 @@ def console_js():
 )
 def handle_request():
     """Main handler for all API requests - routes to appropriate service"""
-    logger.debug(f"root path handler")
+    logger.debug("root path handler")
     # Get the action/operation from the request
     action = get_action_from_request()
     operation = get_aws_operation()
@@ -2911,7 +2909,7 @@ def handle_request():
     }
 
     if action in SQS_ACTIONS:
-        logger.info(f"Routing to SQS handler: Operation={action}")
+        logger.info("Routing to SQS handler: Operation=%s", action)
         AWS_ENDPOINT_URL_SQS = os.getenv("AWS_ENDPOINT_URL_SQS", "http://sqs:4566")
 
         path = request.path
@@ -3040,9 +3038,9 @@ def handle_request():
                         json={"TableName": table_name},
                         timeout=5,
                     )
-                    logger.info(f"Notified ESM of table deletion: {table_name}")
+                    logger.info("Notified ESM of table deletion: %s", table_name)
                 except Exception as e:
-                    logger.warning(f"Failed to notify ESM of table deletion: {e}")
+                    logger.warning("Failed to notify ESM of table deletion: %s", e)
             else:
                 logger.warning(
                     f"Failed to notify ESM of table deletion: {vars(response)}"
@@ -3050,7 +3048,7 @@ def handle_request():
 
             return response
 
-        logger.info(f"Routing to DynamoDB handler: Operation={operation}")
+        logger.info("Routing to DynamoDB handler: Operation=%s", operation)
         return proxy_to_dynamodb(operation, data)
 
     # SSM Parameter
@@ -3114,7 +3112,7 @@ def handle_request():
             )
             return jsonify(result)
     except ValueError as e:
-        logger.info(f"SSM ValueError: {data} Exception:{e}")
+        logger.info("SSM ValueError: %s Exception:%s", e, data)
         return (
             jsonify(
                 {
@@ -3129,7 +3127,7 @@ def handle_request():
             400,
         )
     except Exception as e:
-        logger.error(f"SSM error: {e}", exc_info=True)
+        logger.error("SSM error: %s", e, exc_info=True)
         return jsonify({"__type": "InternalServerError", "message": str(e)}), 500
 
     ecr_handlers = {
@@ -3148,7 +3146,7 @@ def handle_request():
     }
     if action in ecr_handlers:
         # This is an ECR operation
-        logger.info(f"Routing to ECR handler: Operation={operation}")
+        logger.info("Routing to ECR handler: Operation=%s", operation)
 
         handler = ecr_handlers.get(action)
         if handler:
@@ -3186,7 +3184,7 @@ def handle_request():
         "secretsmanager.UntagResource": proxy_to_secretsmanager,
     }
     if action in secretsmanager_handlers:
-        logger.info(f"Routing to SecretsManager handler: Operation={operation}")
+        logger.info("Routing to SecretsManager handler: Operation=%s", operation)
         return proxy_to_secretsmanager()
 
     s3_handlers = {
@@ -3203,12 +3201,12 @@ def handle_request():
         # 'ListObjectsV2': list_objects_v2,
     }
     if operation in s3_handlers:
-        logger.info(f"Routing to S3 handler: Operation={operation}")
+        logger.info("Routing to S3 handler: Operation=%s", operation)
         return proxy_to_s3()
 
     # if operation in s3_handlers:
     #     # This is an S3 operation
-    #     logger.info(f"Routing to S3 handler: Operation={operation}")
+    #     logger.info("Routing to S3 handler: Operation=%s", operation)
 
     #     handler = s3_handlers.get(operation)
     #     if handler:
@@ -3232,7 +3230,7 @@ def handle_request():
     }
     if action in logs_handlers:
         # This is an S3 operation
-        logger.info(f"Routing to Log handler: Operation={operation}")
+        logger.info("Routing to Log handler: Operation=%s", operation)
 
         handler = logs_handlers.get(action)
         if handler:
@@ -3252,13 +3250,13 @@ def handle_request():
     # Unknown request type - We now have a simple simple simple console
     # ========================================================================
     if request.headers.get("Content-Type", "").lower() == "application/x-amz-json-1.0":
-        logger.warning(f"Unknown request type")
-        logger.warning(f"  URL: {request.url}")
-        logger.warning(f"  Action: {action}")
-        logger.warning(f"  Operation: {operation}")
-        logger.warning(f"  Content-Type: {content_type}")
-        logger.warning(f"  X-Amz-Target: {request.headers.get('X-Amz-Target')}")
-        logger.warning(f"  All Headers: {request.headers}")
+        logger.warning("Unknown request type")
+        logger.warning("  URL: %s", request.url)
+        logger.warning("  Action: %s", action)
+        logger.warning("  Operation: %s", operation)
+        logger.warning("  Content-Type: %s", content_type)
+        logger.warning("  X-Amz-Target: %s", request.headers.get('X-Amz-Target'))
+        logger.warning("  All Headers: %s", request.headers)
 
         return (
             jsonify(
@@ -3319,19 +3317,19 @@ def get_action_from_request():
         #     action = target.split(".")[-1]  # "AmazonSQS.CreateQueue" → "CreateQueue"
         # else:
         #     action = target
-        logger.warning(f"Action from X-Amz-Target: {target}")
+        logger.warning("Action from X-Amz-Target: %s", target)
         return target
 
     # Method 2: Check query string
     action = request.args.get("Action")
     if action:
-        logger.debug(f"Action from query string: {action}")
+        logger.debug("Action from query string: %s", action)
         return action
 
     # Method 3: Check form data (if Flask parsed it)
     action = request.form.get("Action")
     if action:
-        logger.debug(f"Action from form data: {action}")
+        logger.debug("Action from form data: %s", action)
         return action
 
     # Method 4: Parse raw body if form-encoded
@@ -3344,10 +3342,10 @@ def get_action_from_request():
                 parsed = parse_qs(raw_data, keep_blank_values=True)
                 action = parsed.get("Action", [None])[0]
                 if action:
-                    logger.debug(f"Action from raw form data: {action}")
+                    logger.debug("Action from raw form data: %s", action)
                     return action
         except Exception as e:
-            logger.error(f"Error parsing form data: {e}")
+            logger.error("Error parsing form data: %s", e, exc_info=True)
 
     return None
 
@@ -3478,7 +3476,7 @@ def handle_bucket_operations(bucket_name):
     if "NotificationConfiguration" in data:
         data: dict = data["NotificationConfiguration"]
 
-    logger.debug(f"Notification PUT data: {data}")
+    logger.debug("Notification PUT data: %s", data)
 
     notification_types = {
         # Modern names (boto3 / JSON API)
@@ -3504,7 +3502,7 @@ def handle_bucket_operations(bucket_name):
         for config in configs:
             arn = config.get(arn_field)
             if not arn:
-                logger.warning(f"Missing {arn_field} in {config_key} config: {config}")
+                logger.warning("Missing %s in %s config: %s", config_key, config, arn_field)
                 continue
 
             events = config.get("Events") or config.get("Event")
@@ -3548,7 +3546,7 @@ def handle_bucket_operations(bucket_name):
             configs_found = True
 
     if not configs_found:
-        logger.warning(f"No notification configs found in payload for {bucket_name}: {data}")
+        logger.warning("No notification configs found in payload for %s: %s", data, bucket_name)
 
     return Response("", status=200)
 
@@ -3579,13 +3577,13 @@ def set_bucket_webhook_notication(bucket_name, queue_name):
         f"{S3_ENDPOINT}/minio/admin/v3/set-config-kv", headers=auth_headers, data=data
     )
 
-    logger.critical(f"STATUS: {resp.status_code}")
-    logger.critical(f"RESPONSE: {resp.text}")
+    logger.critical("STATUS: %s", resp.status_code)
+    logger.critical("RESPONSE: %s", resp.text)
 
 
 # def save_single_notification_config(bucket_name, config):
 #     """Helper to save a single notification configuration (Queue, Topic, or Lambda)."""
-#     notification_id = config.get("Id", f"notification-{int(time.time() * 1000)}")
+#     notification_id = config.get("Id", f"notification-%s", int(time.time() * 1000))
 
 #     # Identify notification target type and ARN
 #     queue_arn = config.get("QueueArn") or config.get("Queue")
@@ -3598,7 +3596,7 @@ def set_bucket_webhook_notication(bucket_name, queue_name):
 
 #     arn = queue_arn or topic_arn or lambda_arn
 #     if not arn:
-#         logger.warning(f"No ARN found in config for bucket {bucket_name}: {config}")
+#         logger.warning("No ARN found in config for bucket %s: %s", config, bucket_name)
 #         return
 
 #     # Determine type for URL building or logging
@@ -3775,7 +3773,7 @@ def get_bucket_notifications(bucket_name):
         return jsonify({"QueueConfigurations": queue_configurations}), 200
 
     except Exception as e:
-        logger.error(f"Error retrieving bucket notifications: {e}", exc_info=True)
+        logger.error("Error retrieving bucket notifications: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException", "message": str(e)}), 500
 
 
@@ -3855,7 +3853,7 @@ def _configure_minio_notification(bucket_name, config_type, notification_id, eve
         NotificationConfiguration={"QueueConfigurations": existing_list},
     )
 
-    logger.info(f"MinIO notification set: bucket={bucket_name} id={notification_id} type={config_type} minio_arn={minio_arn}")
+    logger.info("MinIO notification set: bucket=%s id=%s type=%s minio_arn=%s", notification_id, config_type, minio_arn, bucket_name)
 
 
 # TODO Handles web console s3 commands
@@ -3918,11 +3916,11 @@ def put_bucket_notifications(bucket_name):
             bucket_name, config_type, notification_id, events, filter_config
         )
 
-        logger.info(f"Notification saved: bucket={bucket_name} id={notification_id} type={config_type} arn={user_arn}")
+        logger.info("Notification saved: bucket=%s id=%s type=%s arn=%s", notification_id, config_type, user_arn, bucket_name)
         return jsonify({"success": True, "configuration": config}), 200
 
     except Exception as e:
-        logger.error(f"Error setting bucket notification: {e}", exc_info=True)
+        logger.error("Error setting bucket notification: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException", "message": str(e)}), 500
 
 
@@ -3934,11 +3932,11 @@ def delete_bucket_notification(bucket_name, notification_id):
     try:
         db.delete_notification_config(bucket_name, notification_id)
 
-        logger.info(f"Deleted notification {notification_id} from bucket {bucket_name}")
+        logger.info("Deleted notification %s from bucket %s", bucket_name, notification_id)
         return jsonify({"success": True}), 200
 
     except Exception as e:
-        logger.error(f"Error deleting bucket notification: {e}", exc_info=True)
+        logger.error("Error deleting bucket notification: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException", "message": str(e)}), 500
 
 
@@ -3961,7 +3959,7 @@ def get_bucket_lifecycle(bucket_name):
             raise
 
     except Exception as e:
-        logger.error(f"Error getting lifecycle configuration: {e}", exc_info=True)
+        logger.error("Error getting lifecycle configuration: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException", "message": str(e)}), 500
 
 
@@ -4013,11 +4011,11 @@ def add_bucket_lifecycle_rule(bucket_name):
             Bucket=bucket_name, LifecycleConfiguration={"Rules": existing_rules}
         )
 
-        logger.info(f"Added lifecycle rule {rule_id} to {bucket_name}")
+        logger.info("Added lifecycle rule %s to %s", bucket_name, rule_id)
         return jsonify({"success": True, "rule": new_rule}), 200
 
     except Exception as e:
-        logger.error(f"Error adding lifecycle rule: {e}", exc_info=True)
+        logger.error("Error adding lifecycle rule: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException", "message": str(e)}), 500
 
 
@@ -4068,11 +4066,11 @@ def delete_bucket_lifecycle_rule(bucket_name, rule_id):
         else:
             s3_client.delete_bucket_lifecycle(Bucket=bucket_name)
 
-        logger.info(f"Deleted lifecycle rule {rule_id} from {bucket_name}")
+        logger.info("Deleted lifecycle rule %s from %s", bucket_name, rule_id)
         return jsonify({"success": True}), 200
 
     except Exception as e:
-        logger.error(f"Error deleting lifecycle rule: {e}", exc_info=True)
+        logger.error("Error deleting lifecycle rule: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException", "message": str(e)}), 500
 
 
@@ -4089,7 +4087,7 @@ def list_s3_buckets():
         return jsonify(response), 200
 
     except Exception as e:
-        logger.error(f"Error listing S3 buckets: {e}", exc_info=True)
+        logger.error("Error listing S3 buckets: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException", "message": str(e)}), 500
 
 
@@ -4117,7 +4115,7 @@ def create_s3_bucket():
         return jsonify({"success": True}), 200
 
     except Exception as e:
-        logger.error(f"Error creating S3 bucket: {e}", exc_info=True)
+        logger.error("Error creating S3 bucket: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException", "message": str(e)}), 500
 
 
@@ -4160,7 +4158,7 @@ def delete_s3_bucket(bucket_name):
                 ),
                 409,
             )
-        logger.error(f"Error deleting S3 bucket: {e}", exc_info=True)
+        logger.error("Error deleting S3 bucket: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException", "message": str(e)}), 500
 
 
@@ -4198,7 +4196,7 @@ def get_s3_object_metadata(bucket_name, key):
         return jsonify(metadata), 200
 
     except Exception as e:
-        logger.error(f"Error getting S3 object metadata: {e}", exc_info=True)
+        logger.error("Error getting S3 object metadata: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException", "message": str(e)}), 500
 
 
@@ -4220,7 +4218,7 @@ def list_s3_objects(bucket_name):
         return jsonify(response), 200
 
     except Exception as e:
-        logger.error(f"Error listing S3 objects: {e}", exc_info=True)
+        logger.error("Error listing S3 objects: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException", "message": str(e)}), 500
 
 
@@ -4234,7 +4232,7 @@ def delete_s3_object(bucket_name, key):
         return jsonify({"success": True}), 200
 
     except Exception as e:
-        logger.error(f"Error deleting S3 object: {e}", exc_info=True)
+        logger.error("Error deleting S3 object: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException", "message": str(e)}), 500
 
 
@@ -4255,7 +4253,7 @@ def get_s3_object(bucket_name, key):
         )
 
     except Exception as e:
-        logger.error(f"Error getting S3 object: {e}", exc_info=True)
+        logger.error("Error getting S3 object: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException", "message": str(e)}), 500
 
 
@@ -4284,7 +4282,7 @@ def upload_s3_object(bucket_name):
         return jsonify({"success": True}), 200
 
     except Exception as e:
-        logger.error(f"Error uploading S3 object: {e}", exc_info=True)
+        logger.error("Error uploading S3 object: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException", "message": str(e)}), 500
 
 
@@ -4293,8 +4291,8 @@ def copy_s3_object(bucket_name):
     """Copy/rename/move S3 object for web console"""
     try:
         data = request.get_json() or {}
-        logger.critical(f"REQUEST :: {data}")
-        logger.critical(f"REQUEST :: {request.view_args}")
+        logger.critical("REQUEST :: %s", data)
+        logger.critical("REQUEST :: %s", request.view_args)
 
         source_key = data.get("sourceKey")
         dest_bucket = data.get("destBucket")
@@ -4327,7 +4325,7 @@ def copy_s3_object(bucket_name):
         return jsonify({"success": True}), 200
 
     except Exception as e:
-        logger.error(f"Error copying S3 object: {e}", exc_info=True)
+        logger.error("Error copying S3 object: %s", e, exc_info=True)
         return jsonify({"__type": "ServiceException", "message": str(e)}), 500
 
 
@@ -4342,7 +4340,7 @@ def copy_s3_object(bucket_name):
 def create_event_source_mapping_endpoint():
     """Create event source mapping"""
     data = request.get_json() or {}
-    logger.info(f"Creating ESM (proxy) with data: {data}")
+    logger.info("Creating ESM (proxy) with data: %s", data)
     status, resp = esm_request("POST", "/2015-03-31/event-source-mappings/", json=data)
     return (jsonify(resp), status) if isinstance(resp, dict) else (resp, status)
 
@@ -4418,7 +4416,7 @@ def catch_all(path):
     service, operation = get_service_from_user_agent()
     if service and service.lower() in ("s3", "s3api"):
         response = proxy_to_s3()
-        logger.info(f"Routing to S3: service={service}, operation={operation}")
+        logger.info("Routing to S3: service=%s, operation=%s", operation, service)
         return response
     elif "Credential=" in auth:
         cred = auth.split("Credential=")[1].split(",")[0]
@@ -4426,25 +4424,25 @@ def catch_all(path):
         if len(parts) >= 4:
             service = parts[3]
             if service == "s3":
-                logger.info(f"Fallback routing to S3: service={service}, operation={operation}")
+                logger.info("Fallback routing to S3: service=%s, operation=%s", operation, service)
                 response = proxy_to_s3()
                 return response
 
     """Catch-all route for debugging"""
-    logger.warning(f"Unhandled route: {request.method} /{path}")
-    logger.warning(f"Operation detected: {operation}")
-    logger.warning(f"Query params: {vars(request.args)}")
-    logger.warning(f"Headers: {list(request.headers.keys())}")
+    logger.warning("Unhandled route: %s /%s", path, request.method)
+    logger.warning("Operation detected: %s", operation)
+    logger.warning("Query params: %s", vars(request.args))
+    logger.warning("Headers: %s", list(request.headers.keys()))
     for header in list(request.headers.keys()):
-        logger.warning(f"Header: {header}={request.headers[header]}")
+        logger.warning("Header: %s=%s", request.headers[header], header)
     logger.warning(
         f"Available routes: {[str(rule) for rule in app.url_map.iter_rules()]}"
     )
     try:
         data = request.get_json() or {}
-        logger.warning(f"Data: {json.dumps(data)}")
+        logger.warning("Data: %s", json.dumps(data))
     except Exception as e:
-        logger.debug(f"Failed to log request data: {e}")
+        logger.debug("Failed to log request data: %s", e)
     return (
         jsonify(
             {

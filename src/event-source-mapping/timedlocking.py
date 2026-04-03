@@ -1,9 +1,16 @@
+"""Thread-safe lock utility with timeout warnings.
+
+Provides a context manager for locks with configurable warning thresholds
+to help identify potential deadlock issues.
+"""
+
 import time
 import threading
 import logging
 
 
 class TimedLock:
+    """Thread-safe lock with timeout warnings and performance tracking."""
     _logging = True
 
     def __init__(self, warn_threshold=1.0):
@@ -11,11 +18,17 @@ class TimedLock:
         self.warn_threshold = warn_threshold
 
     def __call__(self, name, logInfo=True):
+        """Allow calling the lock with a name: with lock('operation_name').
+        
+        Args:
+            name: Name of the operation for logging
+            logInfo: Whether to log timing information
+        """
         self._logging = logInfo
-        """Allow calling the lock with a name: with lock('operation_name'):"""
         return self._TimedLockContext(self, name, logInfo)
 
     class _TimedLockContext:
+        """Context manager for time-tracked lock acquisition and release."""
         def __init__(self, parent, name, logInfo=True):
             self.parent = parent
             self.name = name

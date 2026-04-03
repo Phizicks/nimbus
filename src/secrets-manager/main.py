@@ -9,12 +9,11 @@ import time
 import uuid
 import logging
 import sqlite3
-import custom_logger
 import os
 import base64
 from contextlib import contextmanager
-from typing import Optional, Dict, List, Any
-from flask import Flask, request, jsonify, Response
+from typing import Optional, Dict, List
+from flask import Flask, request, jsonify
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -23,7 +22,6 @@ import secrets
 import urllib.request
 import urllib.error
 from urllib.parse import urlparse
-import ssl
 
 logger = logging.getLogger(__name__)
 
@@ -384,7 +382,7 @@ class SecretsManagerDatabase:
 
             arn = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT_ID}:secret:{secret_name}-{version_id[:6]}"
 
-            logger.info(f"Created secret: {secret_name} with version {version_id}")
+            logger.info("Created secret: %s with version %s", version_id, secret_name)
 
             return {
                 "ARN": arn,
@@ -642,7 +640,7 @@ class SecretsManagerDatabase:
 
             arn = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT_ID}:secret:{secret_name}-{new_version_id[:6]}"
 
-            logger.info(f"Updated secret: {secret_name} with version {new_version_id}")
+            logger.info("Updated secret: %s with version %s", new_version_id, secret_name)
 
             return {
                 "ARN": arn,
@@ -998,7 +996,7 @@ class SecretsManagerDatabase:
 
             arn = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT_ID}:secret:{secret_name}-{version_suffix}"
 
-            logger.info(f"Deleted secret: {secret_name}")
+            logger.info("Deleted secret: %s", secret_name)
 
             return {
                 "ARN": arn,
@@ -1068,7 +1066,7 @@ class SecretsManagerDatabase:
             version_suffix = version["version_id"] if version else "??????"
             arn = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT_ID}:secret:{secret_name}-{version_suffix}"
 
-            logger.info(f"Restored secret: {secret_name}")
+            logger.info("Restored secret: %s", secret_name)
 
             return {"ARN": arn, "Name": secret_name}
 
@@ -1187,7 +1185,7 @@ class SecretsManagerDatabase:
                     "DELETE FROM secrets WHERE secret_name = ?", (secret_name,)
                 )
                 conn.commit()
-                logger.info(f"Purged expired secret: {secret_name}")
+                logger.info("Purged expired secret: %s", secret_name)
                 return True
 
             return False
@@ -1875,7 +1873,7 @@ class SecretsManagerDatabase:
             raise InvalidRequestException(msg)
         except Exception as e:
             msg = f"Unexpected error during Lambda invocation: {e}"
-            logger.error(msg)
+            logger.error(msg, exc_info=True)
             raise InvalidRequestException(msg)
 
 
@@ -2170,7 +2168,7 @@ def handle_request():
         try:
             params = request.get_json(force=True) or {}
         except Exception:
-            logger.error(f"Invalid JSON in request body: {request.data}")
+            logger.error("Invalid JSON in request body: %s", request.data)
             return (
                 jsonify(
                     error_response(
@@ -2180,7 +2178,7 @@ def handle_request():
                 400,
             )
 
-        logger.info(f"Secrets Manager operation: {operation} , Parameters: {params}")
+        logger.info("Secrets Manager operation: %s , Parameters: %s", params, operation)
         sm = SecretsManager()
         # Route to appropriate handler
         if operation == "CreateSecret":
@@ -2268,11 +2266,11 @@ def handle_request():
             )
 
     except SecretsManagerException as e:
-        logger.error(f"Secrets Manager error: {e.error_type} - {e.message}")
+        logger.error("Secrets Manager error: %s - %s", e.message, e.error_type)
         return jsonify(error_response(e.error_type, e.message)), 400
 
     except Exception as e:
-        logger.error(f"Internal error: {str(e)}", exc_info=True)
+        logger.error("Internal error: %s", str(e), exc_info=True)
         return jsonify(error_response("InternalServiceError", str(e))), 500
 
 

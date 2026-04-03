@@ -1,8 +1,15 @@
+"""Custom logging configuration for Nimbus Lambda functions.
+
+Provides formatted logging output with color support and configurable log levels.
+"""
+
 import logging
 import os
 
 
 class CustomFormatter(logging.Formatter):
+    """Custom log formatter with color-coded output for different log levels."""
+
     COLORS = {
         logging.DEBUG: "\x1b[36;21m",  # grey
         logging.INFO: "\x1b[32;21m",  # green
