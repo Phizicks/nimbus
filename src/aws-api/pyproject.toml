@@ -5,6 +5,7 @@ description = "A free and open source cloud computing platform for local develop
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "bandit>=1.9.4",
     "boto3>=1.42.15",
     "cryptography>=43.0.0",
     "docker>=7.1.0",

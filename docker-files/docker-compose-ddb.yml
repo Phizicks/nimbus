@@ -3,6 +3,8 @@ services:
     build:
       context: ../src/dynamodb
       dockerfile: Dockerfile
+    environment:
+      NIMBUS_LISTENING_ADDR: 0.0.0.0
     networks:
       - localcloud
     volumes:

@@ -11,6 +11,7 @@ services:
       LOCALCLOUD_API_HOSTNAME: api
       STORAGE_PATH: /data
       LOG_LEVEL: DEBUG
+      NIMBUS_LISTENING_ADDR: 0.0.0.0
     networks:
       - localcloud
     healthcheck:

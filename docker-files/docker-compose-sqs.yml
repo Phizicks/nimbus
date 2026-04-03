@@ -30,6 +30,7 @@ services:
       ELASTICMQ_HOST: sqs-backend
       ELASTICMQ_PORT: 9324
       LOG_LEVEL: DEBUG
+      NIMBUS_LISTENING_ADDR: 0.0.0.0
     depends_on:
       - sqs-backend
     networks:

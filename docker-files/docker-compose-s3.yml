@@ -18,6 +18,7 @@ services:
       MINIO_NOTIFY_WEBHOOK_ENDPOINT_SNS: "http://api:4566/webhook/sns"
       AWS_ENDPOINT_URL: http://api:4566
       LOG_LEVEL: DEBUG
+      NIMBUS_LISTENING_ADDR: 0.0.0.0
     volumes:
       - data-s3:/data
     networks:

@@ -93,22 +93,22 @@ class EMSDatabase:
                 cursor.execute(
                     "ALTER TABLE event_source_mappings ADD COLUMN table_name TEXT"
                 )
-            except:
-                pass
+            except sqlite3.OperationalError:
+                logger.debug("table_name column already exists")
 
             try:
                 cursor.execute(
                     "ALTER TABLE event_source_mappings ADD COLUMN stream_id TEXT"
                 )
-            except:
-                pass
+            except sqlite3.OperationalError:
+                logger.debug("stream_id column already exists")
 
             try:
                 cursor.execute(
                     "ALTER TABLE event_source_mappings ADD COLUMN source_type TEXT"
                 )
-            except:
-                pass
+            except sqlite3.OperationalError:
+                logger.debug("source_type column already exists")
 
             cursor.execute(
                 """
@@ -270,15 +270,18 @@ class EMSDatabase:
                     set_clauses.append(f"{db_key} = ?")
                     values.append(value)
 
+                if not set_clauses:
+                    logger.warning(f"No updates to apply for mapping: {uuid}")
+                    return False
+
                 set_clauses.append("last_modified = ?")
                 values.append(time.time())
                 values.append(uuid)
 
-                query = f"""
-                    UPDATE event_source_mappings
-                    SET {', '.join(set_clauses)}
-                    WHERE uuid = ?
-                """
+                # Build parameterized query safely to avoid SQL injection
+                # Column names are validated via _camel_to_snake(), values are parameterized
+                set_clause_str = ', '.join(set_clauses)
+                query = f"UPDATE event_source_mappings SET {set_clause_str} WHERE uuid = ?"  # nosec
 
                 cursor.execute(query, values)
                 conn.commit()
@@ -435,8 +438,8 @@ class EventSourceMapping:
                 "dynamodb",
                 region_name=self.region,
                 endpoint_url=self.dynamodb_endpoint,
-                aws_access_key_id="localcloud",
-                aws_secret_access_key="localcloud",
+                aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID", "localcloud"),
+                aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY", "localcloud"),
             )
 
             # List all tables
@@ -573,8 +576,8 @@ class EventSourceMapping:
                 "dynamodb",
                 region_name=self.region,
                 endpoint_url=self.dynamodb_endpoint,
-                aws_access_key_id="localcloud",
-                aws_secret_access_key="localcloud",
+                aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID", "localcloud"),
+                aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY", "localcloud"),
             )
 
             response = dynamodb.describe_table(TableName=table_name)
@@ -1463,16 +1466,16 @@ class DynamoDBStreamsPoller:
             "dynamodbstreams",
             region_name=region,
             endpoint_url=self.dynamodb_endpoint,
-            aws_access_key_id="localcloud",
-            aws_secret_access_key="localcloud",
+            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID", "localcloud"),
+            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY", "localcloud"),
             config=client_config,
         )
         self.lambda_client = boto3.client(
             "lambda",
             region_name=self.region,
             endpoint_url="http://api:4566",
-            aws_access_key_id="localcloud",
-            aws_secret_access_key="localcloud",
+            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID", "localcloud"),
+            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY", "localcloud"),
             config=client_config,
         )
         # Track active shard pollers per mapping
@@ -1793,8 +1796,8 @@ class DynamoDBStreamsPoller:
                         "dynamodb",
                         region_name=self.region,
                         endpoint_url=self.dynamodb_endpoint,
-                        aws_access_key_id="localcloud",
-                        aws_secret_access_key="localcloud",
+                        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID", "localcloud"),
+                        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY", "localcloud"),
                     )
                     response = dynamodb.describe_table(TableName=table_name)
                     stream_id = response["Table"].get("LatestStreamArn")
@@ -2134,7 +2137,8 @@ def table_deleted_notification():
 
 if __name__ == "__main__":
     # Start services and run Flask app for EMS API
-    logger.info("Starting Event Source Mapping HTTP API on 0.0.0.0:4566")
+    listening_addr = os.getenv("NIMBUS_LISTENING_ADDR", "127.0.0.1")
+    logger.info(f"Starting Event Source Mapping HTTP API on {listening_addr}:4566")
     get_or_create_services()
-    port = int(os.getenv("EMS_HTTP_PORT", "4566"))
-    app.run(host="0.0.0.0", port=port)
+    port = int(os.getenv("NIMBUS_HTTP_PORT", "4566"))
+    app.run(host=listening_addr, port=port)

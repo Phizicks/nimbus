@@ -504,7 +504,8 @@ def describe_repositories():
 
     if repository_names:
         placeholders = ",".join("?" * len(repository_names))
-        cmd = f"SELECT * FROM repositories WHERE repository_name IN ({placeholders})"
+        # nosec: SQL injection safe - placeholders are generated code, values are parameterized
+        cmd = f"SELECT * FROM repositories WHERE repository_name IN ({placeholders})"  # nosec
         cursor.execute(cmd, repository_names)
         rows = cursor.fetchall()
 
@@ -2079,8 +2080,8 @@ def send_event_to_lambda(function_name, record: dict):
             'lambda',
             endpoint_url=LAMBDA_ENDPOINT,
             region_name=REGION,
-            aws_access_key_id="localcloud",
-            aws_secret_access_key="localcloud",
+            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID", "localcloud"),
+            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY", "localcloud"),
         )
 
         payload = json.dumps({"Records": [record]}).encode("utf-8")
@@ -2951,7 +2952,7 @@ def handle_request():
                 jsonify(
                     {
                         "__type": "ServiceException",
-                        "message": "SQS container unavailable",
+                        "message": f"SQS service unavailable: {e}",
                     }
                 ),
                 503,
@@ -3784,8 +3785,8 @@ def configure_bucket_notification_webhook(
     s3 = boto3.client(
         "s3",
         endpoint_url=S3_ENDPOINT,
-        aws_access_key_id="localcloud",
-        aws_secret_access_key="localcloud",
+        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID", "localcloud"),
+        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY", "localcloud"),
         config=Config(signature_version="s3v4"),
         region_name="us-east-1",
     )
@@ -4443,7 +4444,7 @@ def catch_all(path):
         data = request.get_json() or {}
         logger.warning(f"Data: {json.dumps(data)}")
     except Exception as e:
-        pass
+        logger.debug(f"Failed to log request data: {e}")
     return (
         jsonify(
             {
@@ -4468,8 +4469,9 @@ if __name__ == "__main__":
     )
 
     try:
+        listening_addr = os.environ.get('NIMBUS_LISTENING_ADDR', '127.0.0.1')
         # Start Flask app
-        app.run(host="0.0.0.0", port=4566, debug=False)
+        app.run(host=listening_addr, port=4566, debug=False)
     finally:
         # Graceful shutdown
         logger.info("Shutting down...")

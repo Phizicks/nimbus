@@ -386,8 +386,8 @@ class QueueManager:
                 "sqs",
                 region_name=self.region,
                 endpoint_url=self.elasticmq_url,
-                aws_access_key_id="localcloud",
-                aws_secret_access_key="localcloud",
+                aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID", "localcloud"),
+                aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY", "localcloud"),
             )
             logger.info("SQS client initialized successfully")
         except Exception as e:
@@ -1028,8 +1028,8 @@ def get_request_param(name: str, default=None):
         if data:
             # logger.debug(f"Returning: Name:{name} -> {data.get(name, default)}")
             return data.get(name, default)
-    except:
-        pass
+    except Exception as e:
+        logger.debug(f"Data not JSON, skipping")
 
     try:
         logger.debug(f"Returning: {json.loads(request.data)}")
@@ -1492,4 +1492,6 @@ def handle_purge_queue():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=4566, debug=False)
+    listening_addr = os.environ.get('NIMBUS_LISTENING_ADDR', '127.0.0.1')
+    # Start Flask app
+    app.run(host=listening_addr, port=4566, debug=False)

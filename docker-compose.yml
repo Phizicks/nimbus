@@ -16,6 +16,7 @@ services:
       FLASK_ENV: development
       LOCALCLOUD_API_HOSTNAME: api
       LOCALCLOUD_NETWORK_NAME: localcloud
+      NIMBUS_LISTENING_ADDR: 0.0.0.0
       AWS_ENDPOINT_URL_SQS: http://sqs:4566
       LOG_LEVEL: DEBUG
     networks:

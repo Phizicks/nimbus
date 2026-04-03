@@ -369,13 +369,16 @@ class CloudWatchLogsDatabase:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        order_clause = (
-            "log_stream_name"
-            if order_by == "LogStreamName"
-            else "last_event_timestamp DESC"
-        )
+        # Whitelist of allowed ORDER BY clauses - prevents SQL injection
+        allowed_orderings = {
+            "LogStreamName": "log_stream_name",
+            "LastEventTime": "last_event_timestamp DESC",
+        }
+        order_clause = allowed_orderings.get(order_by, "log_stream_name")
+        # If order_by is not in whitelist, default to "log_stream_name"
 
         if prefix:
+            # nosec: order_clause is from whitelisted dictionary, not user input
             cursor.execute(
                 f"""
                 SELECT log_stream_name, creation_time, first_event_timestamp,
@@ -384,10 +387,11 @@ class CloudWatchLogsDatabase:
                 WHERE log_group_name = ? AND log_stream_name LIKE ?
                 ORDER BY {order_clause}
                 LIMIT ?
-            """,
+            """,  # nosec: order_clause validated against whitelist
                 (log_group_name, f"{prefix}%", limit),
             )
         else:
+            # nosec: order_clause is from whitelisted dictionary, not user input
             cursor.execute(
                 f"""
                 SELECT log_stream_name, creation_time, first_event_timestamp,
@@ -396,7 +400,7 @@ class CloudWatchLogsDatabase:
                 WHERE log_group_name = ?
                 ORDER BY {order_clause}
                 LIMIT ?
-            """,
+            """,  # nosec: order_clause validated against whitelist
                 (log_group_name, limit),
             )
 

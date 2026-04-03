@@ -2108,8 +2108,8 @@ class ContainerLifecycleManager:
                         try:
                             self.unregister_container(container.id)
                             container.remove(force=True)
-                        except:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"Failed to force remove container: {e}")
                         return (
                             None,
                             None,
@@ -3704,8 +3704,8 @@ def runtime_next():
             try:
                 # ensure it's cleaned up
                 lifecycle_manager.unregister_container(container_id)
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to unregister container {container_id}: {e}")
             logger.debug(
                 f"Container {C.MAGENTA}{container_id}{C.RESET} no longer exists, dropping connection"
             )
@@ -4700,5 +4700,7 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"Error during lifecycle bootstrap: {e}")
 
-    logger.info("Starting LocalCloud Lambda emulation HTTP API (Flask) on 0.0.0.0:4566")
-    app.run(host="0.0.0.0", port=4566)
+    logger.info("Starting LocalCloud Lambda emulation HTTP API (Flask)")
+    listening_addr = os.getenv("NIMBUS_LISTENING_ADDR", "127.0.0.1")
+    logger.info(f"Flask listening on {listening_addr}:4566")
+    app.run(host=listening_addr, port=4566)

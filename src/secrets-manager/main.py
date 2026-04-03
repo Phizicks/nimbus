@@ -22,6 +22,8 @@ from cryptography.hazmat.backends import default_backend
 import secrets
 import urllib.request
 import urllib.error
+from urllib.parse import urlparse
+import ssl
 
 logger = logging.getLogger(__name__)
 
@@ -575,10 +577,8 @@ class SecretsManagerDatabase:
                 params.append(now)
                 params.append(secret_name)
 
-                cursor.execute(
-                    f"UPDATE secrets SET {', '.join(updates)} WHERE secret_name = ?",
-                    params,
-                )
+                query = "UPDATE secrets SET " + ", ".join(updates) + " WHERE secret_name = ?"  # nosec B608 - updates list contains only hardcoded column names
+                cursor.execute(query, params)
 
             # If secret value is being updated
             if secret_string or secret_binary:
@@ -1851,7 +1851,17 @@ class SecretsManagerDatabase:
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=30) as response:
+            # Validate URL scheme to prevent arbitrary protocol access (B310)
+            parsed = urlparse(url)
+            if parsed.scheme not in ('http', 'https'):
+                raise ValueError(f"Invalid URL scheme: {parsed.scheme}. Only HTTP/HTTPS allowed.")
+
+            # Create an opener with only HTTP and HTTPS handlers (no file://, ftp://, etc.)
+            https_handler = urllib.request.HTTPSHandler()
+            http_handler = urllib.request.HTTPHandler()
+            opener = urllib.request.build_opener(http_handler, https_handler)
+            urllib.request.install_opener(opener)
+            with urllib.request.urlopen(req, timeout=30) as response:  # nosec B310 - URL scheme validated above
                 response.read()
             # The Lambda itself handles updating the pending secret’s value.
             return client_request_token
@@ -2278,4 +2288,6 @@ if __name__ == "__main__":
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
     secrets_manager = SecretsManager()
-    app.run(host="0.0.0.0", port=4566, debug=False)
+    listening_addr = os.environ.get('NIMBUS_LISTENING_ADDR', '127.0.0.1')
+    # Start Flask app
+    app.run(host=listening_addr, port=4566, debug=False)
